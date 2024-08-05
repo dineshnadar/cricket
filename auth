@@ -1,0 +1,196 @@
+import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { catchError, delayWhen, of, switchMap, timer, throwError, retryWhen, delay, take } from 'rxjs';
+import { API_CONFIG, ApiEndpointConfig } from './api.config'; // Import your API config
+import { LoggingService } from './logging.service'; // Import your logging service
+
+@Injectable({
+  providedIn: 'root',
+})
+export class ApiService {
+  private cache: Record<string, { data: any; timestamp: number; requestBody?: any }> = {};
+  public apiData = signal<any>(null); // Angular signal to store API data
+  private abortController = new AbortController();
+
+  constructor(private http: HttpClient, private loggingService: LoggingService) {}
+
+  private isTokenExpired(): boolean {
+    const token = localStorage.getItem('token'); // Or wherever you store the token
+    if (!token) return true;
+
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const expirationDate = payload.exp * 1000; // Convert to milliseconds
+    return Date.now() >= expirationDate; // Check if expired
+  }
+
+  private refreshToken() {
+    return this.http.post('/auth/refresh', {}).pipe(
+      catchError(err => {
+        this.loggingService.log('Token refresh failed:', err);
+        return throwError(err);
+      }),
+      switchMap((data: any) => {
+        localStorage.setItem('token', data.newToken); // Store new token
+        return of(data);
+      })
+    );
+  }
+
+  private checkTokenAndFetch<T>(
+    endpointKey: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    requestBody?: any,
+    id?: number
+  ) {
+    if (this.isTokenExpired()) {
+      return this.refreshToken().pipe(
+        switchMap(() => this.fetchData<T>(endpointKey, method, requestBody, id))
+      );
+    } else {
+      return this.fetchData<T>(endpointKey, method, requestBody, id);
+    }
+  }
+
+  private fetchData<T>(
+    endpointKey: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    requestBody?: any,
+    id?: number
+  ) {
+    const config: ApiEndpointConfig = API_CONFIG.endpoints[endpointKey];
+    const url = typeof config.url === 'function' ? config.url(id) : config.url; // Handle dynamic URLs
+    const currentTime = Date.now();
+    let cachedData: any = null;
+    const cacheKey = this.generateCacheKey(url, requestBody); // Generate a unique cache key
+    const signal = this.abortController.signal; // Use the abort controller in the HTTP call
+
+    // Check the appropriate storage for cached data
+    if (config.storageType === 'local') {
+      cachedData = localStorage.getItem(cacheKey); // Check local storage
+    } else if (config.storageType === 'session') {
+      cachedData = sessionStorage.getItem(cacheKey); // Check session storage
+    } else if (config.storageType === 'memory') {
+      cachedData = this.cache[cacheKey]; // Check in-memory cache
+    }
+
+    // Handle cached data if it exists
+    if (cachedData) {
+      const parsedData = JSON.parse(cachedData);
+      if (currentTime - parsedData.timestamp < (config.cacheTimeout ?? Infinity)) {
+        this.apiData.set(parsedData.data); // Set the cached data
+        return of(this.apiData); // Return the cached data as observable
+      }
+    }
+
+    // Create a request observable based on the method
+    let request$;
+    if (method === 'GET') {
+      request$ = this.http.get<T>(url, { signal }).pipe(
+        this.handleResponse(config, currentTime, requestBody, cacheKey),
+        this.retryRequest(config), // Apply retry logic based on config
+        catchError(this.handleError)
+      );
+    } else if (method === 'POST') {
+      request$ = this.http.post<T>(url, requestBody, { signal }).pipe(
+        this.handleResponse(config, currentTime, requestBody, cacheKey),
+        this.retryRequest(config), // Apply retry logic based on config
+        catchError(this.handleError)
+      );
+    } else if (method === 'PUT') {
+      request$ = this.http.put<T>(url, requestBody, { signal }).pipe(
+        this.handleResponse(config, currentTime, requestBody, cacheKey),
+        this.retryRequest(config), // Apply retry logic based on config
+        catchError(this.handleError)
+      );
+    } else if (method === 'DELETE') {
+      request$ = this.http.delete<T>(url, { signal }).pipe(
+        this.handleResponse(config, currentTime, requestBody, cacheKey),
+        this.retryRequest(config), // Apply retry logic based on config
+        catchError(this.handleError)
+      );
+    }
+
+    // Apply timeout if specified
+    return config.requestTimeout 
+      ? timer(config.requestTimeout).pipe(
+          switchMap(() => throwError(new Error('Request timed out'))),
+          catchError(() => request$) // Fallback to the original request if it doesn't time out
+        )
+      : request$;
+  }
+
+  private generateCacheKey(url: string, requestBody?: any): string {
+    const normalizedUrl = new URL(url, window.location.origin).toString();
+    const bodyPart = requestBody ? `::${JSON.stringify(requestBody)}` : '';
+    return `${normalizedUrl}${bodyPart}`;
+  }
+
+  private retryRequest(config: any) {
+    return config.retryEnabled 
+      ? retryWhen((errors) =>
+          errors.pipe(
+            take(config.maxRetries || 0),
+            delayWhen((_, index) => timer(Math.pow(2, index) * (config.retryDelay || 1000))) // Exponential backoff
+          )
+        )
+      : (source: any) => source; // Return source as is if retries are not enabled
+  }
+
+  private handleResponse<T>(config: any, currentTime: number, requestBody?: any, cacheKey?: string) {
+    return switchMap((data: T) => {
+      if (config.shouldCache) {
+        const timestampedData = { data, timestamp: currentTime, requestBody }; // Store requestBody for POST and PUT
+        // Cache in memory
+        this.cache[cacheKey] = timestampedData;
+
+        // Cache in local or session storage
+        if (config.storageType === 'local') {
+          localStorage.setItem(cacheKey, JSON.stringify(timestampedData)); // Cache to local storage
+        } else if (config.storageType === 'session') {
+          sessionStorage.setItem(cacheKey, JSON.stringify(timestampedData)); // Cache to session storage
+        }
+      }
+      this.apiData.set(data); // Update the signal with new data
+      return of(this.apiData); // Return the new data
+    });
+  }
+
+  private handleError(error: any) {
+    if (error.status === 401) {
+      this.loggingService.log('Unauthorized access:', error);
+      // Handle unauthorized access (redirect to login, etc.)
+    } else if (error.status === 403) {
+      this.loggingService.log('Forbidden access:', error);
+      // Handle forbidden access
+    } else {
+      this.loggingService.log('API error:', error);
+    }
+    return throwError(error); // Return error to the caller
+  }
+
+  // General method for GET requests
+  get(endpointKey: string) {
+    return this.checkTokenAndFetch(endpointKey, 'GET');
+  }
+
+  // General method for POST requests
+  post(endpointKey: string, data: any) {
+    return this.checkTokenAndFetch(endpointKey, 'POST', data);
+  }
+
+  // General method for PUT requests
+  put(endpointKey: string, id: number, data: any) {
+    return this.checkTokenAndFetch(endpointKey, 'PUT', data, id);
+  }
+
+  // General method for DELETE requests
+  delete(endpointKey: string, id: number) {
+    return this.checkTokenAndFetch(endpointKey, 'DELETE', undefined, id);
+  }
+
+  // Cancel ongoing requests
+  public cancelRequests() {
+    this.abortController.abort();
+    this.abortController = new AbortController(); // Reset for future requests
+  }
+}
