@@ -1,7 +1,7 @@
 import { Injectable, signal } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, of, throwError } from 'rxjs';
-import { catchError, map, retry, switchMap } from 'rxjs/operators';
+import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
+import { Observable, of, throwError, timer } from 'rxjs';
+import { catchError, retry, switchMap, timeout } from 'rxjs/operators';
 import { API_CONFIG, ApiEndpointConfig } from './api.config';
 import { LoggingService } from './logging.service';
 
@@ -33,26 +33,54 @@ export class ApiService {
       return throwError(() => new Error(`No configuration found for endpoint: ${endpointKey}`));
     }
 
-    const url = typeof config.url === 'function' ? config.url(id) : config.url;
+    let url: string;
+    if (typeof config.url === 'function') {
+      url = config.url(id);
+    } else {
+      url = config.url;
+    }
+
+    if (!url) {
+      return throwError(() => new Error(`Invalid URL for endpoint: ${endpointKey}`));
+    }
+
     const cacheKey = this.generateCacheKey(config, endpointKey, method, requestBody, id);
 
-    const cachedData = this.getCachedData<T>(cacheKey, config);
-    if (cachedData) {
-      this.apiData.set(cachedData);
-      return of(cachedData);
+    if (config.shouldCache) {
+      const cachedData = this.getCachedData<T>(cacheKey, config);
+      if (cachedData) {
+        this.apiData.set(cachedData);
+        return of(cachedData);
+      }
     }
 
     const request$ = this.createRequest<T>(url, method, requestBody, config);
 
     return request$.pipe(
-      retry(this.createRetryConfig(config)),
+      timeout(config.requestTimeout || 30000),
+      this.applyRetryLogic(config),
       switchMap((data: T) => this.handleResponse(data, config, cacheKey)),
       catchError((error) => this.handleError(error, endpointKey, method))
     );
   }
 
   private createRequest<T>(url: string, method: HttpMethod, requestBody: any, config: ApiEndpointConfig): Observable<T> {
-    const options = { signal: this.abortController.signal };
+    const options: {
+      headers?: HttpHeaders;
+      observe?: 'body';
+      params?: HttpParams;
+      reportProgress?: boolean;
+      responseType?: 'json';
+      withCredentials?: boolean;
+    } = {
+      headers: new HttpHeaders(config.headers),
+      params: new HttpParams({ fromObject: config.params }),
+      withCredentials: config.withCredentials,
+    };
+
+    if (typeof AbortController !== 'undefined') {
+      options['signal'] = this.abortController.signal;
+    }
 
     switch (method) {
       case 'GET':
@@ -76,7 +104,7 @@ export class ApiService {
 
     const { data, timestamp } = entry;
     const now = Date.now();
-    if (now - timestamp > (config.cacheDuration || 300000)) { // 5 minutes default
+    if (now - timestamp > (config.cacheTimeout || 300000)) {
       this.removeFromStorage(cacheKey, config.storageType);
       return null;
     }
@@ -113,12 +141,14 @@ export class ApiService {
     }
   }
 
-  private createRetryConfig(config: ApiEndpointConfig) {
-    return {
-      count: config.maxRetries || 3,
-      delay: config.retryDelay || 1000,
-      resetOnSuccess: true,
-    };
+  private applyRetryLogic(config: ApiEndpointConfig) {
+    if (config.retryEnabled && config.maxRetries > 0) {
+      return retry({
+        count: config.maxRetries,
+        delay: (error, retryCount) => timer(1000 * Math.pow(2, retryCount)),
+      });
+    }
+    return (source: Observable<any>) => source;
   }
 
   private handleResponse<T>(data: T, config: ApiEndpointConfig, cacheKey: string): Observable<T> {
@@ -187,7 +217,6 @@ export class ApiService {
     } else if (typeof config.cacheKey === 'string') {
       return config.cacheKey;
     } else {
-      // Fallback to a default cache key generation if not provided in the config
       const bodyHash = requestBody ? this.hashCode(JSON.stringify(requestBody)) : '';
       return `${method}:${endpointKey}:${id || ''}:${bodyHash}`;
     }
@@ -203,3 +232,8 @@ export class ApiService {
     return hash;
   }
 }
+
+
+  cacheKey?: string | ((params: { endpointKey: string; method: HttpMethod; requestBody?: any; id?: number }) => string);
+  headers?: {[header: string]: string | string[]};
+  params?: {[param: string]: string | string[]};
