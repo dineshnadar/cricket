@@ -1,14 +1,1 @@
- private applyRetryLogic(config: ApiEndpointConfig) {
-    if (config.retryEnabled && config.maxRetries > 0) {
-      return retry({
-        count: config.maxRetries,
-        delay: (error, retryCount) => {
-          if (error instanceof HttpErrorResponse && error.status >= 500) {
-            return timer(Math.pow(2, retryCount) * 1000);
-          }
-          return throwError(() => error);
-        },
-      });
-    }
-    return (source: Observable<any>) => source;
-  }
+
