@@ -1,153 +1,205 @@
 import { Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { catchError, of, switchMap, timer, throwError, retryWhen, delay, take, Observable } from 'rxjs';
-import { API_CONFIG } from './api.config'; // Import your API config
-import { LoggingService } from './logging.service'; // Import your logging service
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, of, throwError } from 'rxjs';
+import { catchError, map, retry, switchMap } from 'rxjs/operators';
+import { API_CONFIG, ApiEndpointConfig } from './api.config';
+import { LoggingService } from './logging.service';
+
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
 
 @Injectable({
   providedIn: 'root',
 })
 export class ApiService {
-  private cache: Record<string, { data: any; timestamp: number; requestBody?: any }> = {};
-  public apiData = signal<any>(null); // Angular signal to store API data
-  private abortController = new AbortController(); // Create an AbortController instance
+  private cache: Map<string, CacheEntry<any>> = new Map();
+  public apiData = signal<any>(null);
+  private abortController = new AbortController();
 
   constructor(private http: HttpClient, private loggingService: LoggingService) {}
 
   private fetchData<T>(
     endpointKey: string,
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: HttpMethod,
     requestBody?: any,
-    id?: number // For dynamic URLs (like DELETE or PUT)
-  ): Observable<any> {
+    id?: number
+  ): Observable<T> {
     const config = API_CONFIG.endpoints[endpointKey];
-    const url = typeof config.url === 'function' ? config.url(id) : config.url; // Handle dynamic URLs
-    const currentTime = Date.now();
-    const cacheKey = this.generateCacheKey(url, requestBody); // Generate a unique cache key
+    if (!config) {
+      return throwError(() => new Error(`No configuration found for endpoint: ${endpointKey}`));
+    }
 
-    // Check for cached data
-    const cachedData = this.getCachedData(cacheKey, config.storageType);
+    const url = typeof config.url === 'function' ? config.url(id) : config.url;
+    const cacheKey = this.generateCacheKey(config, endpointKey, method, requestBody, id);
 
-    // If cached data is valid, return it
+    const cachedData = this.getCachedData<T>(cacheKey, config);
     if (cachedData) {
-      this.apiData.set(cachedData.data); // Update the signal with cached data
-      return of(this.apiData); // Return cached data as observable
+      this.apiData.set(cachedData);
+      return of(cachedData);
     }
 
-    // Create a request observable based on the method
-    let request$: Observable<T>;
-    const signal = this.abortController.signal; // Get the AbortSignal
+    const request$ = this.createRequest<T>(url, method, requestBody, config);
 
-    if (method === 'GET') {
-      request$ = this.http.get<T>(url, { signal }).pipe(
-        this.handleResponse(config, currentTime, requestBody, cacheKey),
-        this.retryRequest(config),
-        catchError(this.handleError)
-      );
-    } else if (method === 'POST') {
-      request$ = this.http.post<T>(url, requestBody, { signal }).pipe(
-        this.handleResponse(config, currentTime, requestBody, cacheKey),
-        this.retryRequest(config),
-        catchError(this.handleError)
-      );
-    } else if (method === 'PUT') {
-      request$ = this.http.put<T>(url, requestBody, { signal }).pipe(
-        this.handleResponse(config, currentTime, requestBody, cacheKey),
-        this.retryRequest(config),
-        catchError(this.handleError)
-      );
-    } else if (method === 'DELETE') {
-      request$ = this.http.delete<T>(url, { signal }).pipe(
-        this.handleResponse(config, currentTime, requestBody, cacheKey),
-        this.retryRequest(config),
-        catchError(this.handleError)
-      );
-    } else {
-      throw new Error(`Unsupported method: ${method}`);
+    return request$.pipe(
+      retry(this.createRetryConfig(config)),
+      switchMap((data: T) => this.handleResponse(data, config, cacheKey)),
+      catchError((error) => this.handleError(error, endpointKey, method))
+    );
+  }
+
+  private createRequest<T>(url: string, method: HttpMethod, requestBody: any, config: ApiEndpointConfig): Observable<T> {
+    const options = { signal: this.abortController.signal };
+
+    switch (method) {
+      case 'GET':
+        return this.http.get<T>(url, options);
+      case 'POST':
+        return this.http.post<T>(url, requestBody, options);
+      case 'PUT':
+        return this.http.put<T>(url, requestBody, options);
+      case 'DELETE':
+        return this.http.delete<T>(url, options);
+      case 'PATCH':
+        return this.http.patch<T>(url, requestBody, options);
+      default:
+        return throwError(() => new Error(`Unsupported HTTP method: ${method}`));
+    }
+  }
+
+  private getCachedData<T>(cacheKey: string, config: ApiEndpointConfig): T | null {
+    const entry = this.getStorageData(cacheKey, config.storageType);
+    if (!entry) return null;
+
+    const { data, timestamp } = entry;
+    const now = Date.now();
+    if (now - timestamp > (config.cacheDuration || 300000)) { // 5 minutes default
+      this.removeFromStorage(cacheKey, config.storageType);
+      return null;
     }
 
-    return request$; // Return the request observable
+    return data;
   }
 
-  // Method to retrieve cached data
-  private getCachedData(cacheKey: string, storageType: 'local' | 'session' | 'memory') {
-    let cachedData: any = null;
-
-    if (storageType === 'local') {
-      cachedData = localStorage.getItem(cacheKey);
-    } else if (storageType === 'session') {
-      cachedData = sessionStorage.getItem(cacheKey);
-    } else if (storageType === 'memory') {
-      cachedData = this.cache[cacheKey];
+  private getStorageData(key: string, storageType: 'local' | 'session' | 'memory'): CacheEntry<any> | null {
+    let data: string | null = null;
+    switch (storageType) {
+      case 'local':
+        data = localStorage.getItem(key);
+        break;
+      case 'session':
+        data = sessionStorage.getItem(key);
+        break;
+      case 'memory':
+        return this.cache.get(key) || null;
     }
-
-    return cachedData ? JSON.parse(cachedData) : null; // Return parsed cached data or null
+    return data ? JSON.parse(data) : null;
   }
 
-  private retryRequest(config: any) {
-    // Only apply retry logic if enabled in the config
-    return config.retryEnabled
-      ? retryWhen((errors) =>
-          errors.pipe(
-            take(config.maxRetries || 0), // Limit to maxRetries
-            delay(config.retryDelay || 1000) // Delay between retries
-          )
-        )
-      : (source: Observable<any>) => source; // Return source as is if retries are not enabled
+  private removeFromStorage(key: string, storageType: 'local' | 'session' | 'memory'): void {
+    switch (storageType) {
+      case 'local':
+        localStorage.removeItem(key);
+        break;
+      case 'session':
+        sessionStorage.removeItem(key);
+        break;
+      case 'memory':
+        this.cache.delete(key);
+        break;
+    }
   }
 
-  private handleResponse<T>(config: any, currentTime: number, requestBody?: any, cacheKey?: string) {
-    return switchMap((data: T) => {
-      if (config.shouldCache) {
-        const timestampedData = { data, timestamp: currentTime, requestBody }; // Store requestBody for POST and PUT
-        // Cache in memory
-        this.cache[cacheKey] = timestampedData;
-
-        // Cache in local or session storage
-        if (config.storageType === 'local') {
-          localStorage.setItem(cacheKey, JSON.stringify(timestampedData)); // Cache to local storage
-        } else if (config.storageType === 'session') {
-          sessionStorage.setItem(cacheKey, JSON.stringify(timestampedData)); // Cache to session storage
-        }
-      }
-      this.apiData.set(data); // Update the signal with new data
-      return of(this.apiData); // Return the new data
-    });
+  private createRetryConfig(config: ApiEndpointConfig) {
+    return {
+      count: config.maxRetries || 3,
+      delay: config.retryDelay || 1000,
+      resetOnSuccess: true,
+    };
   }
 
-  private handleError(error: any) {
-    this.loggingService.error('API error:', error); // Log the error
-    return throwError(error); // Return error to the caller
+  private handleResponse<T>(data: T, config: ApiEndpointConfig, cacheKey: string): Observable<T> {
+    if (config.shouldCache) {
+      const entry: CacheEntry<T> = { data, timestamp: Date.now() };
+      this.setStorageData(cacheKey, entry, config.storageType);
+    }
+    this.apiData.set(data);
+    return of(data);
   }
 
-  // General method for GET requests
-  get(endpointKey: string) {
-    return this.fetchData(endpointKey, 'GET');
+  private setStorageData(key: string, entry: CacheEntry<any>, storageType: 'local' | 'session' | 'memory'): void {
+    const stringifiedEntry = JSON.stringify(entry);
+    switch (storageType) {
+      case 'local':
+        localStorage.setItem(key, stringifiedEntry);
+        break;
+      case 'session':
+        sessionStorage.setItem(key, stringifiedEntry);
+        break;
+      case 'memory':
+        this.cache.set(key, entry);
+        break;
+    }
   }
 
-  // General method for POST requests
-  post(endpointKey: string, data: any) {
-    return this.fetchData(endpointKey, 'POST', data);
+  private handleError(error: HttpErrorResponse, endpointKey: string, method: HttpMethod): Observable<never> {
+    this.loggingService.error(`API error for ${method} ${endpointKey}:`, error);
+    return throwError(() => error);
   }
 
-  // General method for PUT requests
-  put(endpointKey: string, id: number, data: any) {
-    return this.fetchData(endpointKey, 'PUT', data, id);
+  get<T>(endpointKey: string): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'GET');
   }
 
-  // General method for DELETE requests
-  delete(endpointKey: string, id: number) {
-    return this.fetchData(endpointKey, 'DELETE', undefined, id);
+  post<T>(endpointKey: string, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'POST', data);
   }
 
-  // Cancel ongoing requests
-  public cancelRequests() {
+  put<T>(endpointKey: string, id: number, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'PUT', data, id);
+  }
+
+  patch<T>(endpointKey: string, id: number, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'PATCH', data, id);
+  }
+
+  delete<T>(endpointKey: string, id: number): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'DELETE', undefined, id);
+  }
+
+  cancelRequests(): void {
     this.abortController.abort();
-    this.abortController = new AbortController(); // Reset for future requests
+    this.abortController = new AbortController();
   }
 
-  private generateCacheKey(url: string, requestBody?: any): string {
-    // Create a unique cache key based on URL and request body
-    return `${url}::${JSON.stringify(requestBody)}`;
+  private generateCacheKey(
+    config: ApiEndpointConfig,
+    endpointKey: string,
+    method: HttpMethod,
+    requestBody?: any,
+    id?: number
+  ): string {
+    if (typeof config.cacheKey === 'function') {
+      return config.cacheKey({ endpointKey, method, requestBody, id });
+    } else if (typeof config.cacheKey === 'string') {
+      return config.cacheKey;
+    } else {
+      // Fallback to a default cache key generation if not provided in the config
+      const bodyHash = requestBody ? this.hashCode(JSON.stringify(requestBody)) : '';
+      return `${method}:${endpointKey}:${id || ''}:${bodyHash}`;
+    }
+  }
+
+  private hashCode(s: string): number {
+    let hash = 0;
+    for (let i = 0; i < s.length; i++) {
+      const chr = s.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
   }
 }
