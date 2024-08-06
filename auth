@@ -1,1 +1,230 @@
+// logging.service.ts
 
+import { Injectable, inject } from '@angular/core';
+import { ApiService } from './api.service';
+
+type LogLevel = 'log' | 'error' | 'warn' | 'info';
+
+interface LogEntry {
+  level: LogLevel;
+  message: string;
+  timestamp: string;
+  additionalInfo?: any;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class LoggingService {
+  private apiService = inject(ApiService);
+
+  private formatMessage(message: any): string {
+    if (typeof message === 'string') {
+      return message;
+    } else if (Array.isArray(message) || (typeof message === 'object' && message !== null)) {
+      return JSON.stringify(message, null, 2);
+    } else {
+      return String(message);
+    }
+  }
+
+  private logMessage(level: LogLevel, message: any, ...optionalParams: any[]) {
+    const formattedMessage = this.formatMessage(message);
+    const formattedParams = optionalParams.map(param => this.formatMessage(param));
+    
+    // Console logging
+    switch (level) {
+      case 'log':
+        console.log(formattedMessage, ...formattedParams);
+        break;
+      case 'error':
+        console.error(formattedMessage, ...formattedParams);
+        break;
+      case 'warn':
+        console.warn(formattedMessage, ...formattedParams);
+        break;
+      case 'info':
+        console.info(formattedMessage, ...formattedParams);
+        break;
+    }
+
+    // Prepare log entry for external service
+    const logEntry: LogEntry = {
+      level,
+      message: formattedMessage,
+      timestamp: new Date().toISOString(),
+      additionalInfo: formattedParams.length > 0 ? formattedParams : undefined
+    };
+
+    // Send to external service
+    this.apiService.post('sendLog', logEntry).subscribe({
+      error: (err) => console.error('Failed to send log to external service', err)
+    });
+  }
+
+  log(message: any, ...optionalParams: any[]) {
+    this.logMessage('log', message, ...optionalParams);
+  }
+
+  error(message: any, ...optionalParams: any[]) {
+    this.logMessage('error', message, ...optionalParams);
+  }
+
+  warn(message: any, ...optionalParams: any[]) {
+    this.logMessage('warn', message, ...optionalParams);
+  }
+
+  info(message: any, ...optionalParams: any[]) {
+    this.logMessage('info', message, ...optionalParams);
+  }
+}
+
+// cache.service.ts
+
+import { Injectable, signal, computed } from '@angular/core';
+
+export type CacheStorageType = 'local' | 'session' | 'memory';
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  expiration?: number;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class CacheService {
+  private memoryCache = signal<Map<string, CacheEntry<any>>>(new Map());
+
+  cacheSize = computed(() => this.memoryCache().size);
+
+  set<T>(key: string, data: T, options: { expiration?: number; storageType: CacheStorageType }): void {
+    const entry: CacheEntry<T> = {
+      data,
+      timestamp: Date.now(),
+      expiration: options.expiration
+    };
+
+    switch (options.storageType) {
+      case 'local':
+        localStorage.setItem(key, JSON.stringify(entry));
+        break;
+      case 'session':
+        sessionStorage.setItem(key, JSON.stringify(entry));
+        break;
+      case 'memory':
+      default:
+        this.memoryCache.update(cache => {
+          cache.set(key, entry);
+          return new Map(cache);
+        });
+    }
+  }
+
+  get<T>(key: string, storageType: CacheStorageType): T | null {
+    let entry: CacheEntry<T> | null = null;
+
+    switch (storageType) {
+      case 'local':
+        const localData = localStorage.getItem(key);
+        entry = localData ? JSON.parse(localData) : null;
+        break;
+      case 'session':
+        const sessionData = sessionStorage.getItem(key);
+        entry = sessionData ? JSON.parse(sessionData) : null;
+        break;
+      case 'memory':
+      default:
+        entry = this.memoryCache().get(key) || null;
+    }
+
+    if (!entry) return null;
+
+    if (entry.expiration && Date.now() > entry.timestamp + entry.expiration) {
+      this.remove(key, storageType);
+      return null;
+    }
+
+    return entry.data;
+  }
+
+  remove(key: string, storageType: CacheStorageType): void {
+    switch (storageType) {
+      case 'local':
+        localStorage.removeItem(key);
+        break;
+      case 'session':
+        sessionStorage.removeItem(key);
+        break;
+      case 'memory':
+      default:
+        this.memoryCache.update(cache => {
+          cache.delete(key);
+          return new Map(cache);
+        });
+    }
+  }
+
+  clear(storageType: CacheStorageType): void {
+    switch (storageType) {
+      case 'local':
+        localStorage.clear();
+        break;
+      case 'session':
+        sessionStorage.clear();
+        break;
+      case 'memory':
+      default:
+        this.memoryCache.set(new Map());
+    }
+  }
+
+  has(key: string, storageType: CacheStorageType): boolean {
+    switch (storageType) {
+      case 'local':
+        return localStorage.getItem(key) !== null;
+      case 'session':
+        return sessionStorage.getItem(key) !== null;
+      case 'memory':
+      default:
+        return this.memoryCache().has(key);
+    }
+  }
+}
+
+// api.config.ts
+
+import { CacheStorageType } from './cache.service';
+
+export interface ApiEndpointConfig {
+  url: string | ((id?: number) => string);
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  shouldCache?: boolean;
+  cacheTimeout?: number;
+  cacheStorageType?: CacheStorageType;
+  cacheKey?: string | ((params: { endpointKey: string; method: string; id?: number }) => string);
+  headers?: {[header: string]: string};
+  params?: {[param: string]: string};
+  withCredentials?: boolean;
+  requestTimeout?: number;
+  retryEnabled?: boolean;
+  maxRetries?: number;
+}
+
+export const API_CONFIG = {
+  endpoints: {
+    getUsers: {
+      url: 'https://api.example.com/users',
+      method: 'GET' as const,
+      shouldCache: true,
+      cacheTimeout: 300000, // 5 minutes
+      cacheStorageType: 'local' as CacheStorageType,
+    },
+    createUser: {
+      url: 'https://api.example.com/users',
+      method: 'POST' as const,
+      shouldCache: true,
+      cacheTimeout: 60000, // 1 minute
+      cacheStorageType: 'memory' as CacheStorageType,
+    },
