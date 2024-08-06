@@ -1,230 +1,216 @@
-// logging.service.ts
+// api.service.ts
 
-import { Injectable, inject } from '@angular/core';
-import { ApiService } from './api.service';
+import { Injectable, inject, signal, computed } from '@angular/core';
+import { HttpClient, HttpHeaders, HttpErrorResponse } from '@angular/common/http';
+import { Observable, throwError, timer, of } from 'rxjs';
+import { catchError, tap, retry, timeout } from 'rxjs/operators';
+import { API_CONFIG, ApiEndpointConfig } from './api.config';
+import { LoggingService } from './logging.service';
+import { CacheService, CacheStorageType } from './cache.service';
 
-type LogLevel = 'log' | 'error' | 'warn' | 'info';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
-interface LogEntry {
-  level: LogLevel;
-  message: string;
-  timestamp: string;
-  additionalInfo?: any;
+interface CachedResponse<T> {
+  response: T;
+  timestamp: number;
 }
 
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
-export class LoggingService {
-  private apiService = inject(ApiService);
+export class ApiService {
+  private http = inject(HttpClient);
+  private loggingService = inject(LoggingService);
+  private cacheService = inject(CacheService);
 
-  private formatMessage(message: any): string {
-    if (typeof message === 'string') {
-      return message;
-    } else if (Array.isArray(message) || (typeof message === 'object' && message !== null)) {
-      return JSON.stringify(message, null, 2);
-    } else {
-      return String(message);
+  private pendingRequests = signal<Set<string>>(new Set());
+  private abortController = signal(new AbortController());
+
+  isLoading = computed(() => this.pendingRequests().size > 0);
+
+  get<T>(endpointKey: string): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'GET');
+  }
+
+  post<T>(endpointKey: string, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'POST', data);
+  }
+
+  put<T>(endpointKey: string, id: number, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'PUT', data, id);
+  }
+
+  patch<T>(endpointKey: string, id: number, data: any): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'PATCH', data, id);
+  }
+
+  delete<T>(endpointKey: string, id: number): Observable<T> {
+    return this.fetchData<T>(endpointKey, 'DELETE', undefined, id);
+  }
+
+  private fetchData<T>(
+    endpointKey: string,
+    method: HttpMethod,
+    data?: any,
+    id?: number
+  ): Observable<T> {
+    const config = API_CONFIG.endpoints[endpointKey];
+    if (!config) {
+      return throwError(() => new Error(`No configuration found for endpoint: ${endpointKey}`));
+    }
+
+    const url = typeof config.url === 'function' ? config.url(id) : config.url;
+    const cacheKey = this.generateCacheKey(config, endpointKey, method, id);
+
+    // Check cache based on method
+    if (config.shouldCache) {
+      const cachedData = this.checkCache<T>(cacheKey, method, data, config.cacheStorageType || 'memory');
+      if (cachedData) {
+        return of(cachedData);
+      }
+    }
+
+    const options = this.getRequestOptions(config);
+
+    let request: Observable<T>;
+    switch (method) {
+      case 'GET':
+        request = this.http.get<T>(url, options);
+        break;
+      case 'POST':
+        request = this.http.post<T>(url, data, options);
+        break;
+      case 'PUT':
+        request = this.http.put<T>(url, data, options);
+        break;
+      case 'PATCH':
+        request = this.http.patch<T>(url, data, options);
+        break;
+      case 'DELETE':
+        request = this.http.delete<T>(url, options);
+        break;
+      default:
+        return throwError(() => new Error(`Unsupported HTTP method: ${method}`));
+    }
+
+    this.pendingRequests.update(set => {
+      set.add(cacheKey);
+      return new Set(set);
+    });
+
+    return request.pipe(
+      timeout(config.requestTimeout || 30000),
+      this.applyRetryLogic(config),
+      tap(response => {
+        if (config.shouldCache) {
+          this.setCacheData(cacheKey, method, data, response, {
+            expiration: config.cacheTimeout,
+            storageType: config.cacheStorageType || 'memory'
+          });
+        }
+      }),
+      catchError(this.handleError.bind(this)),
+      tap(() => {
+        this.pendingRequests.update(set => {
+          set.delete(cacheKey);
+          return new Set(set);
+        });
+      })
+    );
+  }
+
+  private checkCache<T>(cacheKey: string, method: HttpMethod, data: any, storageType: CacheStorageType): T | null {
+    const cachedItem = this.cacheService.get<any>(cacheKey, storageType);
+    if (!cachedItem) return null;
+
+    if (method === 'GET') {
+      return cachedItem as T;
+    } else if (method === 'POST') {
+      const requestHash = this.hashCode(JSON.stringify(data));
+      const cachedResponse = cachedItem[requestHash] as CachedResponse<T> | undefined;
+      if (cachedResponse && (!cachedResponse.timestamp || Date.now() - cachedResponse.timestamp < (API_CONFIG.endpoints[cacheKey]?.cacheTimeout || 300000))) {
+        return cachedResponse.response;
+      }
+    }
+
+    return null;
+  }
+
+  private setCacheData<T>(cacheKey: string, method: HttpMethod, requestData: any, response: T, options: { expiration?: number; storageType: CacheStorageType }): void {
+    if (method === 'GET') {
+      this.cacheService.set(cacheKey, response, options);
+    } else if (method === 'POST') {
+      const cachedItem = this.cacheService.get<{ [key: string]: CachedResponse<T> }>(cacheKey, options.storageType) || {};
+      const requestHash = this.hashCode(JSON.stringify(requestData));
+      cachedItem[requestHash] = {
+        response,
+        timestamp: Date.now()
+      };
+      this.cacheService.set(cacheKey, cachedItem, options);
     }
   }
 
-  private logMessage(level: LogLevel, message: any, ...optionalParams: any[]) {
-    const formattedMessage = this.formatMessage(message);
-    const formattedParams = optionalParams.map(param => this.formatMessage(param));
-    
-    // Console logging
-    switch (level) {
-      case 'log':
-        console.log(formattedMessage, ...formattedParams);
-        break;
-      case 'error':
-        console.error(formattedMessage, ...formattedParams);
-        break;
-      case 'warn':
-        console.warn(formattedMessage, ...formattedParams);
-        break;
-      case 'info':
-        console.info(formattedMessage, ...formattedParams);
-        break;
+  private generateCacheKey(
+    config: ApiEndpointConfig,
+    endpointKey: string,
+    method: HttpMethod,
+    id?: number
+  ): string {
+    if (typeof config.cacheKey === 'function') {
+      return config.cacheKey({ endpointKey, method, id });
+    } else if (typeof config.cacheKey === 'string') {
+      return config.cacheKey;
+    } else {
+      return `${method}:${endpointKey}:${id || ''}`;
     }
+  }
 
-    // Prepare log entry for external service
-    const logEntry: LogEntry = {
-      level,
-      message: formattedMessage,
-      timestamp: new Date().toISOString(),
-      additionalInfo: formattedParams.length > 0 ? formattedParams : undefined
+  private hashCode(s: string): number {
+    let hash = 0;
+    for (let i = 0; i < s.length; i++) {
+      const chr = s.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
+  }
+
+  private getRequestOptions(config: ApiEndpointConfig): any {
+    const options: any = {
+      headers: new HttpHeaders(config.headers),
+      params: config.params,
+      withCredentials: config.withCredentials,
     };
 
-    // Send to external service
-    this.apiService.post('sendLog', logEntry).subscribe({
-      error: (err) => console.error('Failed to send log to external service', err)
+    options.signal = this.abortController().signal;
+
+    return options;
+  }
+
+  private applyRetryLogic(config: ApiEndpointConfig) {
+    if (config.retryEnabled && config.maxRetries > 0) {
+      return retry({
+        count: config.maxRetries,
+        delay: (error, retryCount) => {
+          if (error instanceof HttpErrorResponse && error.status >= 500) {
+            return timer(Math.pow(2, retryCount) * 1000);
+          }
+          return throwError(() => error);
+        },
+      });
+    }
+    return (source: Observable<any>) => source;
+  }
+
+  private handleError(error: HttpErrorResponse) {
+    this.loggingService.error('API error', error);
+    return throwError(() => error);
+  }
+
+  cancelRequests() {
+    this.abortController.update(controller => {
+      controller.abort();
+      return new AbortController();
     });
   }
-
-  log(message: any, ...optionalParams: any[]) {
-    this.logMessage('log', message, ...optionalParams);
-  }
-
-  error(message: any, ...optionalParams: any[]) {
-    this.logMessage('error', message, ...optionalParams);
-  }
-
-  warn(message: any, ...optionalParams: any[]) {
-    this.logMessage('warn', message, ...optionalParams);
-  }
-
-  info(message: any, ...optionalParams: any[]) {
-    this.logMessage('info', message, ...optionalParams);
-  }
 }
-
-// cache.service.ts
-
-import { Injectable, signal, computed } from '@angular/core';
-
-export type CacheStorageType = 'local' | 'session' | 'memory';
-
-interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
-  expiration?: number;
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class CacheService {
-  private memoryCache = signal<Map<string, CacheEntry<any>>>(new Map());
-
-  cacheSize = computed(() => this.memoryCache().size);
-
-  set<T>(key: string, data: T, options: { expiration?: number; storageType: CacheStorageType }): void {
-    const entry: CacheEntry<T> = {
-      data,
-      timestamp: Date.now(),
-      expiration: options.expiration
-    };
-
-    switch (options.storageType) {
-      case 'local':
-        localStorage.setItem(key, JSON.stringify(entry));
-        break;
-      case 'session':
-        sessionStorage.setItem(key, JSON.stringify(entry));
-        break;
-      case 'memory':
-      default:
-        this.memoryCache.update(cache => {
-          cache.set(key, entry);
-          return new Map(cache);
-        });
-    }
-  }
-
-  get<T>(key: string, storageType: CacheStorageType): T | null {
-    let entry: CacheEntry<T> | null = null;
-
-    switch (storageType) {
-      case 'local':
-        const localData = localStorage.getItem(key);
-        entry = localData ? JSON.parse(localData) : null;
-        break;
-      case 'session':
-        const sessionData = sessionStorage.getItem(key);
-        entry = sessionData ? JSON.parse(sessionData) : null;
-        break;
-      case 'memory':
-      default:
-        entry = this.memoryCache().get(key) || null;
-    }
-
-    if (!entry) return null;
-
-    if (entry.expiration && Date.now() > entry.timestamp + entry.expiration) {
-      this.remove(key, storageType);
-      return null;
-    }
-
-    return entry.data;
-  }
-
-  remove(key: string, storageType: CacheStorageType): void {
-    switch (storageType) {
-      case 'local':
-        localStorage.removeItem(key);
-        break;
-      case 'session':
-        sessionStorage.removeItem(key);
-        break;
-      case 'memory':
-      default:
-        this.memoryCache.update(cache => {
-          cache.delete(key);
-          return new Map(cache);
-        });
-    }
-  }
-
-  clear(storageType: CacheStorageType): void {
-    switch (storageType) {
-      case 'local':
-        localStorage.clear();
-        break;
-      case 'session':
-        sessionStorage.clear();
-        break;
-      case 'memory':
-      default:
-        this.memoryCache.set(new Map());
-    }
-  }
-
-  has(key: string, storageType: CacheStorageType): boolean {
-    switch (storageType) {
-      case 'local':
-        return localStorage.getItem(key) !== null;
-      case 'session':
-        return sessionStorage.getItem(key) !== null;
-      case 'memory':
-      default:
-        return this.memoryCache().has(key);
-    }
-  }
-}
-
-// api.config.ts
-
-import { CacheStorageType } from './cache.service';
-
-export interface ApiEndpointConfig {
-  url: string | ((id?: number) => string);
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  shouldCache?: boolean;
-  cacheTimeout?: number;
-  cacheStorageType?: CacheStorageType;
-  cacheKey?: string | ((params: { endpointKey: string; method: string; id?: number }) => string);
-  headers?: {[header: string]: string};
-  params?: {[param: string]: string};
-  withCredentials?: boolean;
-  requestTimeout?: number;
-  retryEnabled?: boolean;
-  maxRetries?: number;
-}
-
-export const API_CONFIG = {
-  endpoints: {
-    getUsers: {
-      url: 'https://api.example.com/users',
-      method: 'GET' as const,
-      shouldCache: true,
-      cacheTimeout: 300000, // 5 minutes
-      cacheStorageType: 'local' as CacheStorageType,
-    },
-    createUser: {
-      url: 'https://api.example.com/users',
-      method: 'POST' as const,
-      shouldCache: true,
-      cacheTimeout: 60000, // 1 minute
-      cacheStorageType: 'memory' as CacheStorageType,
-    },
