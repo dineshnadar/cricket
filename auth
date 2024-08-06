@@ -1,5 +1,0 @@
- private isAuthEndpoint(request: HttpRequest<any>): boolean {
-    return Object.entries(API_CONFIG.endpoints).some(([key, endpoint]) => 
-      request.url.includes(endpoint.url) && key.includes('Token') // Check for relevant keys
-    );
-  }
