@@ -1,9 +1,10 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { signalStore, withComputed, withMethods, withState } from '@ngrx/signals';
 import { rxMethod } from '@ngrx/signals/rxjs-interop';
 import { pipe, tap } from 'rxjs';
+import { computed } from '@angular/core';
 
 // Define the form state interface
 interface FormState {
@@ -29,15 +30,21 @@ const useFormStore = signalStore(
     notes: ''
   }),
   withComputed((state) => ({
-    isValid: () => state.firstName().length > 0 && state.lastName().length > 0 && state.email().length > 0,
-    isDirty: () => Object.values(state).some(field => field() !== '')
+    isValid: computed(() => 
+      state.firstName().length > 0 && 
+      state.lastName().length > 0 && 
+      state.email().length > 0
+    ),
+    isDirty: computed(() => 
+      Object.values(state).some(field => field() !== '')
+    )
   })),
   withMethods((store) => ({
     updateField: (field: keyof FormState, value: any) => {
-      store.setState({ [field]: value });
+      store.patchState({ [field]: value } as Partial<FormState>);
     },
     resetForm: () => {
-      store.setState({
+      store.patchState({
         firstName: '',
         lastName: '',
         email: '',
@@ -88,7 +95,7 @@ const useFormStore = signalStore(
         <label for="notes">Notes:</label>
         <textarea id="notes" formControlName="notes"></textarea>
       </div>
-      <button type="submit" [disabled]="!form.valid">Submit</button>
+      <button type="submit" [disabled]="!formStore.isValid()">Submit</button>
       <button type="button" (click)="resetForm()">Reset</button>
     </form>
     <div>Form is valid: {{ formStore.isValid() }}</div>
@@ -110,19 +117,13 @@ export class SimpleFormComponent {
   });
 
   constructor() {
-    this.syncFormWithStore();
+    effect(() => {
+      const formValue = this.form.value;
+      Object.keys(formValue).forEach(key => {
+        this.formStore.updateField(key as keyof FormState, formValue[key as keyof FormState]);
+      });
+    });
   }
-
-  syncFormWithStore = rxMethod<void>(
-    pipe(
-      tap(() => {
-        const formValue = this.form.value;
-        Object.keys(formValue).forEach(key => {
-          this.formStore.updateField(key as keyof FormState, formValue[key as keyof FormState]);
-        });
-      })
-    )
-  );
 
   onSubmit() {
     if (this.form.valid) {
