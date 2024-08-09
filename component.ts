@@ -1,9 +1,9 @@
-import { Component, inject, effect } from '@angular/core';
+import { Component, inject, effect, EffectRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { signalStore, withComputed, withMethods, withState } from '@ngrx/signals';
-import { setProps } from '@ngrx/signals';
 import { computed } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 
 // Define the form state interface
 interface FormState {
@@ -40,10 +40,10 @@ const useFormStore = signalStore(
   })),
   withMethods((store) => ({
     updateField(field: keyof FormState, value: any) {
-      setProps(store, { [field]: value });
+      store.patchState({ [field]: value } as Partial<FormState>);
     },
     resetForm() {
-      setProps(store, {
+      store.patchState({
         firstName: '',
         lastName: '',
         email: '',
@@ -115,12 +115,24 @@ export class SimpleFormComponent {
     notes: ['']
   });
 
+  private formSyncEffect: EffectRef;
+
   constructor() {
-    effect(() => {
+    this.formSyncEffect = effect(() => {
       const formValue = this.form.value;
       Object.keys(formValue).forEach(key => {
-        this.formStore.updateField(key as keyof FormState, formValue[key as keyof FormState]);
+        const typedKey = key as keyof FormState;
+        const value = formValue[typedKey];
+        if (value !== undefined) {
+          this.formStore.updateField(typedKey, value);
+        }
       });
+    }, { allowSignalWrites: true });
+
+    this.form.valueChanges.pipe(
+      takeUntilDestroyed()
+    ).subscribe(() => {
+      this.formSyncEffect.update();
     });
   }
 
