@@ -2,8 +2,7 @@ import { Component, inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { signalStore, withComputed, withMethods, withState } from '@ngrx/signals';
-import { rxMethod } from '@ngrx/signals/rxjs-interop';
-import { pipe, tap } from 'rxjs';
+import { setAllProps } from '@ngrx/signals/operators';
 import { computed } from '@angular/core';
 
 // Define the form state interface
@@ -40,19 +39,17 @@ const useFormStore = signalStore(
     )
   })),
   withMethods((store) => ({
-    updateField: (field: keyof FormState, value: any) => {
-      store.patchState({ [field]: value } as Partial<FormState>);
+    updateField(field: keyof FormState, value: any) {
+      store[field].set(value);
     },
-    resetForm: () => {
-      store.patchState({
-        firstName: '',
-        lastName: '',
-        email: '',
-        sex: '',
-        favoriteColor: '',
-        employed: false,
-        notes: ''
-      });
+    resetForm() {
+      store.firstName.set('');
+      store.lastName.set('');
+      store.email.set('');
+      store.sex.set('');
+      store.favoriteColor.set('');
+      store.employed.set(false);
+      store.notes.set('');
     }
   }))
 );
