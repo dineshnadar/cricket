@@ -1,9 +1,9 @@
-import { Component, inject, effect, EffectRef } from '@angular/core';
+import { Component, inject, effect, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { signalStore, withComputed, withMethods, withState } from '@ngrx/signals';
 import { computed } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, takeUntil } from 'rxjs';
 
 // Define the form state interface
 interface FormState {
@@ -101,7 +101,7 @@ const useFormStore = signalStore(
     <div>Form is dirty: {{ formStore.isDirty() }}</div>
   `
 })
-export class SimpleFormComponent {
+export class SimpleFormComponent implements OnDestroy {
   private fb = inject(FormBuilder);
   formStore = inject(useFormStore);
 
@@ -115,11 +115,12 @@ export class SimpleFormComponent {
     notes: ['']
   });
 
-  private formSyncEffect: EffectRef;
+  private destroy$ = new Subject<void>();
 
   constructor() {
-    this.formSyncEffect = effect(() => {
-      const formValue = this.form.value;
+    this.form.valueChanges.pipe(
+      takeUntil(this.destroy$)
+    ).subscribe(formValue => {
       Object.keys(formValue).forEach(key => {
         const typedKey = key as keyof FormState;
         const value = formValue[typedKey];
@@ -127,12 +128,6 @@ export class SimpleFormComponent {
           this.formStore.updateField(typedKey, value);
         }
       });
-    }, { allowSignalWrites: true });
-
-    this.form.valueChanges.pipe(
-      takeUntilDestroyed()
-    ).subscribe(() => {
-      this.formSyncEffect.update();
     });
   }
 
@@ -146,5 +141,10 @@ export class SimpleFormComponent {
   resetForm() {
     this.form.reset();
     this.formStore.resetForm();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 }
