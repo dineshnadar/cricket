@@ -1,150 +1,113 @@
-import { Component, inject, effect, OnDestroy } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { signalStore, withComputed, withMethods, withState } from '@ngrx/signals';
-import { computed } from '@angular/core';
-import { Subject, takeUntil } from 'rxjs';
-
-// Define the form state interface
-interface FormState {
-  firstName: string;
-  lastName: string;
-  email: string;
-  sex: string;
-  favoriteColor: string;
-  employed: boolean;
-  notes: string;
-}
-
-// Create a signal store for the form
-const useFormStore = signalStore(
-  { providedIn: 'root' },
-  withState<FormState>({
-    firstName: '',
-    lastName: '',
-    email: '',
-    sex: '',
-    favoriteColor: '',
-    employed: false,
-    notes: ''
-  }),
-  withComputed((state) => ({
-    isValid: computed(() => 
-      state.firstName().length > 0 && 
-      state.lastName().length > 0 && 
-      state.email().length > 0
-    ),
-    isDirty: computed(() => 
-      Object.values(state).some(field => field() !== '')
-    )
-  })),
-  withMethods((store) => ({
-    updateField(field: keyof FormState, value: any) {
-      store.patchState({ [field]: value } as Partial<FormState>);
+db.product.aggregate([
+    {
+        $match: { _id: "product1" }  // Match the specific product
     },
-    resetForm() {
-      store.patchState({
-        firstName: '',
-        lastName: '',
-        email: '',
-        sex: '',
-        favoriteColor: '',
-        employed: false,
-        notes: ''
-      });
-    }
-  }))
-);
-
-@Component({
-  selector: 'app-simple-form',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
-  template: `
-    <form [formGroup]="form" (ngSubmit)="onSubmit()">
-      <div>
-        <label for="firstName">First Name:</label>
-        <input id="firstName" formControlName="firstName">
-      </div>
-      <div>
-        <label for="lastName">Last Name:</label>
-        <input id="lastName" formControlName="lastName">
-      </div>
-      <div>
-        <label for="email">Email:</label>
-        <input id="email" formControlName="email" type="email">
-      </div>
-      <div>
-        <label for="sex">Sex:</label>
-        <select id="sex" formControlName="sex">
-          <option value="male">Male</option>
-          <option value="female">Female</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div>
-        <label for="favoriteColor">Favorite Color:</label>
-        <input id="favoriteColor" formControlName="favoriteColor">
-      </div>
-      <div>
-        <label for="employed">Employed:</label>
-        <input id="employed" formControlName="employed" type="checkbox">
-      </div>
-      <div>
-        <label for="notes">Notes:</label>
-        <textarea id="notes" formControlName="notes"></textarea>
-      </div>
-      <button type="submit" [disabled]="!formStore.isValid()">Submit</button>
-      <button type="button" (click)="resetForm()">Reset</button>
-    </form>
-    <div>Form is valid: {{ formStore.isValid() }}</div>
-    <div>Form is dirty: {{ formStore.isDirty() }}</div>
-  `
-})
-export class SimpleFormComponent implements OnDestroy {
-  private fb = inject(FormBuilder);
-  formStore = inject(useFormStore);
-
-  form = this.fb.group({
-    firstName: ['', Validators.required],
-    lastName: ['', Validators.required],
-    email: ['', [Validators.required, Validators.email]],
-    sex: [''],
-    favoriteColor: [''],
-    employed: [false],
-    notes: ['']
-  });
-
-  private destroy$ = new Subject<void>();
-
-  constructor() {
-    this.form.valueChanges.pipe(
-      takeUntil(this.destroy$)
-    ).subscribe(formValue => {
-      Object.keys(formValue).forEach(key => {
-        const typedKey = key as keyof FormState;
-        const value = formValue[typedKey];
-        if (value !== undefined) {
-          this.formStore.updateField(typedKey, value);
+    {
+        $unwind: "$sections"  // Unwind the sections array
+    },
+    {
+        $lookup: {
+            from: "section",  // Name of the Section collection
+            localField: "sections",
+            foreignField: "_id",
+            as: "sectionDetails"
         }
-      });
-    });
-  }
-
-  onSubmit() {
-    if (this.form.valid) {
-      console.log('Form submitted:', this.form.value);
-      // Here you would typically send the form data to a server
+    },
+    {
+        $unwind: "$sectionDetails"  // Unwind the sectionDetails array
+    },
+    {
+        $project: {
+            productName: 1,
+            "sectionDetails.sectionName": 1,
+            "sectionDetails.visibility": {
+                $filter: {
+                    input: "$sectionDetails.visibility",
+                    as: "visibility",
+                    cond: { $eq: ["$$visibility.app", "app1"] }
+                }
+            },
+            "sectionDetails.isEditable": {
+                $filter: {
+                    input: "$sectionDetails.isEditable",
+                    as: "isEditable",
+                    cond: { $eq: ["$$isEditable.app", "app1"] }
+                }
+            },
+            "sectionDetails.isRequired": {
+                $filter: {
+                    input: "$sectionDetails.isRequired",
+                    as: "isRequired",
+                    cond: { $eq: ["$$isRequired.app", "app1"] }
+                }
+            },
+            "sectionDetails.fields": 1
+        }
+    },
+    {
+        $lookup: {
+            from: "fields",  // Name of the Fields collection
+            localField: "sectionDetails.fields",
+            foreignField: "_id",
+            as: "fieldDetails"
+        }
+    },
+    {
+        $project: {
+            productName: 1,
+            "sectionDetails.sectionName": 1,
+            "sectionDetails.visibility": { $arrayElemAt: ["$sectionDetails.visibility.isVisible", 0] },
+            "sectionDetails.isEditable": { $arrayElemAt: ["$sectionDetails.isEditable.isEditable", 0] },
+            "sectionDetails.isRequired": { $arrayElemAt: ["$sectionDetails.isRequired.isRequired", 0] },
+            "fieldDetails": {
+                $map: {
+                    input: "$fieldDetails",
+                    as: "field",
+                    in: {
+                        fieldName: "$$field.fieldName",
+                        visibility: {
+                            $arrayElemAt: [{
+                                $filter: {
+                                    input: "$$field.visibility",
+                                    as: "vis",
+                                    cond: { $eq: ["$$vis.app", "app1"] }
+                                }
+                            }, 0]
+                        },
+                        isEditable: {
+                            $arrayElemAt: [{
+                                $filter: {
+                                    input: "$$field.isEditable",
+                                    as: "edit",
+                                    cond: { $eq: ["$$edit.app", "app1"] }
+                                }
+                            }, 0]
+                        },
+                        isRequired: {
+                            $arrayElemAt: [{
+                                $filter: {
+                                    input: "$$field.isRequired",
+                                    as: "req",
+                                    cond: { $eq: ["$$req.app", "app1"] }
+                                }
+                            }, 0]
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {
+        $project: {
+            productName: 1,
+            "sectionDetails.sectionName": 1,
+            "sectionDetails.visibility": 1,
+            "sectionDetails.isEditable": 1,
+            "sectionDetails.isRequired": 1,
+            "fieldDetails.fieldName": 1,
+            "fieldDetails.visibility.isVisible": 1,
+            "fieldDetails.isEditable.isEditable": 1,
+            "fieldDetails.isRequired.isRequired": 1
+        }
     }
-  }
-
-  resetForm() {
-    this.form.reset();
-    this.formStore.resetForm();
-  }
-
-  ngOnDestroy() {
-    this.destroy$.next();
-    this.destroy$.complete();
-  }
-}
+])
