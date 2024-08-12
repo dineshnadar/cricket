@@ -1,0 +1,282 @@
+// metadata.model.ts
+export interface FieldMetadata {
+  fieldId: string;
+  fieldName: string;
+  fieldType: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'radio';
+  label: string;
+  visible: boolean;
+  editable: boolean;
+  disabled?: boolean; // New property
+  required?: boolean;
+  defaultValue?: any;
+  options?: { value: any; label: string }[];
+  validations?: Array<{
+    name: string;
+    args?: any[];
+  }>;
+  asyncValidations?: Array<{
+    name: string;
+    args?: any[];
+  }>;
+}
+
+// The SectionMetadata interface remains the same
+
+// form-builder.service.ts
+import { Injectable } from '@angular/core';
+import { FormBuilder, FormGroup, FormControl, Validators, AsyncValidatorFn } from '@angular/forms';
+import { FieldMetadata, SectionMetadata } from './metadata.model';
+import { ValidatorService } from './validator.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormBuilderService {
+  constructor(
+    private fb: FormBuilder,
+    private validatorService: ValidatorService
+  ) {}
+
+  buildFormGroup(metadata: SectionMetadata): FormGroup {
+    const group = this.fb.group({});
+    
+    metadata.fields?.forEach(field => {
+      group.addControl(field.fieldName, this.createFormControl(field));
+    });
+
+    metadata.subSections?.forEach(subSection => {
+      group.addControl(subSection.section, this.buildFormGroup(subSection));
+    });
+
+    return group;
+  }
+
+  private createFormControl(field: FieldMetadata): FormControl {
+    const validators = this.validatorService.getValidators(field.validations || []);
+    const asyncValidators = this.validatorService.getAsyncValidators(field.asyncValidations || []);
+
+    // Add conditional required validator
+    if (field.required) {
+      validators.push(this.validatorService.conditionalRequired());
+    }
+
+    const control = this.fb.control(
+      { value: field.defaultValue, disabled: field.disabled },
+      { validators, asyncValidators, updateOn: 'blur' }
+    );
+
+    Object.assign(control, {
+      metadata: field,
+      label: field.label,
+      visible: field.visible
+    });
+
+    return control;
+  }
+}
+
+// validator.service.ts
+import { Injectable } from '@angular/core';
+import { ValidatorFn, AsyncValidatorFn, Validators, AbstractControl } from '@angular/forms';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ValidatorService {
+  private validatorMap: { [key: string]: (...args: any[]) => ValidatorFn } = {
+    required: () => Validators.required,
+    minLength: (min: number) => Validators.minLength(min),
+    maxLength: (max: number) => Validators.maxLength(max),
+    pattern: (pattern: string | RegExp) => Validators.pattern(pattern),
+    // Add more validators as needed
+  };
+
+  private asyncValidatorMap: { [key: string]: (...args: any[]) => AsyncValidatorFn } = {
+    // Implement your async validators here
+  };
+
+  getValidators(validations: Array<{ name: string; args?: any[] }>): ValidatorFn[] {
+    return validations.map(v => this.validatorMap[v.name](...(v.args || [])));
+  }
+
+  getAsyncValidators(validations: Array<{ name: string; args?: any[] }>): AsyncValidatorFn[] {
+    return validations.map(v => this.asyncValidatorMap[v.name](...(v.args || [])));
+  }
+
+  addValidator(name: string, validatorFn: (...args: any[]) => ValidatorFn) {
+    this.validatorMap[name] = validatorFn;
+  }
+
+  addAsyncValidator(name: string, validatorFn: (...args: any[]) => AsyncValidatorFn) {
+    this.asyncValidatorMap[name] = validatorFn;
+  }
+
+  // New method for conditional required validator
+  conditionalRequired(): ValidatorFn {
+    return (control: AbstractControl): {[key: string]: any} | null => {
+      if (control.disabled) {
+        return null;
+      }
+      return Validators.required(control);
+    };
+  }
+}
+
+// dynamic-field.component.ts
+import { Component, Input, OnInit } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { FieldMetadata } from './metadata.model';
+
+@Component({
+  selector: 'app-dynamic-field',
+  template: `
+    <div [formGroup]="form">
+      <label [attr.for]="field.fieldName">
+        {{ field.label }}
+        <span *ngIf="field.required && !isDisabled()">*</span>
+      </label>
+
+      <ng-container [ngSwitch]="field.fieldType">
+        <input *ngSwitchCase="'text'"
+               [formControlName]="field.fieldName"
+               [id]="field.fieldName"
+               [type]="field.fieldType">
+
+        <input *ngSwitchCase="'number'"
+               [formControlName]="field.fieldName"
+               [id]="field.fieldName"
+               type="number">
+
+        <input *ngSwitchCase="'date'"
+               [formControlName]="field.fieldName"
+               [id]="field.fieldName"
+               type="date">
+
+        <select *ngSwitchCase="'select'"
+                [formControlName]="field.fieldName"
+                [id]="field.fieldName">
+          <option *ngFor="let opt of field.options" [value]="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+
+        <div *ngSwitchCase="'radio'">
+          <ng-container *ngFor="let opt of field.options">
+            <input type="radio"
+                   [formControlName]="field.fieldName"
+                   [value]="opt.value"
+                   [id]="field.fieldName + '_' + opt.value">
+            <label [for]="field.fieldName + '_' + opt.value">{{ opt.label }}</label>
+          </ng-container>
+        </div>
+
+        <input *ngSwitchCase="'checkbox'"
+               type="checkbox"
+               [formControlName]="field.fieldName"
+               [id]="field.fieldName">
+
+        <div *ngSwitchDefault>
+          Unsupported field type: {{ field.fieldType }}
+        </div>
+      </ng-container>
+
+      <div *ngIf="!isDisabled() && form.get(field.fieldName).invalid && (form.get(field.fieldName).dirty || form.get(field.fieldName).touched)">
+        <small class="error" *ngIf="form.get(field.fieldName).errors?.required">This field is required.</small>
+        <!-- Add more error messages for other validators -->
+      </div>
+    </div>
+  `
+})
+export class DynamicFieldComponent implements OnInit {
+  @Input() field: FieldMetadata;
+  @Input() form: FormGroup;
+
+  ngOnInit() {
+    const control = this.form.get(this.field.fieldName);
+    if (this.field.disabled) {
+      control.disable();
+    } else {
+      control.enable();
+    }
+  }
+
+  isDisabled(): boolean {
+    return this.form.get(this.field.fieldName).disabled;
+  }
+}
+
+// usage-example.component.ts
+import { Component, OnInit } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { SectionMetadata } from './metadata.model';
+import { FormBuilderService } from './form-builder.service';
+
+@Component({
+  selector: 'app-usage-example',
+  template: `
+    <app-dynamic-form [metadata]="formMetadata" [form]="form"></app-dynamic-form>
+    <button (click)="onSubmit()">Submit</button>
+    <button (click)="toggleAgeField()">Toggle Age Field</button>
+  `
+})
+export class UsageExampleComponent implements OnInit {
+  formMetadata: SectionMetadata = {
+    section: "personalInfo",
+    label: "Personal Information",
+    visible: true,
+    editable: true,
+    fields: [
+      {
+        fieldId: "name",
+        fieldName: "name",
+        fieldType: "text",
+        label: "Full Name",
+        visible: true,
+        editable: true,
+        required: true,
+        validations: [
+          { name: "minLength", args: [3] }
+        ]
+      },
+      {
+        fieldId: "age",
+        fieldName: "age",
+        fieldType: "number",
+        label: "Age",
+        visible: true,
+        editable: true,
+        required: true,
+        disabled: false,
+        validations: [
+          { name: "min", args: [18] }
+        ]
+      }
+    ],
+    // ... (subSections remain the same)
+  };
+
+  form: FormGroup;
+
+  constructor(private formBuilder: FormBuilderService) {}
+
+  ngOnInit() {
+    this.form = this.formBuilder.buildFormGroup(this.formMetadata);
+  }
+
+  onSubmit() {
+    if (this.form.valid) {
+      console.log(this.form.value);
+    } else {
+      console.log('Form is invalid');
+    }
+  }
+
+  toggleAgeField() {
+    const ageControl = this.form.get('age');
+    if (ageControl.disabled) {
+      ageControl.enable();
+    } else {
+      ageControl.disable();
+    }
+  }
+}
