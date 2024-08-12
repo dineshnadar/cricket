@@ -1,642 +1,341 @@
-Query Breakdown
-Matching Product:
-The query starts by filtering the Product collection to find the specific product by its productName.
-Unwinding Sections:
-The $unwind operator is used to break down the sections array into individual documents for easier processing.
-Lookups:
-The query performs lookups to join the Sections and Fields collections with the product based on their IDs.
-Conditional Logic with addFields:
-For App Provided: The query first checks for the provided app. If mDefault is provided in the input and is true, it directly checks for the mDefault value and skips the default logic. If mDefault is not provided, it checks the default and role logic.
-For No App Provided: The fallback is to check for "app": "default" and apply the role logic if the role is present.
-Projection:
-Finally, the query projects the relevant fields, including the productName, sectionName, and isRequired status for sections and fields.
-
-
-
-db.product.aggregate([
-    {
-        $match: { productName: "Product 1" }  // Match the specific product
-    },
-    {
-        $unwind: "$sections"  // Unwind the sections array
-    },
-    {
-        $lookup: {
-            from: "section",
-            localField: "sections",
-            foreignField: "_id",
-            as: "sectionDetails"
-        }
-    },
-    { $unwind: "$sectionDetails" },
-    {
-        $lookup: {
-            from: "fields",
-            localField: "sectionDetails.fields",
-            foreignField: "_id",
-            as: "fieldDetails"
-        }
-    },
-    {
-        $addFields: {
-            "sectionDetails.isVisible": {
-                $cond: {
-                    if: {
-                        $and: [
-                            { $eq: ["$sectionDetails.visibility.app", app] },  // Provided app check
-                            {
-                                $cond: {
-                                    if: { $eq: [mDefault, true] },  // If mDefault is true
-                                    then: { $eq: ["$sectionDetails.visibility.mDefault", true] },
-                                    else: {  // If mDefault is not provided, fallback to default and role
-                                        $cond: {
-                                            if: { $eq: ["$sectionDetails.visibility.default", true] },
-                                            then: {
-                                                $or: [
-                                                    { $in: [role, "$sectionDetails.visibility.role"] },
-                                                    { $eq: ["$sectionDetails.visibility.default", true] }
-                                                ]
-                                            },
-                                            else: false
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                    then: true,
-                    else: {  // Fallback to default if no app provided
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $eq: ["$sectionDetails.visibility.app", "default"] },
-                                    {
-                                        $cond: {
-                                            if: { $gt: [{ $size: "$sectionDetails.visibility.role" }, 0] },  // If role array is present and not empty
-                                            then: { $in: [role, "$sectionDetails.visibility.role"] },
-                                            else: { $eq: ["$sectionDetails.visibility.default", true] }
-                                        }
-                                    }
-                                ]
-                            },
-                            then: true,
-                            else: false
-                        }
-                    }
-                }
-            },
-            "sectionDetails.isEditable": {
-                $cond: {
-                    if: {
-                        $and: [
-                            { $eq: ["$sectionDetails.isEditable.app", app] },  // Provided app check
-                            {
-                                $cond: {
-                                    if: { $eq: [mDefault, true] },  // If mDefault is true
-                                    then: { $eq: ["$sectionDetails.isEditable.mDefault", true] },
-                                    else: {  // If mDefault is not provided, fallback to default and role
-                                        $cond: {
-                                            if: { $eq: ["$sectionDetails.isEditable.default", true] },
-                                            then: {
-                                                $or: [
-                                                    { $in: [role, "$sectionDetails.isEditable.role"] },
-                                                    { $eq: ["$sectionDetails.isEditable.default", true] }
-                                                ]
-                                            },
-                                            else: false
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                    then: true,
-                    else: {  // Fallback to default if no app provided
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $eq: ["$sectionDetails.isEditable.app", "default"] },
-                                    {
-                                        $cond: {
-                                            if: { $gt: [{ $size: "$sectionDetails.isEditable.role" }, 0] },  // If role array is present and not empty
-                                            then: { $in: [role, "$sectionDetails.isEditable.role"] },
-                                            else: { $eq: ["$sectionDetails.isEditable.default", true] }
-                                        }
-                                    }
-                                ]
-                            },
-                            then: true,
-                            else: false
-                        }
-                    }
-                }
-            },
-            "sectionDetails.isRequired": {
-                $cond: {
-                    if: {
-                        $and: [
-                            { $eq: ["$sectionDetails.isRequired.app", app] },  // Provided app check
-                            {
-                                $cond: {
-                                    if: { $eq: [mDefault, true] },  // If mDefault is true
-                                    then: { $eq: ["$sectionDetails.isRequired.mDefault", true] },
-                                    else: {  // If mDefault is not provided, fallback to default and role
-                                        $cond: {
-                                            if: { $eq: ["$sectionDetails.isRequired.default", true] },
-                                            then: {
-                                                $or: [
-                                                    { $in: [role, "$sectionDetails.isRequired.role"] },
-                                                    { $eq: ["$sectionDetails.isRequired.default", true] }
-                                                ]
-                                            },
-                                            else: false
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                    then: true,
-                    else: {  // Fallback to default if no app provided
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $eq: ["$sectionDetails.isRequired.app", "default"] },
-                                    {
-                                        $cond: {
-                                            if: { $gt: [{ $size: "$sectionDetails.isRequired.role" }, 0] },  // If role array is present and not empty
-                                            then: { $in: [role, "$sectionDetails.isRequired.role"] },
-                                            else: { $eq: ["$sectionDetails.isRequired.default", true] }
-                                        }
-                                    }
-                                ]
-                            },
-                            then: true,
-                            else: false
-                        }
-                    }
-                }
-            },
-            "fieldDetails": {
-                $map: {
-                    input: "$fieldDetails",
-                    as: "field",
-                    in: {
-                        fieldName: "$$field.fieldName",
-                        isVisible: {
-                            $cond: {
-                                if: {
-                                    $and: [
-                                        { $eq: ["$$field.visibility.app", app] },  // Provided app check
-                                        {
-                                            $cond: {
-                                                if: { $eq: [mDefault, true] },  // If mDefault is true
-                                                then: { $eq: ["$$field.visibility.mDefault", true] },
-                                                else: {
-                                                    $cond: {
-                                                        if: { $eq: ["$$field.visibility.default", true] },
-                                                        then: {
-                                                            $or: [
-                                                                { $in: [role, "$$field.visibility.role"] },
-                                                                { $eq: ["$$field.visibility.default", true] }
-                                                            ]
-                                                        },
-                                                        else: false
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    ]
-                                },
-                                then: true,
-                                else: {
-                                    $cond: {
-                                        if: {
-                                            $and: [
-                                                { $eq: ["$$field.visibility.app", "default"] },
-                                                {
-                                                    $cond: {
-                                                        if: { $gt: [{ $size: "$$field.visibility.role" }, 0] },  // If role array is present and not empty
-                                                        then: { $in: [role, "$$field.visibility.role"] },
-                                                        else: { $eq: ["$$field.visibility.default", true] }
-                                                    }
-                                                }
-                                            ]
-                                        },
-                                        then: true,
-                                        else: false
-                                    }
-                                }
-                            }
-                        },
-                        isEditable: {
-                            $cond: {
-                                if: {
-                                    $and: [
-                                        { $eq: ["$$field.isEditable.app", app] },  // Provided app check
-                                        {
-                                            $cond: {
-                                                if: { $eq: [mDefault, true] },  // If mDefault is true
-                                                then: { $eq: ["$$field.isEditable.mDefault", true] },
-                                                else: {
-                                                    $cond: {
-                                                        if: { $eq: ["$$field.isEditable.default", true] },
-                                                        then: {
-                                                            $or: [
-                                                                { $in: [role, "$$field.isEditable.role"] },
-                                                                { $eq: ["$$field.isEditable.default", true] }
-                                                            ]
-                                                        },
-                                                        else: false
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    ]
-                                },
-                                then: true,
-                                else: {
-                                    $cond: {
-                                        if: {
-                                            $and: [
-                                                { $eq: ["$$field.isEditable.app", "default"] },
-                                                {
-                                                    $cond: {
-                                                        if: { $gt: [{ $size: "$$field.isEditable.role" }, 0] },  // If role array is present and not empty
-                                                        then: { $in: [role, "$$field.isEditable.role"] },
-                                                        else: { $eq: ["$$field.isEditable.default", true] }
-                                                    }
-                                                }
-                                            ]
-                                        },
-                                        then: true,
-                                        else: false
-                                    }
-                                }
-                            }
-                        },
-                        isRequired: {
-                            $cond: {
-                                if: {
-                                    $and: [
-                                        { $eq: ["$$field.isRequired.app", app] },  // Provided app check
-                                        {
-                                            $cond: {
-                                                if: { $eq: [mDefault, true] },  // If mDefault is true
-                                                then: { $eq: ["$$field.isRequired.mDefault", true] },
-                                                else: {
-                                                    $cond: {
-                                                        if: { $eq: ["$$field.isRequired.default", true] },
-                                                        then: {
-                                                            $or: [
-                                                                { $in: [role, "$$field.isRequired.role"] },
-                                                                { $eq: ["$$field.isRequired.default", true] }
-                                                            ]
-                                                        },
-                                                        else: false
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    ]
-                                },
-                                then: true,
-                                else: {
-                                    $cond: {
-                                        if: {
-                                            $and: [
-                                                { $eq: ["$$field.isRequired.app", "default"] },
-                                                {
-                                                    $cond: {
-                                                        if: { $gt: [{ $size: "$$field.isRequired.role" }, 0] },  // If role array is present and not empty
-                                                        then: { $in: [role, "$$field.isRequired.role"] },
-                                                        else: { $eq: ["$$field.isRequired.default", true] }
-                                                    }
-                                                }
-                                            ]
-                                        },
-                                        then: true,
-                                        else: false
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    {
-        $project: {
-            productName: 1,
-            "sectionDetails.sectionName": 1,
-            "sectionDetails.isVisible": 1,
-            "sectionDetails.isEditable": 1,
-            "sectionDetails.isRequired": 1,
-            "sectionDetails.fieldDetails.fieldName": 1,
-            "sectionDetails.fieldDetails.isVisible": 1,
-            "sectionDetails.fieldDetails.isEditable": 1,
-            "sectionDetails.fieldDetails.isRequired": 1
-        }
-    }
-]);
-
-
-
------------------------------------------------------------
-
-{
-    "productName": "Product 1",
-    "sectionDetails": [
-        {
-            "sectionName": "Section 1",
-            "isVisible": true,
-            "isEditable": true,
-            "isRequired": true,
-            "fieldDetails": [
-                {
-                    "fieldName": "Some Field Name",
-                    "isVisible": true,
-                    "isEditable": true,
-                    "isRequired": false
-                },
-                {
-                    "fieldName": "Another Field Name",
-                    "isVisible": false,
-                    "isEditable": false,
-                    "isRequired": false
-                }
-            ]
-        },
-        {
-            "sectionName": "Section 2",
-            "isVisible": true,
-            "isEditable": false,
-            "isRequired": true,
-            "fieldDetails": [
-                {
-                    "fieldName": "Third Field Name",
-                    "isVisible": true,
-                    "isEditable": false,
-                    "isRequired": true
-                }
-            ]
-        }
-    ]
+// src/app/models/profile.model.ts
+export interface Profile {
+  profileIdentifier: string;
+  roles: string[];
+  partyDetails: PartyDetails;
 }
 
----------------------
-Java code
-
-import com.mongodb.client.AggregateIterable;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import org.bson.Document;
-
-import java.util.Arrays;
-import java.util.List;
-
-public class MongoDBAggregationExample {
-
-    public static void main(String[] args) {
-        String uri = "your_mongodb_connection_string";
-
-        try (MongoClient mongoClient = MongoClients.create(uri)) {
-
-            MongoDatabase database = mongoClient.getDatabase("yourDatabaseName");
-            MongoCollection<Document> collection = database.getCollection("product");
-
-            // Example input
-            String productName = "Product 1";
-            String app = "app1";  // or set to null if app is not provided
-            boolean mDefault = true;  // or false
-            List<String> roles = Arrays.asList("admin", "nao");  // Example roles input
-
-            // Aggregation pipeline
-            List<Document> pipeline = Arrays.asList(
-                new Document("$match", new Document("productName", productName)),
-                new Document("$unwind", "$sections"),
-                new Document("$lookup", new Document("from", "section")
-                    .append("localField", "sections")
-                    .append("foreignField", "_id")
-                    .append("as", "sectionDetails")),
-                new Document("$unwind", "$sectionDetails"),
-                new Document("$lookup", new Document("from", "fields")
-                    .append("localField", "sectionDetails.fields")
-                    .append("foreignField", "_id")
-                    .append("as", "fieldDetails")),
-                new Document("$addFields", new Document("sectionDetails.isVisible",
-                    new Document("$cond", Arrays.asList(
-                        new Document("$and", Arrays.asList(
-                            new Document("$eq", Arrays.asList("$sectionDetails.visibility.app", app)),
-                            new Document("$cond", Arrays.asList(
-                                new Document("$eq", Arrays.asList(mDefault, true)),
-                                new Document("$eq", Arrays.asList("$sectionDetails.visibility.mDefault", true)),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$sectionDetails.visibility.default", true)),
-                                    new Document("$or", Arrays.asList(
-                                        new Document("$in", Arrays.asList(roles, "$sectionDetails.visibility.role")),
-                                        new Document("$eq", Arrays.asList("$sectionDetails.visibility.default", true))
-                                    )),
-                                    false
-                                ))
-                            ))
-                        )),
-                        true,
-                        new Document("$cond", Arrays.asList(
-                            new Document("$and", Arrays.asList(
-                                new Document("$eq", Arrays.asList("$sectionDetails.visibility.app", "default")),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$gt", Arrays.asList(new Document("$size", "$sectionDetails.visibility.role"), 0)),
-                                    new Document("$in", Arrays.asList(roles, "$sectionDetails.visibility.role")),
-                                    new Document("$eq", Arrays.asList("$sectionDetails.visibility.default", true))
-                                ))
-                            )),
-                            true,
-                            false
-                        ))
-                    ))
-                )),
-                new Document("$addFields", new Document("sectionDetails.isEditable",
-                    new Document("$cond", Arrays.asList(
-                        new Document("$and", Arrays.asList(
-                            new Document("$eq", Arrays.asList("$sectionDetails.isEditable.app", app)),
-                            new Document("$cond", Arrays.asList(
-                                new Document("$eq", Arrays.asList(mDefault, true)),
-                                new Document("$eq", Arrays.asList("$sectionDetails.isEditable.mDefault", true)),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$sectionDetails.isEditable.default", true)),
-                                    new Document("$or", Arrays.asList(
-                                        new Document("$in", Arrays.asList(roles, "$sectionDetails.isEditable.role")),
-                                        new Document("$eq", Arrays.asList("$sectionDetails.isEditable.default", true))
-                                    )),
-                                    false
-                                ))
-                            ))
-                        )),
-                        true,
-                        new Document("$cond", Arrays.asList(
-                            new Document("$and", Arrays.asList(
-                                new Document("$eq", Arrays.asList("$sectionDetails.isEditable.app", "default")),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$gt", Arrays.asList(new Document("$size", "$sectionDetails.isEditable.role"), 0)),
-                                    new Document("$in", Arrays.asList(roles, "$sectionDetails.isEditable.role")),
-                                    new Document("$eq", Arrays.asList("$sectionDetails.isEditable.default", true))
-                                ))
-                            )),
-                            true,
-                            false
-                        ))
-                    ))
-                )),
-                new Document("$addFields", new Document("sectionDetails.isRequired",
-                    new Document("$cond", Arrays.asList(
-                        new Document("$and", Arrays.asList(
-                            new Document("$eq", Arrays.asList("$sectionDetails.isRequired.app", app)),
-                            new Document("$cond", Arrays.asList(
-                                new Document("$eq", Arrays.asList(mDefault, true)),
-                                new Document("$eq", Arrays.asList("$sectionDetails.isRequired.mDefault", true)),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$sectionDetails.isRequired.default", true)),
-                                    new Document("$or", Arrays.asList(
-                                        new Document("$in", Arrays.asList(roles, "$sectionDetails.isRequired.role")),
-                                        new Document("$eq", Arrays.asList("$sectionDetails.isRequired.default", true))
-                                    )),
-                                    false
-                                ))
-                            ))
-                        )),
-                        true,
-                        new Document("$cond", Arrays.asList(
-                            new Document("$and", Arrays.asList(
-                                new Document("$eq", Arrays.asList("$sectionDetails.isRequired.app", "default")),
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$gt", Arrays.asList(new Document("$size", "$sectionDetails.isRequired.role"), 0)),
-                                    new Document("$in", Arrays.asList(roles, "$sectionDetails.isRequired.role")),
-                                    new Document("$eq", Arrays.asList("$sectionDetails.isRequired.default", true))
-                                ))
-                            )),
-                            true,
-                            false
-                        ))
-                    ))
-                )),
-                new Document("$addFields", new Document("fieldDetails",
-                    new Document("$map", new Document("input", "$fieldDetails")
-                        .append("as", "field")
-                        .append("in", new Document("fieldName", "$$field.fieldName")
-                            .append("isVisible", new Document("$cond", Arrays.asList(
-                                new Document("$and", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$$field.visibility.app", app)),
-                                    new Document("$cond", Arrays.asList(
-                                        new Document("$eq", Arrays.asList(mDefault, true)),
-                                        new Document("$eq", Arrays.asList("$$field.visibility.mDefault", true)),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$eq", Arrays.asList("$$field.visibility.default", true)),
-                                            new Document("$or", Arrays.asList(
-                                                new Document("$in", Arrays.asList(roles, "$$field.visibility.role")),
-                                                new Document("$eq", Arrays.asList("$$field.visibility.default", true))
-                                            )),
-                                            false
-                                        ))
-                                    ))
-                                )),
-                                true,
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$and", Arrays.asList(
-                                        new Document("$eq", Arrays.asList("$$field.visibility.app", "default")),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$gt", Arrays.asList(new Document("$size", "$$field.visibility.role"), 0)),
-                                            new Document("$in", Arrays.asList(roles, "$$field.visibility.role")),
-                                            new Document("$eq", Arrays.asList("$$field.visibility.default", true))
-                                        ))
-                                    )),
-                                    true,
-                                    false
-                                ))
-                            )))
-                            .append("isEditable", new Document("$cond", Arrays.asList(
-                                new Document("$and", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$$field.isEditable.app", app)),
-                                    new Document("$cond", Arrays.asList(
-                                        new Document("$eq", Arrays.asList(mDefault, true)),
-                                        new Document("$eq", Arrays.asList("$$field.isEditable.mDefault", true)),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$eq", Arrays.asList("$$field.isEditable.default", true)),
-                                            new Document("$or", Arrays.asList(
-                                                new Document("$in", Arrays.asList(roles, "$$field.isEditable.role")),
-                                                new Document("$eq", Arrays.asList("$$field.isEditable.default", true))
-                                            )),
-                                            false
-                                        ))
-                                    ))
-                                )),
-                                true,
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$and", Arrays.asList(
-                                        new Document("$eq", Arrays.asList("$$field.isEditable.app", "default")),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$gt", Arrays.asList(new Document("$size", "$$field.isEditable.role"), 0)),
-                                            new Document("$in", Arrays.asList(roles, "$$field.isEditable.role")),
-                                            new Document("$eq", Arrays.asList("$$field.isEditable.default", true))
-                                        ))
-                                    )),
-                                    true,
-                                    false
-                                ))
-                            )))
-                            .append("isRequired", new Document("$cond", Arrays.asList(
-                                new Document("$and", Arrays.asList(
-                                    new Document("$eq", Arrays.asList("$$field.isRequired.app", app)),
-                                    new Document("$cond", Arrays.asList(
-                                        new Document("$eq", Arrays.asList(mDefault, true)),
-                                        new Document("$eq", Arrays.asList("$$field.isRequired.mDefault", true)),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$eq", Arrays.asList("$$field.isRequired.default", true)),
-                                            new Document("$or", Arrays.asList(
-                                                new Document("$in", Arrays.asList(roles, "$$field.isRequired.role")),
-                                                new Document("$eq", Arrays.asList("$$field.isRequired.default", true))
-                                            )),
-                                            false
-                                        ))
-                                    ))
-                                )),
-                                true,
-                                new Document("$cond", Arrays.asList(
-                                    new Document("$and", Arrays.asList(
-                                        new Document("$eq", Arrays.asList("$$field.isRequired.app", "default")),
-                                        new Document("$cond", Arrays.asList(
-                                            new Document("$gt", Arrays.asList(new Document("$size", "$$field.isRequired.role"), 0)),
-                                            new Document("$in", Arrays.asList(roles, "$$field.isRequired.role")),
-                                            new Document("$eq", Arrays.asList("$$field.isRequired.default", true))
-                                        ))
-                                    )),
-                                    true,
-                                    false
-                                ))
-                            )))
-                        ))
-                )),
-                new Document("$project", new Document("productName", 1)
-                    .append("sectionDetails.sectionName", 1)
-                    .append("sectionDetails.isVisible", 1)
-                    .append("sectionDetails.isEditable", 1)
-                    .append("sectionDetails.isRequired", 1)
-                    .append("sectionDetails.fieldDetails.fieldName", 1)
-                    .append("sectionDetails.fieldDetails.isVisible", 1)
-                    .append("sectionDetails.fieldDetails.isEditable", 1)
-                    .append("sectionDetails.fieldDetails.isRequired", 1))
-            );
-
-            // Execute the aggregation query
-            AggregateIterable<Document> result = collection.aggregate(pipeline);
-
-            // Output the results
-            for (Document doc : result) {
-                System.out.println(doc.toJson());
-            }
-        }
-    }
+export interface PartyDetails {
+  personalInfo: PersonalInfo;
+  contact: Contact;
+  financialInfo: FinancialInfo;
+  professional: Professional;
+  relationships: Relationship[];
 }
+
+export interface PersonalInfo {
+  nameInfo: {
+    firstName: string;
+    lastName: string;
+  };
+  ssn: {
+    type: string;
+    number: string;
+  };
+  age: number;
+  dob: string;
+  married: boolean;
+  usa: string;
+  identification: Array<{
+    type: string;
+    number: string;
+  }>;
+}
+
+// Other interfaces (Contact, FinancialInfo, Professional, Relationship) would be defined here
+
+// src/app/services/profile-builder.service.ts
+import { Injectable } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { Observable, forkJoin } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { Profile } from '../models/profile.model';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ProfileBuilderService {
+  constructor(
+    private fb: FormBuilder,
+    private http: HttpClient
+  ) {}
+
+  createProfilesForm(): FormGroup {
+    return this.fb.group({
+      profiles: this.fb.array([])
+    });
+  }
+
+  createProfileForm(): FormGroup {
+    return this.fb.group({
+      profileIdentifier: [''],
+      roles: this.fb.array([]),
+      partyDetails: this.createPartyDetailsForm()
+    });
+  }
+
+  private createPartyDetailsForm(): FormGroup {
+    return this.fb.group({
+      personalInfo: this.createPersonalInfoForm(),
+      contact: this.fb.group({}),  // Implement full structure as needed
+      financialInfo: this.fb.group({}),  // Implement full structure as needed
+      professional: this.fb.group({}),  // Implement full structure as needed
+      relationships: this.fb.array([])
+    });
+  }
+
+  private createPersonalInfoForm(): FormGroup {
+    return this.fb.group({
+      nameInfo: this.fb.group({
+        firstName: ['', [Validators.required, Validators.minLength(2)]],
+        lastName: ['', [Validators.required, Validators.minLength(2)]]
+      }),
+      ssn: this.fb.group({
+        type: ['', Validators.required],
+        number: ['', [Validators.required, Validators.pattern(/^\d{3}-\d{2}-\d{4}$/)]]
+      }),
+      age: [null, [Validators.required, Validators.min(0), Validators.max(120)]],
+      dob: ['', Validators.required],
+      married: [false],
+      usa: ['N'],
+      identification: this.fb.array([])
+    });
+  }
+
+  loadProfileData(partyId: string): Observable<{ profiles: Profile[], metadata: any }> {
+    return forkJoin({
+      profiles: this.getProfilesByPartyId(partyId),
+      metadata: this.getMetadata(partyId)
+    });
+  }
+
+  private getProfilesByPartyId(partyId: string): Observable<Profile[]> {
+    return this.http.get<Profile[]>(`/api/profiles/${partyId}`);
+  }
+
+  private getMetadata(partyId: string): Observable<any> {
+    return this.http.get<any>(`/api/metadata/${partyId}`);
+  }
+
+  applyDataToForm(profilesForm: FormGroup, profiles: Profile[], metadata: any): void {
+    const profilesArray = profilesForm.get('profiles') as FormArray;
+    profilesArray.clear();
+
+    profiles.forEach(profile => {
+      const profileForm = this.createProfileForm();
+      this.patchProfileForm(profileForm, profile);
+      this.applyMetadataToProfile(profileForm, metadata);
+      profilesArray.push(profileForm);
+    });
+  }
+
+  private patchProfileForm(profileForm: FormGroup, profile: Profile): void {
+    profileForm.patchValue(profile);
+    this.patchFormArray(profileForm.get('roles') as FormArray, profile.roles);
+    // Patch other nested structures as needed
+  }
+
+  private patchFormArray(formArray: FormArray, data: any[]): void {
+    formArray.clear();
+    data.forEach(item => formArray.push(this.fb.control(item)));
+  }
+
+  private applyMetadataToProfile(profileForm: FormGroup, metadata: any): void {
+    Object.keys(metadata).forEach(key => {
+      const control = profileForm.get(key);
+      if (control && metadata[key]) {
+        if (metadata[key].visible === false) {
+          control.disable();
+        }
+        if (metadata[key].editable === false) {
+          control.disable();
+        }
+        // Apply other metadata properties as needed
+      }
+    });
+  }
+
+  addProfile(profilesForm: FormGroup): void {
+    const profilesArray = profilesForm.get('profiles') as FormArray;
+    profilesArray.push(this.createProfileForm());
+  }
+
+  removeProfile(profilesForm: FormGroup, index: number): void {
+    const profilesArray = profilesForm.get('profiles') as FormArray;
+    profilesArray.removeAt(index);
+  }
+
+  saveProfiles(profiles: Profile[]): Observable<Profile[]> {
+    return this.http.post<Profile[]>('/api/profiles', profiles);
+  }
+}
+
+// src/app/containers/profile-builder/profile-builder.component.ts
+import { Component, OnInit, Input } from '@angular/core';
+import { FormGroup, FormArray } from '@angular/forms';
+import { ProfileBuilderService } from '../../services/profile-builder.service';
+import { Profile } from '../../models/profile.model';
+
+@Component({
+  selector: 'app-profile-builder',
+  templateUrl: './profile-builder.component.html'
+})
+export class ProfileBuilderComponent implements OnInit {
+  @Input() partyId?: string;
+  
+  profilesForm: FormGroup;
+  metadata: any = {};
+
+  constructor(private profileBuilderService: ProfileBuilderService) {}
+
+  ngOnInit() {
+    this.createForm();
+    if (this.partyId) {
+      this.loadData();
+    } else {
+      this.addNewProfile();
+    }
+  }
+
+  private createForm() {
+    this.profilesForm = this.profileBuilderService.createProfilesForm();
+  }
+
+  private loadData() {
+    this.profileBuilderService.loadProfileData(this.partyId).subscribe(
+      ({ profiles, metadata }) => {
+        this.metadata = metadata;
+        this.profileBuilderService.applyDataToForm(this.profilesForm, profiles, metadata);
+      },
+      error => console.error('Error loading profile data:', error)
+    );
+  }
+
+  addNewProfile() {
+    this.profileBuilderService.addProfile(this.profilesForm);
+  }
+
+  removeProfile(index: number) {
+    this.profileBuilderService.removeProfile(this.profilesForm, index);
+  }
+
+  onSubmit() {
+    if (this.profilesForm.valid) {
+      const profilesData: Profile[] = this.profilesForm.value.profiles;
+      this.profileBuilderService.saveProfiles(profilesData).subscribe(
+        result => console.log('Profiles saved successfully', result),
+        error => console.error('Error saving profiles:', error)
+      );
+    } else {
+      this.markFormGroupTouched(this.profilesForm);
+    }
+  }
+
+  private markFormGroupTouched(formGroup: FormGroup | FormArray) {
+    Object.values(formGroup.controls).forEach(control => {
+      if (control instanceof FormGroup || control instanceof FormArray) {
+        this.markFormGroupTouched(control);
+      } else {
+        control.markAsTouched();
+      }
+    });
+  }
+}
+
+// src/app/components/personal-info/personal-info.component.ts
+import { Component, Input } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+
+@Component({
+  selector: 'app-personal-info',
+  templateUrl: './personal-info.component.html'
+})
+export class PersonalInfoComponent {
+  @Input() personalInfoForm: FormGroup;
+  @Input() metadata: any;
+
+  addIdentification() {
+    // Implementation for adding identification
+  }
+
+  removeIdentification(index: number) {
+    // Implementation for removing identification
+  }
+}
+
+// src/app/containers/profile-builder/profile-builder.component.html
+<form [formGroup]="profilesForm" (ngSubmit)="onSubmit()">
+  <div formArrayName="profiles">
+    <div *ngFor="let profileForm of profilesForm.get('profiles')['controls']; let i = index">
+      <div [formGroupName]="i">
+        <h3>Profile {{ i + 1 }}</h3>
+        
+        <div formGroupName="partyDetails">
+          <app-personal-info 
+            [personalInfoForm]="profileForm.get('partyDetails.personalInfo')"
+            [metadata]="metadata.personalInfo">
+          </app-personal-info>
+          
+          <!-- Other sections (Contact, Financial, Professional, etc.) would go here -->
+        </div>
+        
+      </div>
+      <button type="button" (click)="removeProfile(i)">Remove Profile</button>
+    </div>
+  </div>
+  <button type="button" (click)="addNewProfile()">Add New Profile</button>
+  <button type="submit">Submit</button>
+</form>
+
+// src/app/components/personal-info/personal-info.component.html
+<div [formGroup]="personalInfoForm">
+  <div formGroupName="nameInfo">
+    <label>
+      First Name:
+      <input formControlName="firstName">
+    </label>
+    <label>
+      Last Name:
+      <input formControlName="lastName">
+    </label>
+  </div>
+  
+  <div formGroupName="ssn">
+    <label>
+      SSN Type:
+      <input formControlName="type">
+    </label>
+    <label>
+      SSN Number:
+      <input formControlName="number">
+    </label>
+  </div>
+  
+  <label>
+    Age:
+    <input formControlName="age" type="number">
+  </label>
+  
+  <label>
+    Date of Birth:
+    <input formControlName="dob" type="date">
+  </label>
+  
+  <label>
+    Married:
+    <input formControlName="married" type="checkbox">
+  </label>
+  
+  <label>
+    USA:
+    <input formControlName="usa">
+  </label>
+  
+  <div formArrayName="identification">
+    <div *ngFor="let id of personalInfoForm.get('identification')['controls']; let i = index">
+      <div [formGroupName]="i">
+        <label>
+          ID Type:
+          <input formControlName="type">
+        </label>
+        <label>
+          ID Number:
+          <input formControlName="number">
+        </label>
+        <button type="button" (click)="removeIdentification(i)">Remove</button>
+      </div>
+    </div>
+    <button type="button" (click)="addIdentification()">Add Identification</button>
+  </div>
+</div>
