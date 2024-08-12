@@ -149,3 +149,36 @@ export class PersonalInfoComponent {
     <button type="submit" [disabled]="personalInfoForm.invalid">Save</button>
   </form>
 </ng-template>
+
+const metadata = {
+      section: "personalInfo",
+      label: "Personal Info",
+      visible: true,
+      editable: true,
+      fields: [{
+        fieldId: "sds",
+        fieldName: "age",
+        label: "Age",
+        visible: true,
+        editable: true,
+      }],
+      subSection: [{
+        section: "nameInfo",
+        label: "Name Info",
+        visible: true,
+        editable: true,
+        fields: [{
+          fieldId: "NA",
+          fieldName: "firstName",
+          label: "First Name",
+          visible: true,
+          editable: true,
+        }, {
+          fieldId: "NA",
+          fieldName: "lastName",
+          label: "Last Name",
+          visible: true,
+          editable: true,
+        }]
+      }]
+    };
