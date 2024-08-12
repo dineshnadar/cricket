@@ -20,7 +20,15 @@ export interface FieldMetadata {
   }>;
 }
 
-// The SectionMetadata interface remains the same
+interface SectionMetadata {
+  section: string;
+  label: string;
+  visible: boolean;
+  editable: boolean;
+  fields?: FieldMetadata[];
+  subSection?: SectionMetadata[];
+}
+
 
 // form-builder.service.ts
 import { Injectable } from '@angular/core';
