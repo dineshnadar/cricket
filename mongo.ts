@@ -94,11 +94,14 @@ export class ProfileBuilderService {
   }
 
   loadProfileData(partyId: string): Observable<{ profiles: Profile[], metadata: any }> {
-    return forkJoin({
-      profiles: this.getProfilesByPartyId(partyId),
-      metadata: this.getMetadata(partyId)
-    });
-  }
+  const profilesObservable = partyId ? this.getProfilesByPartyId(partyId) : of([]);
+
+  return forkJoin({
+    profiles: profilesObservable,
+    metadata: this.getMetadata(partyId)
+  });
+}
+
 
   private getProfilesByPartyId(partyId: string): Observable<Profile[]> {
     return this.http.get<Profile[]>(`/api/profiles/${partyId}`);
