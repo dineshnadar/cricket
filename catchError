@@ -1,0 +1,126 @@
+// client-info.component.ts
+import { Component, inject } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { computed, effect, signal } from '@angular/core';
+import { catchError, switchMap, of } from 'rxjs';
+
+interface ClientInfo {
+  name: string;
+  riskRank: number;
+  cipStatus: string;
+  kycStatus: string;
+  periodicReviewDueDate: string;
+  remainingDays: number;
+  workLink: string;
+}
+
+interface FieldVisibility {
+  showName: boolean;
+  showRiskRank: boolean;
+  showCipStatus: boolean;
+  showKycStatus: boolean;
+  showPeriodicReview: boolean;
+  showWorkLink: boolean;
+}
+
+@Component({
+  selector: 'app-client-info',
+  template: `
+    <div *ngIf="clientInfo() as client; else errorTemplate">
+      <h2 *ngIf="fieldVisibility().showName">{{client.name}}</h2>
+      <p *ngIf="fieldVisibility().showRiskRank">Risk Rank: {{client.riskRank}}</p>
+      <p *ngIf="fieldVisibility().showCipStatus">CIP Status: {{client.cipStatus}}</p>
+      <p *ngIf="fieldVisibility().showKycStatus">KYC Status: {{client.kycStatus}}</p>
+      <p *ngIf="fieldVisibility().showPeriodicReview">
+        Periodic Review Due: {{client.periodicReviewDueDate}}
+        ({{remainingDays()}} days remaining)
+      </p>
+      <a *ngIf="fieldVisibility().showWorkLink" [href]="client.workLink">Go to Work</a>
+    </div>
+    <ng-template #errorTemplate>
+      <div *ngIf="error()" class="error-message">
+        {{error()}}
+      </div>
+      <div *ngIf="!error() && !clientInfo()" class="loading-message">
+        Loading client information...
+      </div>
+    </ng-template>
+  `
+})
+export class ClientInfoComponent {
+  private http = inject(HttpClient);
+
+  clientInfo = signal<ClientInfo | null>(null);
+  fieldVisibility = signal<FieldVisibility>({
+    showName: true,
+    showRiskRank: true,
+    showCipStatus: true,
+    showKycStatus: true,
+    showPeriodicReview: true,
+    showWorkLink: true
+  });
+  error = signal<string | null>(null);
+
+  constructor() {
+    this.fetchClientInfo();
+    this.fetchFieldVisibility();
+  }
+
+  private fetchClientInfo() {
+    this.http.get<Partial<ClientInfo>>('/api/client-basic-info').pipe(
+      switchMap(basicInfo => 
+        this.http.get<Partial<ClientInfo>>('/api/client-additional-info').pipe(
+          catchError(error => {
+            console.error('Error fetching additional info:', error);
+            return of({}); // Return empty object to continue with basic info
+          })
+        ).pipe(
+          switchMap(additionalInfo => of({ ...basicInfo, ...additionalInfo }))
+        )
+      ),
+      catchError((error: HttpErrorResponse) => {
+        console.error('Error fetching client info:', error);
+        this.error.set(`Failed to load client information. ${error.status === 0 ? 'Please check your internet connection.' : 'Please try again later.'}`);
+        return of(null);
+      })
+    ).subscribe(result => {
+      if (result) {
+        this.clientInfo.set(result as ClientInfo);
+        this.error.set(null);
+      }
+    });
+  }
+
+  private fetchFieldVisibility() {
+    this.http.get<FieldVisibility>('/api/field-visibility').pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('Error fetching field visibility:', error);
+        // Default to showing all fields if there's an error
+        return of({
+          showName: true,
+          showRiskRank: true,
+          showCipStatus: true,
+          showKycStatus: true,
+          showPeriodicReview: true,
+          showWorkLink: true
+        });
+      })
+    ).subscribe(visibility => {
+      this.fieldVisibility.set(visibility);
+    });
+  }
+
+  // Computed signal for remaining days
+  remainingDays = computed(() => {
+    if (!this.clientInfo()) return 0;
+    const dueDate = new Date(this.clientInfo()!.periodicReviewDueDate);
+    const today = new Date();
+    const diffTime = dueDate.getTime() - today.getTime();
+    return Math.ceil(diffTime / (1000 * 3600 * 24));
+  });
+
+  // Effect to log changes in client info
+  logEffect = effect(() => {
+    console.log('Client info updated:', this.clientInfo());
+  });
+}
