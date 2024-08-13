@@ -1,0 +1,197 @@
+import { Injectable, signal, computed, Signal } from '@angular/core';
+import { FormGroup, FormArray, AbstractControl } from '@angular/forms';
+
+interface ExtendedControlOptions {
+  label?: string;
+  visible?: boolean;
+  editable?: boolean;
+  lookupName?: string;
+  lookupData?: Array<{ label: string; value: any }>;
+}
+
+interface CustomComputation {
+  compute: (control: AbstractControl, form: FormGroup) => any;
+}
+
+interface ReadViewItem {
+  label: string;
+  value: any;
+  editable: boolean;
+  visible: boolean;
+  computedValue?: any;
+  children?: ReadViewItem[];
+}
+
+declare module '@angular/forms' {
+  interface AbstractControl {
+    label?: string;
+    visible?: boolean;
+    editable?: boolean;
+    lookupName?: string;
+    lookupData?: Array<{ label: string; value: any }>;
+  }
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionService {
+  private formSignal = signal<FormGroup | null>(null);
+  private updateTrigger = signal(0);
+  private customComputations = new Map<string, CustomComputation>();
+
+  setForm(form: FormGroup) {
+    this.formSignal.set(form);
+  }
+
+  extendControl(control: AbstractControl, options: ExtendedControlOptions, path = '') {
+    const changed = control['label'] !== options.label ||
+                    control['visible'] !== options.visible ||
+                    control['editable'] !== options.editable ||
+                    control['lookupName'] !== options.lookupName ||
+                    control['lookupData'] !== options.lookupData;
+
+    if (changed) {
+      control['label'] = options.label ?? '';
+      control['visible'] = options.visible ?? true;
+      control['editable'] = options.editable ?? true;
+      control['lookupName'] = options.lookupName;
+      control['lookupData'] = options.lookupData;
+      
+      if (control instanceof FormGroup || control instanceof FormArray) {
+        this.extendNestedControls(control, path);
+      }
+      
+      this.triggerUpdate();
+    }
+  }
+
+  private extendNestedControls(control: FormGroup | FormArray, parentPath: string) {
+    if (control instanceof FormGroup) {
+      Object.keys(control.controls).forEach(key => {
+        const childPath = parentPath ? `${parentPath}.${key}` : key;
+        this.extendControl(control.get(key)!, {}, childPath);
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach((ctrl, index) => {
+        const childPath = parentPath ? `${parentPath}.${index}` : index.toString();
+        this.extendControl(ctrl, {}, childPath);
+      });
+    }
+  }
+
+  updateControlProperty(controlPath: string, property: keyof ExtendedControlOptions, value: any) {
+    const form = this.formSignal();
+    if (form) {
+      const control = this.getControlByPath(form, controlPath);
+      if (control && control[property] !== value) {
+        control[property] = value;
+        this.triggerUpdate();
+      }
+    }
+  }
+
+  private getControlByPath(form: FormGroup, path: string): AbstractControl | null {
+    return path.split('.').reduce((acc: AbstractControl | null, part: string) => {
+      if (acc instanceof FormGroup) {
+        return acc.get(part);
+      } else if (acc instanceof FormArray) {
+        const index = parseInt(part, 10);
+        return acc.at(index);
+      }
+      return null;
+    }, form);
+  }
+
+  triggerUpdate() {
+    this.updateTrigger.update(v => v + 1);
+  }
+
+  registerCustomComputation(controlPath: string, computation: CustomComputation) {
+    this.customComputations.set(controlPath, computation);
+    this.triggerUpdate();
+  }
+
+  getReadView(): Signal<ReadViewItem[]> {
+    return computed(() => {
+      this.updateTrigger();
+      const form = this.formSignal();
+      if (!form) return [];
+
+      return this.getReadViewForControl(form);
+    });
+  }
+
+  private getReadViewForControl(control: AbstractControl, path = ''): ReadViewItem[] {
+    if (control instanceof FormGroup) {
+      return Object.keys(control.controls)
+        .map(key => {
+          const childPath = path ? `${path}.${key}` : key;
+          const childControl = control.get(key)!;
+          return this.createReadViewItem(childControl, childPath, key);
+        })
+        .filter(item => item.visible);
+    } else if (control instanceof FormArray) {
+      return control.controls.map((ctrl, index) => {
+        const childPath = path ? `${path}.${index}` : index.toString();
+        return this.createReadViewItem(ctrl, childPath, index.toString());
+      }).filter(item => item.visible);
+    } else {
+      return [this.createReadViewItem(control, path)];
+    }
+  }
+
+  private createReadViewItem(control: AbstractControl, path: string, key = ''): ReadViewItem {
+    const rawValue = control.value;
+    let transformedValue = this.transformYNValue(rawValue);
+
+    // Handle lookup data if available
+    if (control['lookupData'] && Array.isArray(control['lookupData'])) {
+      const matchingLookup = control['lookupData'].find(item => item.value === rawValue);
+      if (matchingLookup) {
+        transformedValue = matchingLookup.label;
+      }
+    }
+
+    const item: ReadViewItem = {
+      label: control['label'] || key,
+      value: transformedValue,
+      editable: control['editable'] ?? true,
+      visible: control['visible'] ?? true
+    };
+
+    const customComputation = this.customComputations.get(path);
+    if (customComputation) {
+      item.computedValue = customComputation.compute(control, this.formSignal()!);
+    }
+
+    if (control instanceof FormGroup || control instanceof FormArray) {
+      item.children = this.getReadViewForControl(control, path);
+    }
+
+    return item;
+  }
+
+  private transformYNValue(value: any): any {
+    if (value === 'Y') {
+      return 'Yes';
+    } else if (value === 'N') {
+      return 'No';
+    }
+    return value;
+  }
+
+  getComputedValue(controlPath: string): Signal<any | undefined> {
+    return computed(() => {
+      this.updateTrigger();
+      const form = this.formSignal();
+      if (!form) return undefined;
+
+      const control = this.getControlByPath(form, controlPath);
+      if (!control) return undefined;
+
+      const customComputation = this.customComputations.get(controlPath);
+      return customComputation ? customComputation.compute(control, form) : undefined;
+    });
+  }
+}
