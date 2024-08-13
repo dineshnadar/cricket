@@ -1,0 +1,173 @@
+import { Injectable } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
+import { FormExtensionService } from '@angular-monorepo/store';
+import { Signal } from '@angular/core';
+@Injectable({
+  providedIn: 'root'
+})
+export class ComplexFormService {
+  private form: FormGroup;
+
+  constructor(
+    private fb: FormBuilder,
+    private formExtensionService: FormExtensionService
+  ) {
+    this.form = this.initializeForm();
+  }
+
+  private initializeForm(): FormGroup {
+    const form = this.fb.group({
+      personalInfo: this.fb.group({
+        name: ['', Validators.required],
+        age: [0, [Validators.required, Validators.min(0)]],
+      }),
+      orders: this.fb.array([])
+    });
+
+    this.formExtensionService.setForm(form);
+    
+    // Extend the entire form
+    this.formExtensionService.extendControl(form, { label: 'Customer Form' });
+    
+    // Extend the personalInfo group
+    this.formExtensionService.extendControl(form.get('personalInfo')!, { label: 'Personal Information' });
+    
+    // Extend individual controls
+    this.formExtensionService.extendControl(form.get('personalInfo.name')!, { label: 'Full Name' });
+    this.formExtensionService.extendControl(form.get('personalInfo.age')!, { label: 'Age' });
+    
+    // Extend the orders array
+    this.formExtensionService.extendControl(form.get('orders')!, { label: 'Orders' });
+
+    this.registerCustomComputations(form);
+
+    return form;
+  }
+
+  private registerCustomComputations(form: FormGroup) {
+    // Compute total age in months
+    this.formExtensionService.registerCustomComputation('personalInfo.age', {
+      compute: (control, form) => {
+        const age = control.value || 0;
+        return age * 12;
+      }
+    });
+
+    // Compute total order value
+    this.formExtensionService.registerCustomComputation('orders', {
+      compute: (control, form) => {
+        if (control instanceof FormArray) {
+          return control.controls.reduce((total, orderControl) => {
+            return total + (orderControl.get('value')?.value || 0);
+          }, 0);
+        }
+        return 0;
+      }
+    });
+  }
+
+  addOrder() {
+    const ordersArray = this.form.get('orders') as FormArray;
+    const newOrder = this.fb.group({
+      product: ['', Validators.required],
+      value: [0, [Validators.required, Validators.min(0)]]
+    });
+    
+    ordersArray.push(newOrder);
+    
+    // Extend the new order group
+    this.formExtensionService.extendControl(newOrder, { label: `Order ${ordersArray.length}` });
+    this.formExtensionService.extendControl(newOrder.get('product')!, { label: 'Product' });
+    this.formExtensionService.extendControl(newOrder.get('value')!, { label: 'Value' });
+    this.formExtensionService.extendControl(this.form.get('personalInfo.name')!, { visible: false });
+    this.formExtensionService.triggerUpdate();
+  }
+
+  getForm(): FormGroup {
+    return this.form;
+  }
+
+  getReadView(): Signal<any> {
+    return this.formExtensionService.getReadView();
+  }
+}
+
+
+---------------------------------------
+
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { ReactiveFormsModule, FormGroup , FormArray} from '@angular/forms';
+import { CommonModule} from '@angular/common'
+import { ComplexFormService } from './kyc.service';
+import { Signal } from '@angular/core';
+
+interface ReadViewItem {
+  label: string;
+  value: any;
+  editable: boolean;
+  computedValue?: any;
+  children?: ReadViewItem[];
+}
+
+@Component({
+  selector: 'app-complex-form',
+  standalone : true,
+  imports: [CommonModule,ReactiveFormsModule],
+  template: `
+    <form [formGroup]="form">
+      <div formGroupName="personalInfo">
+        <label>
+          Full Name: {{form.get('personalInfo')?.get('name')?.visible}}
+          <input formControlName="name">
+        </label>
+        <label>
+          Age:
+          <input type="number" formControlName="age">
+        </label>
+      </div>
+      
+      <div formArrayName="orders">
+        <div *ngFor="let order of ordersArray.controls; let i = index" [formGroupName]="i">
+          <label>
+            Product:
+            <input formControlName="product">
+          </label>
+          <label>
+            Value:
+            <input type="number" formControlName="value">
+          </label>
+        </div>
+      </div>
+      
+      <button type="button" (click)="addOrder()">Add Order</button>
+    </form>
+
+    <h2>Read View:</h2>
+    <pre>{{ readView() | json }}</pre>
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class KycpocComponent implements OnInit {
+  form!: FormGroup;
+  readView!: Signal<ReadViewItem[]>;
+
+  get ordersArray() {
+    return this.form.get('orders') as FormArray;
+  }
+
+  constructor(private complexFormService: ComplexFormService) {}
+
+  ngOnInit() {
+    this.form = this.complexFormService.getForm();
+    this.readView = this.complexFormService.getReadView();
+    console.log(this.form);
+    
+  }
+
+  addOrder() {
+    this.complexFormService.addOrder();
+    this.form.get('personalInfo')?.get('name')?.setValue("dsk");
+   // this.form.get('personalInfo')?.get('name')?['visible'] = false;
+   console.log(this.form);
+  }
+}
