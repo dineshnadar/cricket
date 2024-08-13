@@ -3,6 +3,7 @@ import { FormGroup, FormArray, AbstractControl } from '@angular/forms';
 
 interface ExtendedControlOptions {
   label?: string;
+  fldName?: string;
   visible?: boolean;
   editable?: boolean;
   lookup?: string;
@@ -12,10 +13,16 @@ interface ExtendedControlOptions {
   fieldType?: string;
   dfltVal?: any;
   required?: boolean;
+  oldValue?: any;
+  expand?: boolean;
+  sectionName?: string;
+  subSectionName?: string;
 }
 
 type ExtendedControlProperties = {
   [K in keyof ExtendedControlOptions]: NonNullable<ExtendedControlOptions[K]>;
+} & {
+  _oldValue?: any;
 };
 
 type ExtendedAbstractControl = AbstractControl & ExtendedControlProperties;
@@ -26,10 +33,15 @@ interface CustomComputation {
 
 interface ReadViewItem {
   label: string;
+  fldName: string;
   value: any;
+  oldValue?: any;
   editable: boolean;
   visible: boolean;
   computedValue?: any;
+  expand: boolean;
+  sectionName?: string;
+  subSectionName?: string;
   children?: ReadViewItem[];
 }
 
@@ -76,10 +88,10 @@ export class FormExtensionService {
     return arr1.every((regex, index) => regex === arr2[index]);
   }
 
-  updateControlProperty(
+  updateControlProperty<K extends keyof ExtendedControlOptions>(
     controlPath: string,
-    property: keyof ExtendedControlOptions,
-    value: ExtendedControlOptions[typeof property]
+    property: K,
+    value: ExtendedControlOptions[K]
   ) {
     const form = this.formSignal();
     if (form) {
@@ -87,11 +99,11 @@ export class FormExtensionService {
       if (control) {
         if (property === 'regex') {
           if (!this.areRegexArraysEqual(control[property], value as string[])) {
-            control[property] = value as string[];
+            control[property] = value as any;
             this.triggerUpdate();
           }
         } else if (control[property] !== value) {
-          control[property] = value;
+          (control as any)[property] = value;
           this.triggerUpdate();
         }
       }
@@ -169,9 +181,14 @@ export class FormExtensionService {
 
     const item: ReadViewItem = {
       label: extendedControl.label || key,
+      fldName: extendedControl.fldName || key,
       value: transformedValue,
+      oldValue: extendedControl._oldValue,
       editable: extendedControl.editable ?? true,
-      visible: extendedControl.visible ?? true
+      visible: extendedControl.visible ?? true,
+      expand: extendedControl.expand ?? false,
+      sectionName: extendedControl.sectionName,
+      subSectionName: extendedControl.subSectionName
     };
 
     const customComputation = this.customComputations.get(path);
@@ -214,47 +231,99 @@ export class FormExtensionService {
     });
   }
 
-  // Utility method to get extended properties of a control
-  getExtendedProperties(controlPath: string): Partial<ExtendedControlProperties> | null {
-    const form = this.formSignal();
-    if (!form) return null;
-
-    const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
-    if (!control) return null;
-
-    return {
-      label: control.label,
-      visible: control.visible,
-      editable: control.editable,
-      lookup: control.lookup,
-      lookupData: control.lookupData,
-      regex: control.regex,
-      fldMax: control.fldMax,
-      fieldType: control.fieldType,
-      dfltVal: control.dfltVal,
-      required: control.required
-    };
-  }
-
-  // Utility method to apply default values
-  applyDefaultValues(form: FormGroup) {
-    this.applyDefaultValuesRecursive(form);
+  applyDefaultValues(form: FormGroup, storeOldValue: boolean = false) {
+    this.applyDefaultValuesRecursive(form, storeOldValue);
     this.triggerUpdate();
   }
 
-  private applyDefaultValuesRecursive(control: AbstractControl) {
+  private applyDefaultValuesRecursive(control: AbstractControl, storeOldValue: boolean) {
     const extendedControl = control as ExtendedAbstractControl;
     
     if (control instanceof FormGroup) {
-      Object.keys(control.controls).forEach(key => {
-        this.applyDefaultValuesRecursive(control.get(key)!);
-      });
+      if (extendedControl.dfltVal !== undefined && this.isFormGroupEmpty(control)) {
+        if (this.shouldStoreOldValue(extendedControl, storeOldValue)) {
+          extendedControl._oldValue = this.getFormGroupValue(control);
+        }
+        this.setFormGroupValue(control, extendedControl.dfltVal);
+      } else {
+        Object.keys(control.controls).forEach(key => {
+          this.applyDefaultValuesRecursive(control.get(key)!, storeOldValue);
+        });
+      }
     } else if (control instanceof FormArray) {
       control.controls.forEach(ctrl => {
-        this.applyDefaultValuesRecursive(ctrl);
+        this.applyDefaultValuesRecursive(ctrl, storeOldValue);
       });
     } else if (extendedControl.dfltVal !== undefined && control.value === null) {
+      if (this.shouldStoreOldValue(extendedControl, storeOldValue)) {
+        extendedControl._oldValue = control.value;
+      }
       control.setValue(extendedControl.dfltVal);
     }
+  }
+
+  private shouldStoreOldValue(control: ExtendedAbstractControl, globalStoreOldValue: boolean): boolean {
+    return globalStoreOldValue || control.oldValue !== undefined;
+  }
+
+  private isFormGroupEmpty(group: FormGroup): boolean {
+    return Object.keys(group.controls).every(key => {
+      const control = group.get(key);
+      return control?.value === null || control?.value === '';
+    });
+  }
+
+  private getFormGroupValue(group: FormGroup): any {
+    const value: any = {};
+    Object.keys(group.controls).forEach(key => {
+      value[key] = group.get(key)!.value;
+    });
+    return value;
+  }
+
+  private setFormGroupValue(group: FormGroup, value: any) {
+    if (typeof value === 'object' && value !== null) {
+      Object.keys(value).forEach(key => {
+        if (group.get(key)) {
+          group.get(key)!.setValue(value[key]);
+        }
+      });
+    }
+  }
+
+  getOldValue(controlPath: string): any | undefined {
+    const form = this.formSignal();
+    if (form) {
+      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
+      return control?._oldValue;
+    }
+    return undefined;
+  }
+
+  getExtendedProperties(controlPath: string): Partial<ExtendedControlProperties> | null {
+    const form = this.formSignal();
+    if (form) {
+      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
+      if (control) {
+        return {
+          label: control.label,
+          fldName: control.fldName,
+          visible: control.visible,
+          editable: control.editable,
+          lookup: control.lookup,
+          lookupData: control.lookupData,
+          regex: control.regex,
+          fldMax: control.fldMax,
+          fieldType: control.fieldType,
+          dfltVal: control.dfltVal,
+          required: control.required,
+          oldValue: control._oldValue,
+          expand: control.expand,
+          sectionName: control.sectionName,
+          subSectionName: control.subSectionName
+        };
+      }
+    }
+    return null;
   }
 }
