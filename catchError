@@ -1,8 +1,7 @@
-// client-info.component.ts
-import { Component, inject } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { computed, effect, signal } from '@angular/core';
-import { catchError, switchMap, of } from 'rxjs';
+import { catchError, switchMap, of, Observable, Subscription } from 'rxjs';
 
 interface ClientInfo {
   name: string;
@@ -47,7 +46,7 @@ interface FieldVisibility {
     </ng-template>
   `
 })
-export class ClientInfoComponent {
+export class ClientInfoComponent implements OnInit, OnDestroy {
   private http = inject(HttpClient);
 
   clientInfo = signal<ClientInfo | null>(null);
@@ -61,13 +60,19 @@ export class ClientInfoComponent {
   });
   error = signal<string | null>(null);
 
-  constructor() {
+  private subscriptions: Subscription = new Subscription();
+
+  ngOnInit() {
     this.fetchClientInfo();
     this.fetchFieldVisibility();
   }
 
+  ngOnDestroy() {
+    this.subscriptions.unsubscribe();
+  }
+
   private fetchClientInfo() {
-    this.http.get<Partial<ClientInfo>>('/api/client-basic-info').pipe(
+    const clientInfoObservable = this.http.get<Partial<ClientInfo>>('/api/client-basic-info').pipe(
       switchMap(basicInfo => 
         this.http.get<Partial<ClientInfo>>('/api/client-additional-info').pipe(
           catchError(error => {
@@ -80,19 +85,30 @@ export class ClientInfoComponent {
       ),
       catchError((error: HttpErrorResponse) => {
         console.error('Error fetching client info:', error);
-        this.error.set(`Failed to load client information. ${error.status === 0 ? 'Please check your internet connection.' : 'Please try again later.'}`);
+        const errorMessage = `Failed to load client information. ${error.status === 0 ? 'Please check your internet connection.' : 'Please try again later.'}`;
+        this.error.set(errorMessage);
         return of(null);
       })
-    ).subscribe(result => {
-      if (result) {
-        this.clientInfo.set(result as ClientInfo);
-        this.error.set(null);
-      }
-    });
+    );
+
+    this.subscriptions.add(
+      clientInfoObservable.subscribe({
+        next: (result) => {
+          if (result) {
+            this.clientInfo.set(result as ClientInfo);
+            this.error.set(null);
+          }
+        },
+        error: (err) => {
+          console.error('Unexpected error in clientInfoObservable:', err);
+          this.error.set('An unexpected error occurred. Please try again later.');
+        }
+      })
+    );
   }
 
   private fetchFieldVisibility() {
-    this.http.get<FieldVisibility>('/api/field-visibility').pipe(
+    const fieldVisibilityObservable = this.http.get<FieldVisibility>('/api/field-visibility').pipe(
       catchError((error: HttpErrorResponse) => {
         console.error('Error fetching field visibility:', error);
         // Default to showing all fields if there's an error
@@ -105,9 +121,19 @@ export class ClientInfoComponent {
           showWorkLink: true
         });
       })
-    ).subscribe(visibility => {
-      this.fieldVisibility.set(visibility);
-    });
+    );
+
+    this.subscriptions.add(
+      fieldVisibilityObservable.subscribe({
+        next: (visibility) => {
+          this.fieldVisibility.set(visibility);
+        },
+        error: (err) => {
+          console.error('Unexpected error in fieldVisibilityObservable:', err);
+          // We're already defaulting to showing all fields, so no additional action needed
+        }
+      })
+    );
   }
 
   // Computed signal for remaining days
