@@ -5,9 +5,20 @@ interface ExtendedControlOptions {
   label?: string;
   visible?: boolean;
   editable?: boolean;
-  lookupName?: string;
+  lookup?: string;
   lookupData?: Array<{ label: string; value: any }>;
+  regex?: string[];
+  fldMax?: number;
+  fieldType?: string;
+  dfltVal?: any;
+  required?: boolean;
 }
+
+type ExtendedControlProperties = {
+  [K in keyof ExtendedControlOptions]: NonNullable<ExtendedControlOptions[K]>;
+};
+
+type ExtendedAbstractControl = AbstractControl & ExtendedControlProperties;
 
 interface CustomComputation {
   compute: (control: AbstractControl, form: FormGroup) => any;
@@ -20,16 +31,6 @@ interface ReadViewItem {
   visible: boolean;
   computedValue?: any;
   children?: ReadViewItem[];
-}
-
-declare module '@angular/forms' {
-  interface AbstractControl {
-    label?: string;
-    visible?: boolean;
-    editable?: boolean;
-    lookupName?: string;
-    lookupData?: Array<{ label: string; value: any }>;
-  }
 }
 
 @Injectable({
@@ -45,24 +46,55 @@ export class FormExtensionService {
   }
 
   extendControl(control: AbstractControl, options: ExtendedControlOptions, path = '') {
-    const changed = control['label'] !== options.label ||
-                    control['visible'] !== options.visible ||
-                    control['editable'] !== options.editable ||
-                    control['lookupName'] !== options.lookupName ||
-                    control['lookupData'] !== options.lookupData;
+    const extendedControl = control as ExtendedAbstractControl;
+    let changed = false;
+
+    (Object.keys(options) as Array<keyof ExtendedControlOptions>).forEach(key => {
+      if (key === 'regex') {
+        if (!this.areRegexArraysEqual(extendedControl[key], options[key])) {
+          extendedControl[key] = options[key] as any;
+          changed = true;
+        }
+      } else if (extendedControl[key] !== options[key]) {
+        extendedControl[key] = options[key] as any;
+        changed = true;
+      }
+    });
 
     if (changed) {
-      control['label'] = options.label ?? '';
-      control['visible'] = options.visible ?? true;
-      control['editable'] = options.editable ?? true;
-      control['lookupName'] = options.lookupName;
-      control['lookupData'] = options.lookupData;
-      
       if (control instanceof FormGroup || control instanceof FormArray) {
         this.extendNestedControls(control, path);
       }
-      
       this.triggerUpdate();
+    }
+  }
+
+  private areRegexArraysEqual(arr1?: string[], arr2?: string[]): boolean {
+    if (!arr1 && !arr2) return true;
+    if (!arr1 || !arr2) return false;
+    if (arr1.length !== arr2.length) return false;
+    return arr1.every((regex, index) => regex === arr2[index]);
+  }
+
+  updateControlProperty(
+    controlPath: string,
+    property: keyof ExtendedControlOptions,
+    value: ExtendedControlOptions[typeof property]
+  ) {
+    const form = this.formSignal();
+    if (form) {
+      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
+      if (control) {
+        if (property === 'regex') {
+          if (!this.areRegexArraysEqual(control[property], value as string[])) {
+            control[property] = value as string[];
+            this.triggerUpdate();
+          }
+        } else if (control[property] !== value) {
+          control[property] = value;
+          this.triggerUpdate();
+        }
+      }
     }
   }
 
@@ -77,17 +109,6 @@ export class FormExtensionService {
         const childPath = parentPath ? `${parentPath}.${index}` : index.toString();
         this.extendControl(ctrl, {}, childPath);
       });
-    }
-  }
-
-  updateControlProperty(controlPath: string, property: keyof ExtendedControlOptions, value: any) {
-    const form = this.formSignal();
-    if (form) {
-      const control = this.getControlByPath(form, controlPath);
-      if (control && control[property] !== value) {
-        control[property] = value;
-        this.triggerUpdate();
-      }
     }
   }
 
@@ -142,22 +163,15 @@ export class FormExtensionService {
   }
 
   private createReadViewItem(control: AbstractControl, path: string, key = ''): ReadViewItem {
+    const extendedControl = control as ExtendedAbstractControl;
     const rawValue = control.value;
-    let transformedValue = this.transformYNValue(rawValue);
-
-    // Handle lookup data if available
-    if (control['lookupData'] && Array.isArray(control['lookupData'])) {
-      const matchingLookup = control['lookupData'].find(item => item.value === rawValue);
-      if (matchingLookup) {
-        transformedValue = matchingLookup.label;
-      }
-    }
+    let transformedValue = this.transformValue(rawValue, extendedControl);
 
     const item: ReadViewItem = {
-      label: control['label'] || key,
+      label: extendedControl.label || key,
       value: transformedValue,
-      editable: control['editable'] ?? true,
-      visible: control['visible'] ?? true
+      editable: extendedControl.editable ?? true,
+      visible: extendedControl.visible ?? true
     };
 
     const customComputation = this.customComputations.get(path);
@@ -172,12 +186,17 @@ export class FormExtensionService {
     return item;
   }
 
-  private transformYNValue(value: any): any {
-    if (value === 'Y') {
-      return 'Yes';
-    } else if (value === 'N') {
-      return 'No';
+  private transformValue(value: any, control: ExtendedAbstractControl): any {
+    // Transform based on Y/N values
+    if (value === 'Y') return 'Yes';
+    if (value === 'N') return 'No';
+
+    // Transform based on lookup data
+    if (control.lookupData && Array.isArray(control.lookupData)) {
+      const matchingLookup = control.lookupData.find(item => item.value === value);
+      if (matchingLookup) return matchingLookup.label;
     }
+
     return value;
   }
 
@@ -193,5 +212,49 @@ export class FormExtensionService {
       const customComputation = this.customComputations.get(controlPath);
       return customComputation ? customComputation.compute(control, form) : undefined;
     });
+  }
+
+  // Utility method to get extended properties of a control
+  getExtendedProperties(controlPath: string): Partial<ExtendedControlProperties> | null {
+    const form = this.formSignal();
+    if (!form) return null;
+
+    const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
+    if (!control) return null;
+
+    return {
+      label: control.label,
+      visible: control.visible,
+      editable: control.editable,
+      lookup: control.lookup,
+      lookupData: control.lookupData,
+      regex: control.regex,
+      fldMax: control.fldMax,
+      fieldType: control.fieldType,
+      dfltVal: control.dfltVal,
+      required: control.required
+    };
+  }
+
+  // Utility method to apply default values
+  applyDefaultValues(form: FormGroup) {
+    this.applyDefaultValuesRecursive(form);
+    this.triggerUpdate();
+  }
+
+  private applyDefaultValuesRecursive(control: AbstractControl) {
+    const extendedControl = control as ExtendedAbstractControl;
+    
+    if (control instanceof FormGroup) {
+      Object.keys(control.controls).forEach(key => {
+        this.applyDefaultValuesRecursive(control.get(key)!);
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(ctrl => {
+        this.applyDefaultValuesRecursive(ctrl);
+      });
+    } else if (extendedControl.dfltVal !== undefined && control.value === null) {
+      control.setValue(extendedControl.dfltVal);
+    }
   }
 }
