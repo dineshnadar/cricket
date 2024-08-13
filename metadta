@@ -1,290 +1,187 @@
-// metadata.model.ts
-export interface FieldMetadata {
-  fieldId: string;
-  fieldName: string;
-  fieldType: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'radio';
-  label: string;
-  visible: boolean;
-  editable: boolean;
-  disabled?: boolean; // New property
-  required?: boolean;
-  defaultValue?: any;
-  options?: { value: any; label: string }[];
-  validations?: Array<{
-    name: string;
-    args?: any[];
-  }>;
-  asyncValidations?: Array<{
-    name: string;
-    args?: any[];
-  }>;
-}
-
-interface SectionMetadata {
-  section: string;
-  label: string;
-  visible: boolean;
-  editable: boolean;
-  fields?: FieldMetadata[];
-  subSection?: SectionMetadata[];
-}
-
-
-// form-builder.service.ts
 import { Injectable } from '@angular/core';
-import { FormBuilder, FormGroup, FormControl, Validators, AsyncValidatorFn } from '@angular/forms';
-import { FieldMetadata, SectionMetadata } from './metadata.model';
-import { ValidatorService } from './validator.service';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { FormExtensionService } from './form-extension.service';
 
 @Injectable({
   providedIn: 'root'
 })
-export class FormBuilderService {
+export class SampleFormComponentService {
+  private form: FormGroup;
+
   constructor(
     private fb: FormBuilder,
-    private validatorService: ValidatorService
-  ) {}
+    private formExtensionService: FormExtensionService
+  ) {
+    this.initializeForm();
+  }
 
-  buildFormGroup(metadata: SectionMetadata): FormGroup {
-    const group = this.fb.group({});
-    
-    metadata.fields?.forEach(field => {
-      group.addControl(field.fieldName, this.createFormControl(field));
+  private initializeForm() {
+    this.form = this.fb.group({
+      personalInfo: this.fb.group({
+        name: ['', Validators.required],
+        email: ['', [Validators.required, Validators.email]],
+        age: [null, [Validators.required, Validators.min(18)]]
+      }),
+      address: this.fb.group({
+        street: [''],
+        city: [''],
+        country: ['']
+      }),
+      preferences: this.fb.group({
+        newsletter: [false],
+        theme: ['light']
+      })
     });
 
-    metadata.subSections?.forEach(subSection => {
-      group.addControl(subSection.section, this.buildFormGroup(subSection));
+    this.formExtensionService.setForm(this.form);
+    this.extendFormControls();
+    this.applyDefaultValues();
+    this.registerCustomComputations();
+  }
+
+  private extendFormControls() {
+    // Extend personal info group
+    this.formExtensionService.extendControl(this.form.get('personalInfo')!, {
+      label: 'Personal Information',
+      fldName: 'personalInfo',
+      expand: true,
+      sectionName: 'User Details'
     });
 
-    return group;
-  }
-
-  private createFormControl(field: FieldMetadata): FormControl {
-    const validators = this.validatorService.getValidators(field.validations || []);
-    const asyncValidators = this.validatorService.getAsyncValidators(field.asyncValidations || []);
-
-    // Add conditional required validator
-    if (field.required) {
-      validators.push(this.validatorService.conditionalRequired());
-    }
-
-    const control = this.fb.control(
-      { value: field.defaultValue, disabled: field.disabled },
-      { validators, asyncValidators, updateOn: 'blur' }
-    );
-
-    Object.assign(control, {
-      metadata: field,
-      label: field.label,
-      visible: field.visible
+    // Extend name control
+    this.formExtensionService.extendControl(this.form.get('personalInfo.name')!, {
+      label: 'Full Name',
+      fldName: 'fullName',
+      required: true,
+      fldMax: 100,
+      dfltVal: 'John Doe',
+      oldValue: true,
+      subSectionName: 'Basic Info'
     });
 
-    return control;
+    // Extend email control
+    this.formExtensionService.extendControl(this.form.get('personalInfo.email')!, {
+      label: 'Email Address',
+      fldName: 'emailAddress',
+      required: true,
+      regex: ['^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'],
+      fieldType: 'email',
+      subSectionName: 'Basic Info'
+    });
+
+    // Extend age control
+    this.formExtensionService.extendControl(this.form.get('personalInfo.age')!, {
+      label: 'Age',
+      fldName: 'age',
+      required: true,
+      fieldType: 'number',
+      subSectionName: 'Additional Info'
+    });
+
+    // Extend address group
+    this.formExtensionService.extendControl(this.form.get('address')!, {
+      label: 'Address',
+      fldName: 'address',
+      expand: false,
+      sectionName: 'Location'
+    });
+
+    // Extend preferences group
+    this.formExtensionService.extendControl(this.form.get('preferences')!, {
+      label: 'User Preferences',
+      fldName: 'preferences',
+      expand: true,
+      sectionName: 'Settings'
+    });
+
+    // Extend newsletter control
+    this.formExtensionService.extendControl(this.form.get('preferences.newsletter')!, {
+      label: 'Subscribe to Newsletter',
+      fldName: 'newsletter',
+      fieldType: 'boolean'
+    });
+
+    // Extend theme control
+    this.formExtensionService.extendControl(this.form.get('preferences.theme')!, {
+      label: 'UI Theme',
+      fldName: 'theme',
+      lookupData: [
+        { value: 'light', label: 'Light Theme' },
+        { value: 'dark', label: 'Dark Theme' }
+      ]
+    });
   }
-}
 
-// validator.service.ts
-import { Injectable } from '@angular/core';
-import { ValidatorFn, AsyncValidatorFn, Validators, AbstractControl } from '@angular/forms';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ValidatorService {
-  private validatorMap: { [key: string]: (...args: any[]) => ValidatorFn } = {
-    required: () => Validators.required,
-    minLength: (min: number) => Validators.minLength(min),
-    maxLength: (max: number) => Validators.maxLength(max),
-    pattern: (pattern: string | RegExp) => Validators.pattern(pattern),
-    // Add more validators as needed
-  };
-
-  private asyncValidatorMap: { [key: string]: (...args: any[]) => AsyncValidatorFn } = {
-    // Implement your async validators here
-  };
-
-  getValidators(validations: Array<{ name: string; args?: any[] }>): ValidatorFn[] {
-    return validations.map(v => this.validatorMap[v.name](...(v.args || [])));
+  private applyDefaultValues() {
+    this.formExtensionService.applyDefaultValues(this.form, true);
   }
 
-  getAsyncValidators(validations: Array<{ name: string; args?: any[] }>): AsyncValidatorFn[] {
-    return validations.map(v => this.asyncValidatorMap[v.name](...(v.args || [])));
-  }
-
-  addValidator(name: string, validatorFn: (...args: any[]) => ValidatorFn) {
-    this.validatorMap[name] = validatorFn;
-  }
-
-  addAsyncValidator(name: string, validatorFn: (...args: any[]) => AsyncValidatorFn) {
-    this.asyncValidatorMap[name] = validatorFn;
-  }
-
-  // New method for conditional required validator
-  conditionalRequired(): ValidatorFn {
-    return (control: AbstractControl): {[key: string]: any} | null => {
-      if (control.disabled) {
-        return null;
+  private registerCustomComputations() {
+    this.formExtensionService.registerCustomComputation('personalInfo.age', {
+      compute: (control) => {
+        const age = control.value;
+        return age >= 18 ? 'Adult' : 'Minor';
       }
-      return Validators.required(control);
-    };
-  }
-}
+    });
 
-// dynamic-field.component.ts
-import { Component, Input, OnInit } from '@angular/core';
-import { FormGroup } from '@angular/forms';
-import { FieldMetadata } from './metadata.model';
-
-@Component({
-  selector: 'app-dynamic-field',
-  template: `
-    <div [formGroup]="form">
-      <label [attr.for]="field.fieldName">
-        {{ field.label }}
-        <span *ngIf="field.required && !isDisabled()">*</span>
-      </label>
-
-      <ng-container [ngSwitch]="field.fieldType">
-        <input *ngSwitchCase="'text'"
-               [formControlName]="field.fieldName"
-               [id]="field.fieldName"
-               [type]="field.fieldType">
-
-        <input *ngSwitchCase="'number'"
-               [formControlName]="field.fieldName"
-               [id]="field.fieldName"
-               type="number">
-
-        <input *ngSwitchCase="'date'"
-               [formControlName]="field.fieldName"
-               [id]="field.fieldName"
-               type="date">
-
-        <select *ngSwitchCase="'select'"
-                [formControlName]="field.fieldName"
-                [id]="field.fieldName">
-          <option *ngFor="let opt of field.options" [value]="opt.value">
-            {{ opt.label }}
-          </option>
-        </select>
-
-        <div *ngSwitchCase="'radio'">
-          <ng-container *ngFor="let opt of field.options">
-            <input type="radio"
-                   [formControlName]="field.fieldName"
-                   [value]="opt.value"
-                   [id]="field.fieldName + '_' + opt.value">
-            <label [for]="field.fieldName + '_' + opt.value">{{ opt.label }}</label>
-          </ng-container>
-        </div>
-
-        <input *ngSwitchCase="'checkbox'"
-               type="checkbox"
-               [formControlName]="field.fieldName"
-               [id]="field.fieldName">
-
-        <div *ngSwitchDefault>
-          Unsupported field type: {{ field.fieldType }}
-        </div>
-      </ng-container>
-
-      <div *ngIf="!isDisabled() && form.get(field.fieldName).invalid && (form.get(field.fieldName).dirty || form.get(field.fieldName).touched)">
-        <small class="error" *ngIf="form.get(field.fieldName).errors?.required">This field is required.</small>
-        <!-- Add more error messages for other validators -->
-      </div>
-    </div>
-  `
-})
-export class DynamicFieldComponent implements OnInit {
-  @Input() field: FieldMetadata;
-  @Input() form: FormGroup;
-
-  ngOnInit() {
-    const control = this.form.get(this.field.fieldName);
-    if (this.field.disabled) {
-      control.disable();
-    } else {
-      control.enable();
-    }
-  }
-
-  isDisabled(): boolean {
-    return this.form.get(this.field.fieldName).disabled;
-  }
-}
-
-// usage-example.component.ts
-import { Component, OnInit } from '@angular/core';
-import { FormGroup } from '@angular/forms';
-import { SectionMetadata } from './metadata.model';
-import { FormBuilderService } from './form-builder.service';
-
-@Component({
-  selector: 'app-usage-example',
-  template: `
-    <app-dynamic-form [metadata]="formMetadata" [form]="form"></app-dynamic-form>
-    <button (click)="onSubmit()">Submit</button>
-    <button (click)="toggleAgeField()">Toggle Age Field</button>
-  `
-})
-export class UsageExampleComponent implements OnInit {
-  formMetadata: SectionMetadata = {
-    section: "personalInfo",
-    label: "Personal Information",
-    visible: true,
-    editable: true,
-    fields: [
-      {
-        fieldId: "name",
-        fieldName: "name",
-        fieldType: "text",
-        label: "Full Name",
-        visible: true,
-        editable: true,
-        required: true,
-        validations: [
-          { name: "minLength", args: [3] }
-        ]
-      },
-      {
-        fieldId: "age",
-        fieldName: "age",
-        fieldType: "number",
-        label: "Age",
-        visible: true,
-        editable: true,
-        required: true,
-        disabled: false,
-        validations: [
-          { name: "min", args: [18] }
-        ]
+    this.formExtensionService.registerCustomComputation('preferences.theme', {
+      compute: (control) => {
+        return `Current theme: ${control.value.charAt(0).toUpperCase() + control.value.slice(1)}`;
       }
-    ],
-    // ... (subSections remain the same)
-  };
-
-  form: FormGroup;
-
-  constructor(private formBuilder: FormBuilderService) {}
-
-  ngOnInit() {
-    this.form = this.formBuilder.buildFormGroup(this.formMetadata);
+    });
   }
 
-  onSubmit() {
+  getForm(): FormGroup {
+    return this.form;
+  }
+
+  getReadView() {
+    return this.formExtensionService.getReadView();
+  }
+
+  toggleExpand(controlPath: string) {
+    const currentExpand = this.formExtensionService.getExtendedProperties(controlPath)?.expand;
+    this.formExtensionService.updateControlProperty(controlPath, 'expand', !currentExpand);
+  }
+
+  submitForm() {
     if (this.form.valid) {
-      console.log(this.form.value);
+      console.log('Form submitted:', this.form.value);
+      return this.form.value;
     } else {
       console.log('Form is invalid');
+      return null;
+    }
+  }
+}
+
+---------
+import { Component } from '@angular/core';
+import { SampleFormComponentService } from './sample-form-component.service';
+
+@Component({
+  selector: 'app-sample-form',
+  templateUrl: './sample-form.component.html',
+  styleUrls: ['./sample-form.component.css']
+})
+export class SampleFormComponent {
+  form = this.sampleFormService.getForm();
+  readView = this.sampleFormService.getReadView();
+
+  constructor(public sampleFormService: SampleFormComponentService) {}
+
+  onSubmit() {
+    const formData = this.sampleFormService.submitForm();
+    if (formData) {
+      // Handle successful form submission
+      console.log('Form submitted successfully:', formData);
+    } else {
+      // Handle form validation errors
+      console.log('Form submission failed due to validation errors');
     }
   }
 
-  toggleAgeField() {
-    const ageControl = this.form.get('age');
-    if (ageControl.disabled) {
-      ageControl.enable();
-    } else {
-      ageControl.disable();
-    }
+  toggleExpand(controlPath: string) {
+    this.sampleFormService.toggleExpand(controlPath);
   }
 }
