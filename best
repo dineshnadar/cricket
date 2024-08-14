@@ -1,0 +1,348 @@
+import { Component, Injectable, ViewContainerRef, ViewChild, effect, inject, signal, computed, Type } from '@angular/core';
+import { AsyncPipe, NgFor, NgClass, NgIf } from '@angular/common';
+import { FormBuilder, FormGroup, FormArray, Validators, ReactiveFormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { Subscription } from 'rxjs';
+
+// Widget Configuration
+export interface WidgetState {
+  hasError: boolean;
+  visited: boolean;
+  acknowledged: boolean;
+  active: boolean;
+}
+
+export interface WidgetConfig {
+  name: string;
+  label: string;
+  component: () => Promise<Type<any>>;
+  visible: boolean;
+  state: ReturnType<typeof signal<WidgetState>>;
+}
+
+export const WIDGET_CONFIG: WidgetConfig[] = [
+  {
+    name: 'personal',
+    label: 'Personal Info',
+    component: () => import('./personal-info.component').then(m => m.PersonalInfoComponent),
+    visible: true,
+    state: signal<WidgetState>({ hasError: false, visited: false, acknowledged: false, active: false })
+  },
+  {
+    name: 'financial',
+    label: 'Financial Info',
+    component: () => import('./financial-info.component').then(m => m.FinancialInfoComponent),
+    visible: true,
+    state: signal<WidgetState>({ hasError: false, visited: false, acknowledged: false, active: false })
+  },
+  // Add more widgets as needed
+];
+
+// Profile Builder Service
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private fb = inject(FormBuilder);
+  private http = inject(HttpClient);
+
+  private profileForm = signal<FormGroup>(this.fb.group({
+    profiles: this.fb.array([])
+  }));
+
+  activeProfileIndex = signal<number>(0);
+  widgetConfigs = signal<WidgetConfig[]>(WIDGET_CONFIG);
+
+  getProfileForm(): FormGroup {
+    return this.profileForm();
+  }
+
+  getActiveProfile(): FormGroup | null {
+    const profiles = this.profileForm().get('profiles') as FormArray;
+    return profiles.at(this.activeProfileIndex()) as FormGroup;
+  }
+
+  getVisibleWidgets() {
+    return computed(() => this.widgetConfigs().filter(widget => widget.visible));
+  }
+
+  async createOrEditProfile(partyId?: string) {
+    let profileData: any = {};
+    const metadataData = await this.fetchMetadata();
+
+    if (partyId) {
+      profileData = await this.fetchPartyData(partyId);
+    }
+
+    const profileFormGroup = this.createProfileFormGroup(profileData, metadataData);
+    (this.profileForm().get('profiles') as FormArray).push(profileFormGroup);
+    this.setActiveProfile((this.profileForm().get('profiles') as FormArray).length - 1);
+    this.resetWidgetStates();
+  }
+
+  private createProfileFormGroup(profileData: any, metadataData: any): FormGroup {
+    const profileGroup = this.fb.group({});
+
+    this.widgetConfigs().forEach(widget => {
+      if (widget.visible) {
+        profileGroup.addControl(widget.name, this.fb.group({}));
+      }
+    });
+
+    if (profileData) {
+      profileGroup.patchValue(profileData);
+    }
+
+    return profileGroup;
+  }
+
+  private async fetchMetadata() {
+    return this.http.get('metadata-api-url').toPromise();
+  }
+
+  private async fetchPartyData(partyId: string) {
+    return this.http.get(`party-api-url/${partyId}`).toPromise();
+  }
+
+  setActiveProfile(index: number) {
+    this.activeProfileIndex.set(index);
+    this.resetWidgetStates();
+  }
+
+  setActiveWidget(widgetName: string) {
+    this.widgetConfigs.update(configs => 
+      configs.map(config => ({
+        ...config,
+        state: config.name === widgetName ? 
+          signal({ ...config.state(), active: true, visited: true }) :
+          signal({ ...config.state(), active: false })
+      }))
+    );
+  }
+
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>) {
+    this.widgetConfigs.update(configs => 
+      configs.map(config => 
+        config.name === widgetName
+          ? { ...config, state: signal({ ...config.state(), ...update }) }
+          : config
+      )
+    );
+  }
+
+  acknowledgeWidget(widgetName: string) {
+    this.updateWidgetState(widgetName, { acknowledged: true });
+  }
+
+  resetWidgetStates() {
+    this.widgetConfigs.update(configs => 
+      configs.map(config => ({
+        ...config,
+        state: signal({ hasError: false, visited: false, acknowledged: false, active: false })
+      }))
+    );
+  }
+
+  validateAllWidgets(): boolean {
+    const activeProfile = this.getActiveProfile();
+    let isValid = true;
+    this.widgetConfigs().forEach(widget => {
+      if (widget.visible) {
+        const widgetForm = activeProfile?.get(widget.name);
+        const widgetValid = widgetForm?.valid ?? false;
+        this.updateWidgetState(widget.name, { hasError: !widgetValid });
+        isValid = isValid && widgetValid;
+      }
+    });
+    return isValid;
+  }
+
+  // Helper Methods
+  getWidgetByName(name: string): WidgetConfig | undefined {
+    return this.widgetConfigs().find(widget => widget.name === name);
+  }
+
+  isProfileComplete(): boolean {
+    return this.widgetConfigs().every(widget => widget.state().visited && !widget.state().hasError);
+  }
+
+  getCompletionPercentage(): number {
+    const visitedWidgets = this.widgetConfigs().filter(widget => widget.state().visited).length;
+    return (visitedWidgets / this.widgetConfigs().length) * 100;
+  }
+
+  getNextIncompleteWidget(): string | null {
+    const incompleteWidget = this.widgetConfigs().find(widget => !widget.state().visited || widget.state().hasError);
+    return incompleteWidget ? incompleteWidget.name : null;
+  }
+}
+
+// Left Menu Component
+@Component({
+  selector: 'app-left-menu',
+  standalone: true,
+  imports: [NgFor, NgClass],
+  template: `
+    <nav>
+      <ul>
+        <li *ngFor="let widget of profileService.getVisibleWidgets()()">
+          <a (click)="setActiveWidget(widget.name)" 
+             [ngClass]="{
+               'active': widget.state().active,
+               'visited': widget.state().visited,
+               'error': widget.state().hasError,
+               'acknowledged': widget.state().acknowledged
+             }">
+            {{ widget.label }}
+          </a>
+        </li>
+      </ul>
+    </nav>
+    <div>Completion: {{ profileService.getCompletionPercentage() | number:'1.0-0' }}%</div>
+  `
+})
+export class LeftMenuComponent {
+  profileService = inject(ProfileBuilderService);
+
+  setActiveWidget(widgetName: string) {
+    this.profileService.setActiveWidget(widgetName);
+  }
+}
+
+// Party Builder Component
+@Component({
+  selector: 'app-party-builder',
+  standalone: true,
+  imports: [AsyncPipe, LeftMenuComponent],
+  template: `
+    <div class="party-builder">
+      <app-left-menu></app-left-menu>
+      <div class="widget-container">
+        <ng-container #widgetContainer></ng-container>
+      </div>
+    </div>
+    <button (click)="createNewProfile()">Create New Profile</button>
+    <button (click)="editExistingProfile('some-party-id')">Edit Existing Profile</button>
+    <button (click)="validateAll()">Validate All</button>
+    <button (click)="loadAllWidgets()">Load All Widgets</button>
+    <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
+  `
+})
+export class PartyBuilderComponent {
+  @ViewChild('widgetContainer', { read: ViewContainerRef, static: true })
+  widgetContainer!: ViewContainerRef;
+
+  profileService = inject(ProfileBuilderService);
+
+  constructor() {
+    effect(() => {
+      const activeWidget = this.profileService.getVisibleWidgets()().find(w => w.state().active);
+      if (activeWidget) {
+        this.loadComponent(activeWidget.name);
+      }
+    });
+  }
+
+  async loadComponent(widgetName: string) {
+    const widgetConfig = this.profileService.getWidgetByName(widgetName);
+    if (widgetConfig) {
+      const component = await widgetConfig.component();
+      const componentRef = this.widgetContainer.createComponent(component);
+      
+      const activeProfile = this.profileService.getActiveProfile();
+      if (activeProfile) {
+        const widgetForm = activeProfile.get(widgetName) as FormGroup;
+        if (componentRef.instance.setFormGroup) {
+          componentRef.instance.setFormGroup(widgetForm);
+        }
+      }
+    }
+  }
+
+  async loadAllWidgets() {
+    this.widgetContainer.clear();
+    for (const widget of this.profileService.getVisibleWidgets()()) {
+      await this.loadComponent(widget.name);
+    }
+  }
+
+  async createNewProfile() {
+    await this.profileService.createOrEditProfile();
+  }
+
+  async editExistingProfile(partyId: string) {
+    await this.profileService.createOrEditProfile(partyId);
+  }
+
+  validateAll() {
+    const isValid = this.profileService.validateAllWidgets();
+    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
+  }
+
+  loadNextIncompleteWidget() {
+    const nextWidgetName = this.profileService.getNextIncompleteWidget();
+    if (nextWidgetName) {
+      this.profileService.setActiveWidget(nextWidgetName);
+    } else {
+      console.log('All widgets are complete!');
+    }
+  }
+}
+
+// Example Widget Component (Personal Info)
+@Component({
+  selector: 'app-personal-info',
+  standalone: true,
+  imports: [ReactiveFormsModule, NgIf],
+  template: `
+    <form *ngIf="form" [formGroup]="form">
+      <input formControlName="firstName" placeholder="First Name">
+      <input formControlName="lastName" placeholder="Last Name">
+      <input formControlName="dateOfBirth" placeholder="Date of Birth">
+    </form>
+    <button (click)="acknowledge()">Acknowledge</button>
+  `
+})
+export class PersonalInfoComponent {
+  form: FormGroup;
+  private subscription: Subscription;
+  private fb = inject(FormBuilder);
+  private profileService = inject(ProfileBuilderService);
+
+  ngOnInit() {
+    this.subscription = this.form.statusChanges.subscribe(() => {
+      this.updateValidationStatus();
+    });
+  }
+
+  ngOnDestroy() {
+    if (this.subscription) {
+      this.subscription.unsubscribe();
+    }
+  }
+
+  setFormGroup(form: FormGroup) {
+    this.form = form;
+    if (this.form.controls['firstName'] === undefined) {
+      this.form.addControl('firstName', this.fb.control('', Validators.required));
+      this.form.addControl('lastName', this.fb.control('', Validators.required));
+      this.form.addControl('dateOfBirth', this.fb.control('', Validators.required));
+    }
+  }
+
+  private updateValidationStatus() {
+    this.profileService.updateWidgetState('personal', { hasError: !this.form.valid });
+  }
+
+  acknowledge() {
+    this.profileService.acknowledgeWidget('personal');
+  }
+}
+
+// Main Entry Point
+import { bootstrapApplication } from '@angular/platform-browser';
+import { provideHttpClient } from '@angular/common/http';
+
+bootstrapApplication(PartyBuilderComponent, {
+  providers: [
+    provideHttpClient()
+  ]
+}).catch(err => console.error(err));
