@@ -314,35 +314,62 @@ export class PartyBuilderComponent {
 
 -------
 
-@Component({
-  // ... component metadata
-})
-export class PartyBuilderComponent {
-  // ... other properties and methods
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  // ... other properties and methods remain the same
 
-  validateAll() {
-    const isValid = this.profileService.validateAllWidgets();
-    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
-    console.log('Completion percentage:', this.profileService.getCompletionPercentage());
+  validateAllWidgets(): boolean {
+    const activeProfile = this.getActiveProfile();
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfile || !activeProfileWidgetStates) return false;
+
+    let isValid = true;
+    Object.entries(activeProfileWidgetStates).forEach(([widgetName, state]) => {
+      if (WIDGET_CONFIG.find(w => w.name === widgetName)?.visible) {
+        const widgetForm = activeProfile.get(widgetName);
+        const widgetValid = widgetForm?.valid ?? false;
+        this.updateWidgetState(widgetName, { 
+          hasError: !widgetValid, 
+          status: widgetValid ? 'completed' : 'error' 
+        });
+        isValid = isValid && widgetValid;
+      }
+    });
+    return isValid;
   }
 
   loadAllWidgets() {
-    this.profileService.loadAllWidgets();
-    // You might want to trigger loading of all widget components here
-    this.profileService.getVisibleWidgets().forEach(widget => {
-      this.loadComponent(widget.name);
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return;
+
+    Object.keys(activeProfileWidgetStates).forEach(widgetName => {
+      if (WIDGET_CONFIG.find(w => w.name === widgetName)?.visible) {
+        this.updateWidgetState(widgetName, { visited: true, status: 'in-progress' });
+      }
     });
   }
 
-  loadNextIncompleteWidget() {
-    const nextWidgetName = this.profileService.getNextIncompleteWidget();
-    if (nextWidgetName) {
-      this.profileService.setActiveWidget(nextgetNextIncompleteWidgetName);
-      this.loadComponent(nextWidgetName);
-    } else {
-      console.log('All widgets are complete!');
-    }
+  getNextIncompleteWidget(): string | null {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return null;
+
+    const incompleteWidget = Object.entries(activeProfileWidgetStates).find(([widgetName, state]) => 
+      WIDGET_CONFIG.find(w => w.name === widgetName)?.visible && state.status !== 'completed'
+    );
+    return incompleteWidget ? incompleteWidget[0] : null;
   }
 
-  // ... rest of the component
+  // Additional helper method to get completion percentage
+  getCompletionPercentage(): number {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return 0;
+
+    const visibleWidgets = WIDGET_CONFIG.filter(w => w.visible);
+    const completedWidgets = visibleWidgets.filter(w => 
+      activeProfileWidgetStates[w.name]?.status === 'completed'
+    );
+    return (completedWidgets.length / visibleWidgets.length) * 100;
+  }
+
+  // ... rest of the service remains the same
 }
