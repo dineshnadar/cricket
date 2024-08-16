@@ -515,3 +515,42 @@ export class ProfileBuilderService {
     return this.isLoading.asReadonly();
   }
 }
+
+-----
+updateWidgetState(widgetName: string, update: Partial<WidgetState>, profileIndex?: number) {
+    const index = profileIndex !== undefined ? profileIndex : this.activeProfileIndex();
+    if (index === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const profileStates = { ...allStates[index] };
+      profileStates[widgetName] = { ...profileStates[widgetName], ...update };
+      return allStates.map((states, i) => i === index ? profileStates : states);
+    });
+  }
+
+  getVisibleWidgets = computed(() => {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return [];
+    
+    return WIDGET_CONFIG.filter(widget => widget.visible).map(widget => ({
+      ...widget,
+      state: activeProfileWidgetStates[widget.name]
+    }));
+  });
+
+  setActiveWidget(widgetName: string) {
+    this.activeWidgetName.set(widgetName);
+    this.updateWidgetState(widgetName, { active: true, visited: true, status: 'in-progress' });
+  }
+
+  resetWidgetStates() {
+    const index = this.activeProfileIndex();
+    if (index !== null) {
+      this.profileWidgetStates.update(allStates => {
+        const resetStates = Object.fromEntries(
+          WIDGET_CONFIG.map(widget => [widget.name, { ...this.initialWidgetState }])
+        );
+        return allStates.map((states, i) => i === index ? resetStates : states);
+      });
+    }
+  }
