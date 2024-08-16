@@ -1,5 +1,4 @@
 // widget-config.ts
-import { Type } from '@angular/core';
 import { Signal, signal } from '@angular/core';
 
 export interface WidgetState {
@@ -13,7 +12,7 @@ export interface WidgetState {
 export interface WidgetConfig {
   name: string;
   label: string;
-  component: () => Promise<Type<any>>;
+  component: () => Promise<any>;
   visible: boolean;
   state: Signal<WidgetState>;
 }
@@ -32,13 +31,13 @@ export const WIDGET_CONFIG: WidgetConfig[] = [
     component: () => import('./financial-info.component').then(m => m.FinancialInfoComponent),
     visible: true,
     state: signal<WidgetState>({ hasError: false, visited: false, acknowledged: false, active: false, status: 'pending' })
-  },
+  }
   // Add more widgets as needed
 ];
 
 // profile-builder.service.ts
-import { Injectable, signal, computed, inject, effect } from '@angular/core';
-import { FormBuilder, FormGroup, FormArray } from '@angular/forms';
+import { Injectable, signal, computed, inject } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { WIDGET_CONFIG, WidgetConfig, WidgetState } from './widget-config';
 
@@ -47,52 +46,92 @@ export class ProfileBuilderService {
   private fb = inject(FormBuilder);
   private http = inject(HttpClient);
 
-  private profileForm = signal<FormGroup>(this.fb.group({
-    profiles: this.fb.array([])
-  }));
-
-  private activeProfileIndex = signal<number>(0);
-  private widgetStates = signal<Record<string, WidgetState>>(
-    Object.fromEntries(
-      WIDGET_CONFIG.map(widget => [
-        widget.name,
-        { hasError: false, visited: false, acknowledged: false, active: false, status: 'pending' }
-      ])
-    )
-  );
-
+  private profiles = signal<FormGroup[]>([]);
+  private activeProfileIndex = signal<number | null>(null);
+  private profileWidgetStates = signal<Array<Record<string, Signal<WidgetState>>>>([]);
   private activeWidgetName = signal<string | null>(null);
-  private loadedWidgets = signal<Set<string>>(new Set());
 
-  constructor() {
-    effect(() => {
-      const activeProfile = this.getActiveProfile();
-      if (activeProfile) {
-        this.loadInitialWidget();
-      }
-    });
+  addNewProfile() {
+    const newProfileForm = this.createProfileFormGroup();
+    this.profiles.update(profiles => [...profiles, newProfileForm]);
+    
+    const newProfileWidgetStates = Object.fromEntries(
+      WIDGET_CONFIG.map(widget => [
+        widget.name, 
+        signal<WidgetState>({ ...widget.state() })
+      ])
+    );
+    this.profileWidgetStates.update(states => [...states, newProfileWidgetStates]);
+    
+    this.setActiveProfile(this.profiles().length - 1);
   }
 
-  getProfileForm(): FormGroup {
-    return this.profileForm();
+  setActiveProfile(index: number) {
+    if (index >= 0 && index < this.profiles().length) {
+      this.activeProfileIndex.set(index);
+      this.resetWidgetStates();
+      this.loadInitialWidget();
+    } else {
+      console.error('Invalid profile index');
+    }
   }
 
   getActiveProfile(): FormGroup | null {
-    const profiles = this.profileForm().get('profiles') as FormArray;
-    return profiles.at(this.activeProfileIndex()) as FormGroup;
+    const index = this.activeProfileIndex();
+    return index !== null ? this.profiles()[index] : null;
   }
 
-  getVisibleWidgets = computed(() => 
-    WIDGET_CONFIG.filter(widget => widget.visible).map(widget => ({
-      ...widget,
-      state: computed(() => this.widgetStates()[widget.name])
-    }))
-  );
+  getActiveProfileWidgetStates(): Record<string, Signal<WidgetState>> | null {
+    const index = this.activeProfileIndex();
+    return index !== null ? this.profileWidgetStates()[index] : null;
+  }
 
-  activeWidget = computed(() => {
-    const name = this.activeWidgetName();
-    return name ? this.getVisibleWidgets().find(w => w.name === name) : null;
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>, profileIndex?: number) {
+    const index = profileIndex !== undefined ? profileIndex : this.activeProfileIndex();
+    if (index === null) return;
+
+    const profileWidgetStates = this.profileWidgetStates()[index];
+    if (profileWidgetStates) {
+      const widgetState = profileWidgetStates[widgetName];
+      if (widgetState) {
+        widgetState.update(state => ({ ...state, ...update }));
+      }
+    }
+  }
+
+  getVisibleWidgets = computed(() => {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return [];
+    
+    return WIDGET_CONFIG.filter(widget => widget.visible).map(widget => ({
+      ...widget,
+      state: activeProfileWidgetStates[widget.name]
+    }));
   });
+
+  setActiveWidget(widgetName: string) {
+    this.activeWidgetName.set(widgetName);
+    this.updateWidgetState(widgetName, { active: true, visited: true, status: 'in-progress' });
+  }
+
+  resetWidgetStates() {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (activeProfileWidgetStates) {
+      Object.keys(activeProfileWidgetStates).forEach(widgetName => {
+        const widget = WIDGET_CONFIG.find(w => w.name === widgetName);
+        if (widget) {
+          activeProfileWidgetStates[widgetName].set({ ...widget.state() });
+        }
+      });
+    }
+  }
+
+  loadInitialWidget() {
+    const firstWidget = this.getVisibleWidgets()[0];
+    if (firstWidget) {
+      this.setActiveWidget(firstWidget.name);
+    }
+  }
 
   async createOrEditProfile(partyId?: string) {
     let profileData: any = {};
@@ -103,17 +142,17 @@ export class ProfileBuilderService {
     }
 
     const profileFormGroup = this.createProfileFormGroup(profileData, metadataData);
-    (this.profileForm().get('profiles') as FormArray).push(profileFormGroup);
-    this.setActiveProfile((this.profileForm().get('profiles') as FormArray).length - 1);
-    this.resetWidgetStates();
-    this.loadInitialWidget();
+    this.profiles.update(profiles => [...profiles, profileFormGroup]);
+    this.setActiveProfile(this.profiles().length - 1);
   }
 
-  private createProfileFormGroup(profileData: any, metadataData: any): FormGroup {
+  private createProfileFormGroup(profileData: any = {}, metadataData: any = {}): FormGroup {
     const profileGroup = this.fb.group({});
 
-    this.getVisibleWidgets().forEach(widget => {
-      profileGroup.addControl(widget.name, this.fb.group({}));
+    WIDGET_CONFIG.forEach(widget => {
+      if (widget.visible) {
+        profileGroup.addControl(widget.name, this.fb.group({}));
+      }
     });
 
     if (profileData) {
@@ -131,53 +170,13 @@ export class ProfileBuilderService {
     return this.http.get(`party-api-url/${partyId}`).toPromise();
   }
 
-  setActiveProfile(index: number) {
-    this.activeProfileIndex.set(index);
-    this.resetWidgetStates();
-  }
-
-  setActiveWidget(widgetName: string) {
-    this.activeWidgetName.set(widgetName);
-    this.updateWidgetState(widgetName, { active: true, visited: true, status: 'in-progress' });
-  }
-
-  updateWidgetState(widgetName: string, update: Partial<WidgetState>) {
-    this.widgetStates.update(states => ({
-      ...states,
-      [widgetName]: { ...states[widgetName], ...update }
-    }));
-  }
-
-  setWidgetLoaded(widgetName: string) {
-    this.loadedWidgets.update(loaded => new Set(loaded).add(widgetName));
-    this.updateWidgetState(widgetName, { status: 'loaded' });
-  }
-
-  isWidgetLoaded(widgetName: string) {
-    return computed(() => this.loadedWidgets().has(widgetName));
-  }
-
-  acknowledgeWidget(widgetName: string) {
-    this.updateWidgetState(widgetName, { acknowledged: true, status: 'completed' });
-  }
-
-  resetWidgetStates() {
-    this.widgetStates.update(() => 
-      Object.fromEntries(
-        WIDGET_CONFIG.map(widget => [
-          widget.name,
-          { hasError: false, visited: false, acknowledged: false, active: false, status: 'pending' }
-        ])
-      )
-    );
-    this.loadedWidgets.set(new Set());
-  }
-
   validateAllWidgets(): boolean {
     const activeProfile = this.getActiveProfile();
+    if (!activeProfile) return false;
+
     let isValid = true;
     this.getVisibleWidgets().forEach(widget => {
-      const widgetForm = activeProfile?.get(widget.name);
+      const widgetForm = activeProfile.get(widget.name);
       const widgetValid = widgetForm?.valid ?? false;
       this.updateWidgetState(widget.name, { 
         hasError: !widgetValid, 
@@ -188,36 +187,78 @@ export class ProfileBuilderService {
     return isValid;
   }
 
-  // Helper Methods
-  getWidgetByName(name: string) {
-    return this.getVisibleWidgets().find(widget => widget.name === name);
+  acknowledgeWidget(widgetName: string, profileIndex?: number) {
+    this.updateWidgetState(widgetName, { acknowledged: true, status: 'completed' }, profileIndex);
   }
 
   isProfileComplete(): boolean {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return false;
+
     return this.getVisibleWidgets().every(widget => 
-      this.widgetStates()[widget.name].status === 'completed'
+      activeProfileWidgetStates[widget.name]().status === 'completed'
     );
   }
 
   getCompletionPercentage(): number {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return 0;
+
     const totalWidgets = this.getVisibleWidgets().length;
     const completedWidgets = this.getVisibleWidgets().filter(widget => 
-      this.widgetStates()[widget.name].status === 'completed'
+      activeProfileWidgetStates[widget.name]().status === 'completed'
     ).length;
     return (completedWidgets / totalWidgets) * 100;
   }
 
   getNextIncompleteWidget(): string | null {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return null;
+
     const incompleteWidget = this.getVisibleWidgets().find(widget => 
-      this.widgetStates()[widget.name].status !== 'completed'
+      activeProfileWidgetStates[widget.name]().status !== 'completed'
     );
     return incompleteWidget ? incompleteWidget.name : null;
   }
 
-  loadInitialWidget() {
-    const firstWidget = this.getVisibleWidgets()[0];
-    if (firstWidget) {
-      this.setActiveWidget(firstWidget.name);
+  // Helper methods
+  getProfileCount(): number {
+    return this.profiles().length;
+  }
+
+  hasActiveProfile(): boolean {
+    return this.activeProfileIndex() !== null;
+  }
+
+  getProfileWidgetState(profileIndex: number, widgetName: string): WidgetState | null {
+    const profileStates = this.profileWidgetStates()[profileIndex];
+    return profileStates ? profileStates[widgetName]() : null;
+  }
+
+  isWidgetLoaded(widgetName: string): boolean {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    return activeProfileWidgetStates ? activeProfileWidgetStates[widgetName]().visited : false;
+  }
+
+  loadAllWidgets() {
+    this.getVisibleWidgets().forEach(widget => {
+      this.updateWidgetState(widget.name, { visited: true, status: 'in-progress' });
+    });
+  }
+
+  getWidgetErrors(widgetName: string): any {
+    const activeProfile = this.getActiveProfile();
+    if (!activeProfile) return null;
+
+    const widgetForm = activeProfile.get(widgetName);
+    return widgetForm ? widgetForm.errors : null;
+  }
+
+  resetProfile(profileIndex: number) {
+    const profile = this.profiles()[profileIndex];
+    if (profile) {
+      profile.reset();
+      this.resetWidgetStates();
     }
   }
 }
@@ -233,21 +274,27 @@ import { FormGroup } from '@angular/forms';
   standalone: true,
   imports: [AsyncPipe, NgFor, NgIf],
   template: `
-    <div class="party-builder">
+    <div class="profile-selector">
+      <button *ngFor="let profile of profileService.profiles(); let i = index"
+              (click)="profileService.setActiveProfile(i)"
+              [class.active]="i === profileService.activeProfileIndex()">
+        Profile {{ i + 1 }}
+      </button>
+      <button (click)="createNewProfile()">Add New Profile</button>
+    </div>
+    <div class="party-builder" *ngIf="profileService.hasActiveProfile()">
       <app-left-menu></app-left-menu>
       <div class="widget-container">
         <ng-container *ngFor="let widget of profileService.getVisibleWidgets()">
-          <ng-container *ngIf="profileService.isWidgetLoaded(widget.name)() || widget.state().active">
-            <ng-container #widgetContainer></ng-container>
-          </ng-container>
+          <ng-container #widgetContainer></ng-container>
         </ng-container>
       </div>
     </div>
-    <button (click)="createNewProfile()">Create New Profile</button>
     <button (click)="editExistingProfile('some-party-id')">Edit Existing Profile</button>
     <button (click)="validateAll()">Validate All</button>
-    <button (click)="loadAllWidgets()">Load All Widgets</button>
     <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
+    <button (click)="loadAllWidgets()">Load All Widgets</button>
+    <button (click)="acknowledgeWidgetForProfile('personal', 0)">Acknowledge Personal Info for Profile 1</button>
   `
 })
 export class PartyBuilderComponent {
@@ -259,7 +306,7 @@ export class PartyBuilderComponent {
 
   constructor() {
     effect(() => {
-      const activeWidget = this.profileService.activeWidget();
+      const activeWidget = this.profileService.getVisibleWidgets().find(w => w.state().active);
       if (activeWidget) {
         this.loadComponent(activeWidget.name);
       }
@@ -267,34 +314,25 @@ export class PartyBuilderComponent {
   }
 
   async loadComponent(widgetName: string) {
-    if (!this.profileService.isWidgetLoaded(widgetName)()) {
-      const widgetConfig = this.profileService.getWidgetByName(widgetName);
-      if (widgetConfig) {
-        const component = await widgetConfig.component();
-        const containerIndex = this.profileService.getVisibleWidgets().findIndex(w => w.name === widgetName);
-        if (containerIndex !== -1 && this.widgetContainers[containerIndex]) {
-          const componentRef = this.widgetContainers[containerIndex].createComponent(component);
-          const activeProfile = this.profileService.getActiveProfile();
-          if (activeProfile) {
-            const widgetForm = activeProfile.get(widgetName) as FormGroup;
-            if (componentRef.instance.setFormGroup) {
-              componentRef.instance.setFormGroup(widgetForm);
-            }
+    const widgetConfig = this.profileService.getVisibleWidgets().find(w => w.name === widgetName);
+    if (widgetConfig) {
+      const component = await widgetConfig.component();
+      const containerIndex = this.profileService.getVisibleWidgets().findIndex(w => w.name === widgetName);
+      if (containerIndex !== -1 && this.widgetContainers[containerIndex]) {
+        const componentRef = this.widgetContainers[containerIndex].createComponent(component);
+        const activeProfile = this.profileService.getActiveProfile();
+        if (activeProfile) {
+          const widgetForm = activeProfile.get(widgetName) as FormGroup;
+          if (componentRef.instance.setFormGroup) {
+            componentRef.instance.setFormGroup(widgetForm);
           }
-          this.profileService.setWidgetLoaded(widgetName);
         }
       }
     }
   }
 
-  async loadAllWidgets() {
-    for (const widget of this.profileService.getVisibleWidgets()) {
-      await this.loadComponent(widget.name);
-    }
-  }
-
-  async createNewProfile() {
-    await this.profileService.createOrEditProfile();
+  createNewProfile() {
+    this.profileService.addNewProfile();
   }
 
   async editExistingProfile(partyId: string) {
@@ -314,6 +352,17 @@ export class PartyBuilderComponent {
     } else {
       console.log('All widgets are complete!');
     }
+  }
+
+  loadAllWidgets() {
+    this.profileService.loadAllWidgets();
+    this.profileService.getVisibleWidgets().forEach(widget => {
+      this.loadComponent(widget.name);
+    });
+  }
+
+  acknowledgeWidgetForProfile(widgetName: string, profileIndex: number) {
+    this.profileService.acknowledgeWidget(widgetName, profileIndex);
   }
 }
 
@@ -347,66 +396,4 @@ import { ProfileBuilderService } from './profile-builder.service';
   `
 })
 export class LeftMenuComponent {
-  profileService = inject(ProfileBuilderService);
-
-  setActiveWidget(widgetName: string) {
-    this.profileService.setActiveWidget(widgetName);
-  }
-}
-
-// personal-info.component.ts
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
-import { FormGroup, FormBuilder, Validators, ReactiveFormsModule } from '@angular/forms';
-import { Subscription } from 'rxjs';
-import { ProfileBuilderService } from './profile-builder.service';
-
-@Component({
-  selector: 'app-personal-info',
-  standalone: true,
-  imports: [ReactiveFormsModule],
-  template: `
-    <form *ngIf="form" [formGroup]="form">
-      <input formControlName="firstName" placeholder="First Name">
-      <input formControlName="lastName" placeholder="Last Name">
-      <input formControlName="dateOfBirth" placeholder="Date of Birth">
-    </form>
-    <button (click)="acknowledge()">Acknowledge</button>
-  `
-})
-export class PersonalInfoComponent implements OnInit, OnDestroy {
-  form: FormGroup;
-  private subscription: Subscription;
-  private fb = inject(FormBuilder);
-  private profileService = inject(ProfileBuilderService);
-
-  ngOnInit() {
-    this.subscription = this.form.statusChanges.subscribe(() => {
-      this.updateValidationStatus();
-    });
-  }
-
-  ngOnDestroy() {
-    if (this.subscription) {
-      this.subscription.unsubscribe();
-    }
-  }
-
-  setFormGroup(form: FormGroup) {
-    this.form = form;
-    if (Object.keys(this.form.controls).length === 0) {
-      this.form.addControl('firstName', this.fb.control('', Validators.required));
-      this.form.addControl('lastName', this.fb.control('', Validators.required));
-      this.form.addControl('dateOfBirth', this.fb.control('', Validators.required));
-    }
-  }
-
-  private updateValidationStatus() {
-    this.profileService.updateWidgetState('personal', { 
-      hasError: !this.form.valid, 
-      status: this.form.valid ? 'in-progress' : 'error' 
-    });
-  }
-
-  acknowledge() {
-    this.profileService.acknowledgeWidget('personal');
-  }
+  profileService = inject(
