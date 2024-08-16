@@ -276,3 +276,73 @@ export class ProfileBuilderService {
     return this.isLoading;
   }
 }
+
+--------------------
+
+@Component({
+  // ... component metadata
+})
+export class PartyBuilderComponent {
+  // ... other properties and methods
+
+  validateAll() {
+    const isValid = this.profileService.validateAllWidgets();
+    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
+    console.log('Completion percentage:', this.profileService.getCompletionPercentage());
+  }
+
+  loadAllWidgets() {
+    this.profileService.loadAllWidgets();
+    // You might want to trigger loading of all widget components here
+    this.profileService.getVisibleWidgets().forEach(widget => {
+      this.loadComponent(widget.name);
+    });
+  }
+
+  loadNextIncompleteWidget() {
+    const nextWidgetName = this.profileService.getNextIncompleteWidget();
+    if (nextWidgetName) {
+      this.profileService.setActiveWidget(nextgetNextIncompleteWidgetName);
+      this.loadComponent(nextWidgetName);
+    } else {
+      console.log('All widgets are complete!');
+    }
+  }
+
+  // ... rest of the component
+}
+
+-------
+
+@Component({
+  // ... component metadata
+})
+export class PartyBuilderComponent {
+  // ... other properties and methods
+
+  validateAll() {
+    const isValid = this.profileService.validateAllWidgets();
+    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
+    console.log('Completion percentage:', this.profileService.getCompletionPercentage());
+  }
+
+  loadAllWidgets() {
+    this.profileService.loadAllWidgets();
+    // You might want to trigger loading of all widget components here
+    this.profileService.getVisibleWidgets().forEach(widget => {
+      this.loadComponent(widget.name);
+    });
+  }
+
+  loadNextIncompleteWidget() {
+    const nextWidgetName = this.profileService.getNextIncompleteWidget();
+    if (nextWidgetName) {
+      this.profileService.setActiveWidget(nextgetNextIncompleteWidgetName);
+      this.loadComponent(nextWidgetName);
+    } else {
+      console.log('All widgets are complete!');
+    }
+  }
+
+  // ... rest of the component
+}
