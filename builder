@@ -397,3 +397,121 @@ import { ProfileBuilderService } from './profile-builder.service';
 })
 export class LeftMenuComponent {
   profileService = inject(
+
+
+---------
+import { Injectable, signal, computed, inject, WritableSignal } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { WIDGET_CONFIG, WidgetConfig, WidgetState } from './widget-config';
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private fb = inject(FormBuilder);
+  private http = inject(HttpClient);
+
+  private profiles: WritableSignal<FormGroup[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+  private profileWidgetStates: WritableSignal<Array<Record<string, WritableSignal<WidgetState>>>> = signal([]);
+  private activeWidgetName: WritableSignal<string | null> = signal(null);
+  private isLoading: WritableSignal<boolean> = signal(false);
+
+  addNewProfile() {
+    const newProfileForm = this.createProfileFormGroup();
+    this.profiles.update(profiles => [...profiles, newProfileForm]);
+    
+    const newProfileWidgetStates = Object.fromEntries(
+      WIDGET_CONFIG.map(widget => [
+        widget.name, 
+        signal<WidgetState>({ ...widget.state() })
+      ])
+    );
+    this.profileWidgetStates.update(states => [...states, newProfileWidgetStates]);
+    
+    this.setActiveProfile(this.profiles().length - 1);
+  }
+
+  setActiveProfile(index: number) {
+    if (index >= 0 && index < this.profiles().length) {
+      this.activeProfileIndex.set(index);
+      this.resetWidgetStates();
+      this.loadInitialWidget();
+    } else {
+      console.error('Invalid profile index');
+    }
+  }
+
+  getActiveProfile(): FormGroup | null {
+    const index = this.activeProfileIndex();
+    return index !== null ? this.profiles()[index] : null;
+  }
+
+  getActiveProfileWidgetStates(): Record<string, WritableSignal<WidgetState>> | null {
+    const index = this.activeProfileIndex();
+    return index !== null ? this.profileWidgetStates()[index] : null;
+  }
+
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>, profileIndex?: number) {
+    const index = profileIndex !== undefined ? profileIndex : this.activeProfileIndex();
+    if (index === null) return;
+
+    const profileWidgetStates = this.profileWidgetStates()[index];
+    if (profileWidgetStates) {
+      const widgetState = profileWidgetStates[widgetName];
+      if (widgetState) {
+        widgetState.update(state => ({ ...state, ...update }));
+      }
+    }
+  }
+
+  getVisibleWidgets = computed(() => {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return [];
+    
+    return WIDGET_CONFIG.filter(widget => widget.visible).map(widget => ({
+      ...widget,
+      state: activeProfileWidgetStates[widget.name]
+    }));
+  });
+
+  setActiveWidget(widgetName: string) {
+    this.activeWidgetName.set(widgetName);
+    this.updateWidgetState(widgetName, { active: true, visited: true, status: 'in-progress' });
+  }
+
+  resetWidgetStates() {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (activeProfileWidgetStates) {
+      Object.keys(activeProfileWidgetStates).forEach(widgetName => {
+        const widget = WIDGET_CONFIG.find(w => w.name === widgetName);
+        if (widget) {
+          activeProfileWidgetStates[widgetName].set({ ...widget.state() });
+        }
+      });
+    }
+  }
+
+  async createOrEditProfile(partyId?: string) {
+    this.isLoading.set(true);
+    try {
+      let profileData: any = {};
+      const metadataData = await this.fetchMetadata();
+
+      if (partyId) {
+        profileData = await this.fetchPartyData(partyId);
+      }
+
+      const profileFormGroup = this.createProfileFormGroup(profileData, metadataData);
+      this.profiles.update(profiles => [...profiles, profileFormGroup]);
+      this.setActiveProfile(this.profiles().length - 1);
+    } finally {
+      this.isLoading.set(false);
+    }
+  }
+
+  // ... other methods remain the same ...
+
+  getIsLoading() {
+    return this.isLoading.asReadonly();
+  }
+}
