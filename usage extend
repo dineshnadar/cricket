@@ -1,0 +1,157 @@
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { FormExtensionService } from './form-extension.service';
+
+@Component({
+  selector: 'app-user-profile',
+  template: `
+    <form [formGroup]="userForm">
+      <div formGroupName="personalInfo">
+        <input formControlName="name" placeholder="Name">
+        <input formControlName="email" placeholder="Email">
+        <input formControlName="age" placeholder="Age">
+      </div>
+      <div formGroupName="address">
+        <input formControlName="street" placeholder="Street">
+        <input formControlName="city" placeholder="City">
+        <select formControlName="country">
+          <option value="">Select Country</option>
+          <option value="US">United States</option>
+          <option value="UK">United Kingdom</option>
+          <option value="CA">Canada</option>
+        </select>
+      </div>
+    </form>
+
+    <h3>Personal Info Read View:</h3>
+    <div *ngFor="let item of personalInfoReadView() | async">
+      <strong>{{ item.label }}:</strong> {{ item.value }}
+      <span *ngIf="item.computedValue">({{ item.computedValue }})</span>
+    </div>
+
+    <h3>Address Read View:</h3>
+    <div *ngFor="let item of addressReadView() | async">
+      <strong>{{ item.label }}:</strong> {{ item.value }}
+    </div>
+
+    <button (click)="applyDefaults()">Apply Defaults</button>
+    <button (click)="updateNameProperty()">Update Name Property</button>
+    <button (click)="performBatchUpdates()">Perform Batch Updates</button>
+  `
+})
+export class UserProfileComponent implements OnInit {
+  userForm: FormGroup;
+  personalInfoReadView = this.formExtensionService.getReadView('personalInfo');
+  addressReadView = this.formExtensionService.getReadView('address');
+
+  constructor(
+    private fb: FormBuilder,
+    private formExtensionService: FormExtensionService
+  ) {}
+
+  ngOnInit() {
+    this.initForm();
+  }
+
+  initForm() {
+    // 1. Create the form
+    this.userForm = this.fb.group({
+      personalInfo: this.fb.group({
+        name: ['', Validators.required],
+        email: ['', [Validators.required, Validators.email]],
+        age: ['']
+      }),
+      address: this.fb.group({
+        street: [''],
+        city: [''],
+        country: ['']
+      })
+    });
+
+    // 2. Set the form in the FormExtensionService
+    this.formExtensionService.setForm(this.userForm);
+
+    // 3. Extend controls with additional properties
+    this.formExtensionService.extendControl(this.userForm.get('personalInfo.name')!, {
+      label: 'Full Name',
+      fldName: 'fullName',
+      required: true,
+      fldMax: 100,
+      seq: 1,
+      reqBorder: true
+    });
+
+    this.formExtensionService.extendControl(this.userForm.get('personalInfo.email')!, {
+      label: 'Email Address',
+      fldName: 'emailAddress',
+      required: true,
+      fieldType: 'email',
+      seq: 2,
+      reqBorder: true
+    });
+
+    this.formExtensionService.extendControl(this.userForm.get('personalInfo.age')!, {
+      label: 'Age',
+      fldName: 'age',
+      fieldType: 'number',
+      seq: 3
+    });
+
+    this.formExtensionService.extendControl(this.userForm.get('address.country')!, {
+      label: 'Country',
+      fldName: 'country',
+      lookupData: [
+        { value: 'US', label: 'United States' },
+        { value: 'UK', label: 'United Kingdom' },
+        { value: 'CA', label: 'Canada' }
+      ],
+      seq: 1
+    });
+
+    // 4. Register custom computations
+    this.formExtensionService.registerCustomComputation('personalInfo.age', {
+      compute: (control) => {
+        const age = control.value;
+        return age >= 18 ? 'Adult' : 'Minor';
+      }
+    });
+  }
+
+  applyDefaults() {
+    // 5. Apply default values
+    this.formExtensionService.applyDefaultValues(this.userForm, true);
+  }
+
+  updateNameProperty() {
+    // 6. Update a specific property of a control
+    this.formExtensionService.updateControlProperty('personalInfo.name', 'label', 'User Name');
+  }
+
+  performBatchUpdates() {
+    // 7. Perform batch updates
+    this.formExtensionService.batchUpdates(() => {
+      this.userForm.patchValue({
+        personalInfo: { name: 'John Doe', email: 'john@example.com' },
+        address: { country: 'US' }
+      });
+      this.formExtensionService.updateControlProperty('address.country', 'visible', false);
+    });
+  }
+
+  // 8. Get old value (could be used in a method triggered by a user action)
+  getOldNameValue() {
+    const oldValue = this.formExtensionService.getOldValue('personalInfo.name');
+    console.log('Old name value:', oldValue);
+  }
+
+  // 9. Get extended properties (could be used in a method triggered by a user action)
+  getNameProperties() {
+    const properties = this.formExtensionService.getExtendedProperties('personalInfo.name');
+    console.log('Name field properties:', properties);
+  }
+
+  // 10. Get computed value (could be used in the template)
+  get computedAge() {
+    return this.formExtensionService.getComputedValue('personalInfo.age');
+  }
+}
