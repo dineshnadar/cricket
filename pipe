@@ -1,0 +1,686 @@
+// libs/pipes/src/index.ts
+export * from './lib/safe-html.pipe';
+export * from './lib/truncate.pipe';
+export * from './lib/filter.pipe';
+export * from './lib/sort-by.pipe';
+export * from './lib/time-ago.pipe';
+export * from './lib/file-size.pipe';
+export * from './lib/highlight.pipe';
+export * from './lib/enum-to-array.pipe';
+export * from './lib/object-entries.pipe';
+export * from './lib/group-by.pipe';
+export * from './lib/debounce.pipe';
+export * from './lib/is-empty.pipe';
+export * from './lib/highlight-change.pipe';
+
+// libs/pipes/src/lib/safe-html.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+
+@Pipe({
+  name: 'safeHtml',
+  standalone: true
+})
+export class SafeHtmlPipe implements PipeTransform {
+  constructor(private sanitizer: DomSanitizer) {}
+
+  transform(value: string): SafeHtml {
+    return this.sanitizer.bypassSecurityTrustHtml(value);
+  }
+}
+
+// libs/pipes/src/lib/truncate.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'truncate',
+  standalone: true
+})
+export class TruncatePipe implements PipeTransform {
+  transform(value: string, limit = 25, completeWords = false, ellipsis = '...'): string {
+    if (!value) return '';
+    if (value.length <= limit) return value;
+
+    if (completeWords) {
+      limit = value.substring(0, limit).lastIndexOf(' ');
+    }
+    return `${value.substring(0, limit)}${ellipsis}`;
+  }
+}
+
+// libs/pipes/src/lib/filter.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'filter',
+  standalone: true
+})
+export class FilterPipe implements PipeTransform {
+  transform<T>(items: T[], field: keyof T, value: any): T[] {
+    if (!items) return [];
+    if (!field || value === undefined || value === null) return items;
+
+    return items.filter(item => 
+      String(item[field]).toLowerCase().includes(String(value).toLowerCase())
+    );
+  }
+}
+
+// libs/pipes/src/lib/sort-by.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'sortBy',
+  standalone: true
+})
+export class SortByPipe implements PipeTransform {
+  transform<T>(array: T[], field: keyof T, order: 'asc' | 'desc' = 'asc'): T[] {
+    if (!Array.isArray(array) || !field) return array;
+
+    return [...array].sort((a, b) => {
+      if (a[field] < b[field]) return order === 'asc' ? -1 : 1;
+      if (a[field] > b[field]) return order === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+}
+
+// libs/pipes/src/lib/time-ago.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+import { formatDistanceToNow } from 'date-fns';
+
+@Pipe({
+  name: 'timeAgo',
+  standalone: true
+})
+export class TimeAgoPipe implements PipeTransform {
+  transform(value: string | number | Date): string {
+    if (!value) return '';
+    return formatDistanceToNow(new Date(value), { addSuffix: true });
+  }
+}
+
+// libs/pipes/src/lib/file-size.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'fileSize',
+  standalone: true
+})
+export class FileSizePipe implements PipeTransform {
+  transform(bytes: number, decimals = 2): string {
+    if (!+bytes) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  }
+}
+
+// libs/pipes/src/lib/highlight.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'highlight',
+  standalone: true
+})
+export class HighlightPipe implements PipeTransform {
+  transform(text: string, search: string): string {
+    if (!search) return text;
+    const pattern = search
+      .replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&")
+      .split(' ')
+      .filter(t => t.length > 0)
+      .join('|');
+    const regex = new RegExp(pattern, 'gi');
+    return text.replace(regex, match => `<mark>${match}</mark>`);
+  }
+}
+
+// libs/pipes/src/lib/enum-to-array.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'enumToArray',
+  standalone: true
+})
+export class EnumToArrayPipe implements PipeTransform {
+  transform(enumObj: any): { key: string; value: any }[] {
+    return Object.keys(enumObj)
+      .filter(key => isNaN(Number(key)))
+      .map(key => ({ key, value: enumObj[key] }));
+  }
+}
+
+// libs/pipes/src/lib/object-entries.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'objectEntries',
+  standalone: true
+})
+export class ObjectEntriesPipe implements PipeTransform {
+  transform(obj: { [key: string]: any }): [string, any][] {
+    return Object.entries(obj);
+  }
+}
+
+// libs/pipes/src/lib/group-by.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'groupBy',
+  standalone: true
+})
+export class GroupByPipe implements PipeTransform {
+  transform<T>(array: T[], property: keyof T): { key: any; value: T[] }[] {
+    if (!array) return [];
+
+    const groups = array.reduce((acc, item) => {
+      const key = item[property];
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(item);
+      return acc;
+    }, {} as { [key: string]: T[] });
+
+    return Object.keys(groups).map(key => ({
+      key,
+      value: groups[key]
+    }));
+  }
+}
+
+// libs/pipes/src/lib/debounce.pipe.ts
+import { Pipe, PipeTransform, OnDestroy } from '@angular/core';
+import { Subject, debounceTime } from 'rxjs';
+
+@Pipe({
+  name: 'debounce',
+  standalone: true,
+  pure: false
+})
+export class DebouncePipe implements PipeTransform, OnDestroy {
+  private subject = new Subject<any>();
+  private latestValue: any = null;
+
+  constructor() {
+    this.subject.pipe(debounceTime(300)).subscribe(value => {
+      this.latestValue = value;
+    });
+  }
+
+  transform(value: any): any {
+    this.subject.next(value);
+    return this.latestValue;
+  }
+
+  ngOnDestroy() {
+    this.subject.complete();
+  }
+}
+
+// libs/pipes/src/lib/is-empty.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'isEmpty',
+  standalone: true
+})
+export class IsEmptyPipe implements PipeTransform {
+  transform(value: any): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim().length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value).length === 0;
+    return false;
+  }
+}
+
+// libs/pipes/src/lib/highlight-change.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'highlightChange',
+  standalone: true,
+  pure: true
+})
+export class HighlightChangePipe implements PipeTransform {
+  transform(value: any, previousValue: any, duration: number = 2000): string {
+    if (value !== previousValue) {
+      return `highlight highlight-${duration}`;
+    }
+    return '';
+  }
+}
+
+-----------
+
+// apps/your-app/src/app/pipes-showcase/pipes-showcase.component.ts
+
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import {
+  SafeHtmlPipe,
+  TruncatePipe,
+  FilterPipe,
+  SortByPipe,
+  TimeAgoPipe,
+  FileSizePipe,
+  HighlightPipe,
+  EnumToArrayPipe,
+  ObjectEntriesPipe,
+  GroupByPipe,
+  DebouncePipe,
+  IsEmptyPipe,
+  HighlightChangePipe
+} from '@your-workspace/pipes';
+
+enum UserRole {
+  Admin = 'Admin',
+  User = 'User',
+  Guest = 'Guest'
+}
+
+interface User {
+  id: number;
+  name: string;
+  role: UserRole;
+  lastLogin: Date;
+  profileSize: number;
+}
+
+@Component({
+  selector: 'app-pipes-showcase',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    SafeHtmlPipe,
+    TruncatePipe,
+    FilterPipe,
+    SortByPipe,
+    TimeAgoPipe,
+    FileSizePipe,
+    HighlightPipe,
+    EnumToArrayPipe,
+    ObjectEntriesPipe,
+    GroupByPipe,
+    DebouncePipe,
+    IsEmptyPipe,
+    HighlightChangePipe
+  ],
+  template: `
+    <h1>Pipes Showcase</h1>
+
+    <!-- SafeHtmlPipe -->
+    <section>
+      <h2>SafeHtmlPipe</h2>
+      <div [innerHTML]="htmlContent | safeHtml"></div>
+    </section>
+
+    <!-- TruncatePipe -->
+    <section>
+      <h2>TruncatePipe</h2>
+      <p>{{ longText | truncate:30 }}</p>
+      <p>{{ longText | truncate:30:true:'...' }}</p>
+    </section>
+
+    <!-- FilterPipe and SortByPipe -->
+    <section>
+      <h2>FilterPipe and SortByPipe</h2>
+      <input [(ngModel)]="searchTerm" placeholder="Search users...">
+      <select [(ngModel)]="sortField">
+        <option value="name">Name</option>
+        <option value="lastLogin">Last Login</option>
+      </select>
+      <select [(ngModel)]="sortOrder">
+        <option value="asc">Ascending</option>
+        <option value="desc">Descending</option>
+      </select>
+      <ul>
+        <li *ngFor="let user of users | filter:'name':searchTerm | sortBy:sortField:sortOrder; let i = index"
+            [class]="user.lastLogin | highlightChange:(previousUserStates[i]?.lastLogin):1000">
+          {{ user.name }} ({{ user.role }}) - Last login: {{ user.lastLogin | timeAgo }}
+        </li>
+      </ul>
+    </section>
+
+    <!-- TimeAgoPipe -->
+    <section>
+      <h2>TimeAgoPipe</h2>
+      <p>Current time: {{ currentTime | timeAgo }}</p>
+    </section>
+
+    <!-- FileSizePipe -->
+    <section>
+      <h2>FileSizePipe</h2>
+      <p>Example file size: {{ exampleFileSize | fileSize }}</p>
+    </section>
+
+    <!-- HighlightPipe -->
+    <section>
+      <h2>HighlightPipe</h2>
+      <input [(ngModel)]="highlightTerm" placeholder="Enter text to highlight">
+      <p [innerHTML]="longText | highlight:highlightTerm"></p>
+    </section>
+
+    <!-- EnumToArrayPipe -->
+    <section>
+      <h2>EnumToArrayPipe</h2>
+      <h3>User Roles:</h3>
+      <ul>
+        <li *ngFor="let role of UserRole | enumToArray">
+          {{ role.key }}: {{ role.value }}
+        </li>
+      </ul>
+    </section>
+
+    <!-- ObjectEntriesPipe -->
+    <section>
+      <h2>ObjectEntriesPipe</h2>
+      <h3>User Object Entries:</h3>
+      <ul>
+        <li *ngFor="let entry of users[0] | objectEntries">
+          {{ entry[0] }}: {{ entry[1] }}
+        </li>
+      </ul>
+    </section>
+
+    <!-- GroupByPipe -->
+    <section>
+      <h2>GroupByPipe</h2>
+      <h3>Users Grouped by Role:</h3>
+      <div *ngFor="let group of users | groupBy:'role'">
+        <h4>{{ group.key }}</h4>
+        <ul>
+          <li *ngFor="let user of group.value">
+            {{ user.name }}
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- DebouncePipe -->
+    <section>
+      <h2>DebouncePipe</h2>
+      <input [ngModel]="debouncedInput" (ngModelChange)="debouncedInput = $event" placeholder="Type here...">
+      <p>Debounced value: {{ debouncedInput | debounce }}</p>
+    </section>
+
+    <!-- IsEmptyPipe -->
+    <section>
+      <h2>IsEmptyPipe</h2>
+      <p>Is users array empty? {{ users | isEmpty }}</p>
+      <p>Is emptyArray empty? {{ emptyArray | isEmpty }}</p>
+      <p>Is emptyObject empty? {{ emptyObject | isEmpty }}</p>
+    </section>
+  `,
+  styles: [`
+    .highlight {
+      background-color: yellow;
+      transition: background-color 2s ease;
+    }
+    .highlight-1000 {
+      transition-duration: 1s;
+    }
+    .highlight-3000 {
+      transition-duration: 3s;
+    }
+  `]
+})
+export class PipesShowcaseComponent implements OnInit {
+  UserRole = UserRole;
+  users: User[] = [
+    { id: 1, name: 'John Doe', role: UserRole.Admin, lastLogin: new Date(2023, 7, 15), profileSize: 1024 * 1024 },
+    { id: 2, name: 'Jane Smith', role: UserRole.User, lastLogin: new Date(2023, 7, 20), profileSize: 2.5 * 1024 * 1024 },
+    { id: 3, name: 'Alice Johnson', role: UserRole.Guest, lastLogin: new Date(2023, 8, 1), profileSize: 512 * 1024 },
+    { id: 4, name: 'Bob Wilson', role: UserRole.User, lastLogin: new Date(2023, 8, 5), profileSize: 3 * 1024 * 1024 },
+    { id: 5, name: 'Charlie Brown', role: UserRole.Admin, lastLogin: new Date(2023, 8, 10), profileSize: 1.5 * 1024 * 1024 },
+  ];
+
+  previousUserStates: Partial<User>[] = [];
+
+  htmlContent = '<p>This is <strong>safe</strong> HTML content with a <a href="#">link</a>.</p>';
+  longText = 'This is a long text that will be truncated and used for highlighting demonstration purposes.';
+  searchTerm = '';
+  sortField: keyof User = 'name';
+  sortOrder: 'asc' | 'desc' = 'asc';
+  highlightTerm = '';
+  debouncedInput = '';
+  currentTime = new Date();
+  exampleFileSize = 1548576; // 1.5 MB
+  emptyArray: any[] = [];
+  emptyObject = {};
+
+  ngOnInit() {
+    this.previousUserStates = this.users.map(user => ({ lastLogin: user.lastLogin }));
+
+    // Update current time every second
+    setInterval(() => {
+      this.currentTime = new Date();
+    }, 1000);
+
+    // Simulate user login updates
+    setInterval(() => {
+      const randomUser = this.users[Math.floor(Math.random() * this.users.length)];
+      const index = this.users.indexOf(randomUser);
+      this.previousUserStates[index] = { ...randomUser };
+      randomUser.lastLogin = new Date();
+    }, 5000);
+  }
+}
+
+
+----------------
+
+// libs/pipes/src/lib/pipes.spec.ts
+
+import { TestBed } from '@angular/core/testing';
+import { DomSanitizer } from '@angular/platform-browser';
+import { SafeHtmlPipe } from './safe-html.pipe';
+import { TruncatePipe } from './truncate.pipe';
+import { FilterPipe } from './filter.pipe';
+import { SortByPipe } from './sort-by.pipe';
+import { TimeAgoPipe } from './time-ago.pipe';
+import { FileSizePipe } from './file-size.pipe';
+import { HighlightPipe } from './highlight.pipe';
+import { EnumToArrayPipe } from './enum-to-array.pipe';
+import { ObjectEntriesPipe } from './object-entries.pipe';
+import { GroupByPipe } from './group-by.pipe';
+import { DebouncePipe } from './debounce.pipe';
+import { IsEmptyPipe } from './is-empty.pipe';
+import { HighlightChangePipe } from './highlight-change.pipe';
+
+describe('Pipes Library', () => {
+  let sanitizer: DomSanitizer;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    sanitizer = TestBed.inject(DomSanitizer);
+  });
+
+  describe('SafeHtmlPipe', () => {
+    it('should sanitize HTML', () => {
+      const pipe = new SafeHtmlPipe(sanitizer);
+      const result = pipe.transform('<script>alert("XSS")</script>');
+      expect(sanitizer.sanitize).toHaveBeenCalled();
+    });
+  });
+
+  describe('TruncatePipe', () => {
+    const pipe = new TruncatePipe();
+
+    it('should truncate text', () => {
+      expect(pipe.transform('Hello World', 5)).toBe('Hello...');
+    });
+
+    it('should preserve whole words', () => {
+      expect(pipe.transform('Hello World', 7, true)).toBe('Hello...');
+    });
+  });
+
+  describe('FilterPipe', () => {
+    const pipe = new FilterPipe();
+    const items = [
+      { name: 'John', age: 25 },
+      { name: 'Jane', age: 30 },
+      { name: 'Bob', age: 35 }
+    ];
+
+    it('should filter items', () => {
+      const result = pipe.transform(items, 'name', 'Jo');
+      expect(result.length).toBe(1);
+      expect(result[0].name).toBe('John');
+    });
+  });
+
+  describe('SortByPipe', () => {
+    const pipe = new SortByPipe();
+    const items = [
+      { name: 'John', age: 25 },
+      { name: 'Jane', age: 30 },
+      { name: 'Bob', age: 35 }
+    ];
+
+    it('should sort items ascending', () => {
+      const result = pipe.transform(items, 'age');
+      expect(result[0].name).toBe('John');
+      expect(result[2].name).toBe('Bob');
+    });
+
+    it('should sort items descending', () => {
+      const result = pipe.transform(items, 'age', 'desc');
+      expect(result[0].name).toBe('Bob');
+      expect(result[2].name).toBe('John');
+    });
+  });
+
+  describe('TimeAgoPipe', () => {
+    const pipe = new TimeAgoPipe();
+
+    it('should return time ago', () => {
+      const date = new Date();
+      date.setMinutes(date.getMinutes() - 5);
+      expect(pipe.transform(date)).toContain('5 minutes ago');
+    });
+  });
+
+  describe('FileSizePipe', () => {
+    const pipe = new FileSizePipe();
+
+    it('should format file size', () => {
+      expect(pipe.transform(1024)).toBe('1 KB');
+      expect(pipe.transform(1048576)).toBe('1 MB');
+    });
+  });
+
+  describe('HighlightPipe', () => {
+    const pipe = new HighlightPipe();
+
+    it('should highlight search term', () => {
+      const result = pipe.transform('Hello World', 'World');
+      expect(result).toBe('Hello <mark>World</mark>');
+    });
+  });
+
+  describe('EnumToArrayPipe', () => {
+    const pipe = new EnumToArrayPipe();
+
+    enum TestEnum {
+      A = 'Value A',
+      B = 'Value B'
+    }
+
+    it('should convert enum to array', () => {
+      const result = pipe.transform(TestEnum);
+      expect(result).toEqual([
+        { key: 'A', value: 'Value A' },
+        { key: 'B', value: 'Value B' }
+      ]);
+    });
+  });
+
+  describe('ObjectEntriesPipe', () => {
+    const pipe = new ObjectEntriesPipe();
+
+    it('should convert object to entries', () => {
+      const obj = { a: 1, b: 2 };
+      const result = pipe.transform(obj);
+      expect(result).toEqual([['a', 1], ['b', 2]]);
+    });
+  });
+
+  describe('GroupByPipe', () => {
+    const pipe = new GroupByPipe();
+    const items = [
+      { name: 'John', category: 'A' },
+      { name: 'Jane', category: 'B' },
+      { name: 'Bob', category: 'A' }
+    ];
+
+    it('should group items', () => {
+      const result = pipe.transform(items, 'category');
+      expect(result.length).toBe(2);
+      expect(result[0].key).toBe('A');
+      expect(result[0].value.length).toBe(2);
+    });
+  });
+
+  describe('DebouncePipe', () => {
+    let pipe: DebouncePipe;
+
+    beforeEach(() => {
+      pipe = new DebouncePipe();
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should debounce value changes', () => {
+      let result = pipe.transform('test1');
+      expect(result).toBeNull();
+
+      result = pipe.transform('test2');
+      expect(result).toBeNull();
+
+      jest.advanceTimersByTime(300);
+      expect(result).toBe('test2');
+    });
+  });
+
+  describe('IsEmptyPipe', () => {
+    const pipe = new IsEmptyPipe();
+
+    it('should check if value is empty', () => {
+      expect(pipe.transform(null)).toBe(true);
+      expect(pipe.transform([])).toBe(true);
+      expect(pipe.transform({})).toBe(true);
+      expect(pipe.transform('')).toBe(true);
+      expect(pipe.transform([1, 2, 3])).toBe(false);
+      expect(pipe.transform({ a: 1 })).toBe(false);
+      expect(pipe.transform('text')).toBe(false);
+    });
+  });
+
+  describe('HighlightChangePipe', () => {
+    const pipe = new HighlightChangePipe();
+
+    it('should highlight changes', () => {
+      expect(pipe.transform('new', 'old')).toBe('highlight highlight-2000');
+      expect(pipe.transform('same', 'same')).toBe('');
+    });
+
+    it('should use custom duration', () => {
+      expect(pipe.transform('new', 'old', 1000)).toBe('highlight highlight-1000');
+    });
+  });
+});
