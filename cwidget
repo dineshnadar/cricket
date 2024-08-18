@@ -1,246 +1,481 @@
-// widget-config.ts
-import { Type } from '@angular/core';
+// libs/pipes/src/lib/pipes.ts
 
-export interface WidgetConfig {
-  name: string;
-  label: string;
-  component: () => Promise<Type<any>>;
-  visible: boolean;
+import { Pipe, PipeTransform, OnDestroy } from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { formatDistanceToNow } from 'date-fns';
+import { Subject, debounceTime } from 'rxjs';
+
+@Pipe({
+  name: 'safeHtml',
+  standalone: true
+})
+export class SafeHtmlPipe implements PipeTransform {
+  constructor(private sanitizer: DomSanitizer) {}
+
+  transform(value: string): SafeHtml {
+    return this.sanitizer.bypassSecurityTrustHtml(value);
+  }
 }
 
-export interface WidgetState {
-  visited: boolean;
-  hasErrors: boolean;
-  acknowledged: boolean;
+@Pipe({
+  name: 'truncate',
+  standalone: true
+})
+export class TruncatePipe implements PipeTransform {
+  transform(value: string, limit = 25, completeWords = false, ellipsis = '...'): string {
+    if (!value) return '';
+    if (value.length <= limit) return value;
+
+    if (completeWords) {
+      limit = value.substring(0, limit).lastIndexOf(' ');
+    }
+    return `${value.substring(0, limit)}${ellipsis}`;
+  }
 }
 
-export const WIDGET_CONFIG: WidgetConfig[] = [
-  {
-    name: 'personal',
-    label: 'Personal Info',
-    component: () => import('./personal-info.component').then(m => m.PersonalInfoComponent),
-    visible: true
-  },
-  {
-    name: 'professional',
-    label: 'Professional Info',
-    component: () => import('./professional-info.component').then(m => m.ProfessionalInfoComponent),
-    visible: true
-  },
-  {
-    name: 'contact',
-    label: 'Contact Info',
-    component: () => import('./contact-info.component').then(m => m.ContactInfoComponent),
-    visible: true
-  },
-  {
-    name: 'financial',
-    label: 'Financial Info',
-    component: () => import('./financial-info.component').then(m => m.FinancialInfoComponent),
-    visible: false
+@Pipe({
+  name: 'filter',
+  standalone: true
+})
+export class FilterPipe implements PipeTransform {
+  transform<T>(items: T[], field: keyof T, value: any): T[] {
+    if (!items) return [];
+    if (!field || value === undefined || value === null) return items;
+
+    return items.filter(item => 
+      String(item[field]).toLowerCase().includes(String(value).toLowerCase())
+    );
   }
-];
+}
 
-// profile-builder.service.ts
-import { Injectable, signal, computed } from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
-import { WIDGET_CONFIG, WidgetState, WidgetConfig } from './widget-config';
+@Pipe({
+  name: 'sortBy',
+  standalone: true
+})
+export class SortByPipe implements PipeTransform {
+  transform<T>(array: T[], field: keyof T, order: 'asc' | 'desc' = 'asc'): T[] {
+    if (!Array.isArray(array) || !field) return array;
 
-@Injectable({ providedIn: 'root' })
-export class ProfileBuilderService {
-  private profileForm: FormGroup;
-  private widgetStates = signal<Record<string, WidgetState>>(
-    WIDGET_CONFIG.reduce((acc, widget) => ({
-      ...acc,
-      [widget.name]: { visited: false, hasErrors: false, acknowledged: false }
-    }), {})
-  );
-  activeWidget = signal<string | null>(null);
-
-  constructor(private fb: FormBuilder) {
-    this.initForm();
-  }
-
-  private initForm() {
-    this.profileForm = this.fb.group({
-      profileIdentifier: [''],
-      partyDetails: this.fb.group({})
+    return [...array].sort((a, b) => {
+      if (a[field] < b[field]) return order === 'asc' ? -1 : 1;
+      if (a[field] > b[field]) return order === 'asc' ? 1 : -1;
+      return 0;
     });
   }
+}
 
-  getVisibleWidgets() {
-    return computed(() => WIDGET_CONFIG.filter(widget => widget.visible));
+@Pipe({
+  name: 'timeAgo',
+  standalone: true
+})
+export class TimeAgoPipe implements PipeTransform {
+  transform(value: string | number | Date): string {
+    if (!value) return '';
+    return formatDistanceToNow(new Date(value), { addSuffix: true });
   }
+}
 
-  getProfileForm(): FormGroup {
-    return this.profileForm;
+@Pipe({
+  name: 'fileSize',
+  standalone: true
+})
+export class FileSizePipe implements PipeTransform {
+  transform(bytes: number, decimals = 2): string {
+    if (!+bytes) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
   }
+}
 
-  setActiveWidget(widgetName: string | null) {
-    this.activeWidget.set(widgetName);
-    if (widgetName) {
-      this.updateWidgetState(widgetName, { visited: true });
-    }
+@Pipe({
+  name: 'highlight',
+  standalone: true
+})
+export class HighlightPipe implements PipeTransform {
+  transform(text: string, search: string): string {
+    if (!search) return text;
+    const pattern = search
+      .replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&")
+      .split(' ')
+      .filter(t => t.length > 0)
+      .join('|');
+    const regex = new RegExp(pattern, 'gi');
+    return text.replace(regex, match => `<mark>${match}</mark>`);
   }
+}
 
-  updateWidgetState(widgetName: string, update: Partial<WidgetState>) {
-    this.widgetStates.update(states => ({
-      ...states,
-      [widgetName]: { ...states[widgetName], ...update }
+@Pipe({
+  name: 'enumToArray',
+  standalone: true
+})
+export class EnumToArrayPipe implements PipeTransform {
+  transform(enumObj: any): { key: string; value: any }[] {
+    return Object.keys(enumObj)
+      .filter(key => isNaN(Number(key)))
+      .map(key => ({ key, value: enumObj[key] }));
+  }
+}
+
+@Pipe({
+  name: 'objectEntries',
+  standalone: true
+})
+export class ObjectEntriesPipe implements PipeTransform {
+  transform(obj: { [key: string]: any }): [string, any][] {
+    return Object.entries(obj);
+  }
+}
+
+@Pipe({
+  name: 'groupBy',
+  standalone: true
+})
+export class GroupByPipe implements PipeTransform {
+  transform<T>(array: T[], property: keyof T): { key: any; value: T[] }[] {
+    if (!array) return [];
+
+    const groups = array.reduce((acc, item) => {
+      const key = item[property];
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(item);
+      return acc;
+    }, {} as { [key: string]: T[] });
+
+    return Object.keys(groups).map(key => ({
+      key,
+      value: groups[key]
     }));
   }
-
-  acknowledgeWidget(widgetName: string) {
-    this.updateWidgetState(widgetName, { acknowledged: true });
-  }
-
-  getWidgetState(widgetName: string) {
-    return computed(() => this.widgetStates()[widgetName]);
-  }
-
-  getAllWidgetStates() {
-    return this.widgetStates;
-  }
-
-  validateWidget(widgetName: string): boolean {
-    const widget = this.profileForm.get(`partyDetails.${widgetName}`);
-    const isValid = widget?.valid ?? false;
-    this.updateWidgetState(widgetName, { hasErrors: !isValid });
-    return isValid;
-  }
-
-  validateAllWidgets(): boolean {
-    return this.getVisibleWidgets()().every(widget => this.validateWidget(widget.name));
-  }
 }
 
-// left-menu.component.ts
-import { Component, inject } from '@angular/core';
-import { NgFor, NgIf } from '@angular/common';
-import { ProfileBuilderService } from './profile-builder.service';
-
-@Component({
-  selector: 'app-left-menu',
+@Pipe({
+  name: 'debounce',
   standalone: true,
-  imports: [NgFor, NgIf],
-  template: `
-    <nav>
-      <ul>
-        <li *ngFor="let widget of profileService.getVisibleWidgets()()">
-          <a (click)="selectWidget(widget.name)" 
-             [class.active]="(profileService.activeWidget() === widget.name)">
-            {{ widget.label }}
-            <span *ngIf="profileService.getWidgetState(widget.name)().visited">✓</span>
-            <span *ngIf="profileService.getWidgetState(widget.name)().hasErrors">⚠️</span>
-            <span *ngIf="profileService.getWidgetState(widget.name)().acknowledged">👍</span>
-          </a>
-        </li>
-      </ul>
-    </nav>
-  `
+  pure: false
 })
-export class LeftMenuComponent {
-  profileService = inject(ProfileBuilderService);
-
-  selectWidget(widgetName: string) {
-    this.profileService.setActiveWidget(widgetName);
-  }
-}
-
-// profile-builder.component.ts
-import { Component, ViewContainerRef, ViewChild, effect, inject } from '@angular/core';
-import { AsyncPipe } from '@angular/common';
-import { ProfileBuilderService } from './profile-builder.service';
-import { LeftMenuComponent } from './left-menu.component';
-
-@Component({
-  selector: 'app-profile-builder',
-  standalone: true,
-  imports: [LeftMenuComponent, AsyncPipe],
-  template: `
-    <div class="profile-builder">
-      <app-left-menu></app-left-menu>
-      <div class="widget-container">
-        <ng-container #widgetContainer></ng-container>
-      </div>
-    </div>
-    <button (click)="validateAll()">Validate All</button>
-  `
-})
-export class ProfileBuilderComponent {
-  @ViewChild('widgetContainer', { read: ViewContainerRef, static: true })
-  widgetContainer!: ViewContainerRef;
-
-  profileService = inject(ProfileBuilderService);
+export class DebouncePipe implements PipeTransform, OnDestroy {
+  private subject = new Subject<any>();
+  private latestValue: any = null;
 
   constructor() {
-    effect(() => {
-      const activeWidgetName = this.profileService.activeWidget();
-      if (activeWidgetName) {
-        this.loadComponent(activeWidgetName);
-      }
+    this.subject.pipe(debounceTime(300)).subscribe(value => {
+      this.latestValue = value;
     });
   }
 
-  async loadComponent(widgetName: string) {
-    this.widgetContainer.clear();
-    const widgetConfig = this.profileService.getVisibleWidgets()().find(w => w.name === widgetName);
-    if (widgetConfig) {
-      const component = await widgetConfig.component();
-      this.widgetContainer.createComponent(component);
-    }
+  transform(value: any): any {
+    this.subject.next(value);
+    return this.latestValue;
   }
 
-  validateAll() {
-    const isValid = this.profileService.validateAllWidgets();
-    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
-    const allStates = this.profileService.getAllWidgetStates()();
-    console.log('All widget states:', allStates);
+  ngOnDestroy() {
+    this.subject.complete();
   }
 }
 
-// Example of a widget component (personal-info.component.ts)
-import { Component, OnInit, inject } from '@angular/core';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
-import { ProfileBuilderService } from './profile-builder.service';
-
-@Component({
-  selector: 'app-personal-info',
-  standalone: true,
-  imports: [ReactiveFormsModule],
-  template: `
-    <form [formGroup]="personalInfoForm">
-      <input formControlName="firstName" placeholder="First Name">
-      <input formControlName="lastName" placeholder="Last Name">
-      <input formControlName="dateOfBirth" placeholder="Date of Birth">
-    </form>
-    <button (click)="acknowledge()">Acknowledge</button>
-  `
+@Pipe({
+  name: 'isEmpty',
+  standalone: true
 })
-export class PersonalInfoComponent implements OnInit {
-  personalInfoForm: FormGroup;
-  fb = inject(FormBuilder);
-  profileService = inject(ProfileBuilderService);
-
-  ngOnInit() {
-    this.personalInfoForm = this.fb.group({
-      firstName: ['', Validators.required],
-      lastName: ['', Validators.required],
-      dateOfBirth: ['', Validators.required]
-    });
-
-    // Add this form group to the main profile form
-    const profileForm = this.profileService.getProfileForm();
-    profileForm.get('partyDetails').setControl('personal', this.personalInfoForm);
-  }
-
-  acknowledge() {
-    this.profileService.acknowledgeWidget('personal');
+export class IsEmptyPipe implements PipeTransform {
+  transform(value: any): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim().length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value).length === 0;
+    return false;
   }
 }
 
-// main.ts
-import { bootstrapApplication } from '@angular/platform-browser';
-import { ProfileBuilderComponent } from './profile-builder.component';
+@Pipe({
+  name: 'highlightChange',
+  standalone: true,
+  pure: true
+})
+export class HighlightChangePipe implements PipeTransform {
+  transform(value: any, previousValue: any, duration: number = 2000): string {
+    if (value !== previousValue) {
+      return `highlight highlight-${duration}`;
+    }
+    return '';
+  }
+}
 
-bootstrapApplication(ProfileBuilderComponent).catch(err => console.error(err));
+// Export all pipes
+export const PIPES = [
+  SafeHtmlPipe,
+  TruncatePipe,
+  FilterPipe,
+  SortByPipe,
+  TimeAgoPipe,
+  FileSizePipe,
+  HighlightPipe,
+  EnumToArrayPipe,
+  ObjectEntriesPipe,
+  GroupByPipe,
+  DebouncePipe,
+  IsEmptyPipe,
+  HighlightChangePipe
+];
+
+// libs/pipes/src/index.ts
+export * from './lib/pipes';
+
+-------------
+// libs/pipes/src/lib/pipes.spec.ts
+
+import { TestBed } from '@angular/core/testing';
+import { DomSanitizer } from '@angular/platform-browser';
+import {
+  SafeHtmlPipe,
+  TruncatePipe,
+  FilterPipe,
+  SortByPipe,
+  TimeAgoPipe,
+  FileSizePipe,
+  HighlightPipe,
+  EnumToArrayPipe,
+  ObjectEntriesPipe,
+  GroupByPipe,
+  DebouncePipe,
+  IsEmptyPipe,
+  HighlightChangePipe
+} from './pipes';
+
+describe('Pipes Library', () => {
+  let sanitizer: DomSanitizer;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    sanitizer = TestBed.inject(DomSanitizer);
+  });
+
+  describe('SafeHtmlPipe', () => {
+    it('should sanitize HTML', () => {
+      const pipe = new SafeHtmlPipe(sanitizer);
+      const html = '<script>alert("XSS")</script>';
+      const sanitizedHtml = pipe.transform(html);
+      expect(sanitizer.bypassSecurityTrustHtml).toHaveBeenCalledWith(html);
+      expect(sanitizedHtml).toBeTruthy();
+    });
+  });
+
+  describe('TruncatePipe', () => {
+    const pipe = new TruncatePipe();
+
+    it('should truncate text', () => {
+      expect(pipe.transform('Hello World', 5)).toBe('Hello...');
+    });
+
+    it('should preserve whole words', () => {
+      expect(pipe.transform('Hello World', 7, true)).toBe('Hello...');
+    });
+
+    it('should not truncate if text is shorter than limit', () => {
+      expect(pipe.transform('Hello', 10)).toBe('Hello');
+    });
+  });
+
+  describe('FilterPipe', () => {
+    const pipe = new FilterPipe();
+    const items = [
+      { name: 'John', age: 25 },
+      { name: 'Jane', age: 30 },
+      { name: 'Bob', age: 35 }
+    ];
+
+    it('should filter items', () => {
+      const result = pipe.transform(items, 'name', 'Jo');
+      expect(result.length).toBe(1);
+      expect(result[0].name).toBe('John');
+    });
+
+    it('should return all items if no filter value', () => {
+      expect(pipe.transform(items, 'name', '')).toEqual(items);
+    });
+
+    it('should return empty array if items is null', () => {
+      expect(pipe.transform(null, 'name', 'John')).toEqual([]);
+    });
+  });
+
+  describe('SortByPipe', () => {
+    const pipe = new SortByPipe();
+    const items = [
+      { name: 'John', age: 25 },
+      { name: 'Jane', age: 30 },
+      { name: 'Bob', age: 35 }
+    ];
+
+    it('should sort items ascending', () => {
+      const result = pipe.transform(items, 'age');
+      expect(result[0].name).toBe('John');
+      expect(result[2].name).toBe('Bob');
+    });
+
+    it('should sort items descending', () => {
+      const result = pipe.transform(items, 'age', 'desc');
+      expect(result[0].name).toBe('Bob');
+      expect(result[2].name).toBe('John');
+    });
+
+    it('should return original array if not sortable', () => {
+      expect(pipe.transform(null, 'age')).toBeNull();
+    });
+  });
+
+  describe('TimeAgoPipe', () => {
+    const pipe = new TimeAgoPipe();
+
+    it('should return time ago', () => {
+      const date = new Date();
+      date.setMinutes(date.getMinutes() - 5);
+      expect(pipe.transform(date)).toContain('5 minutes ago');
+    });
+
+    it('should return empty string for invalid date', () => {
+      expect(pipe.transform('')).toBe('');
+    });
+  });
+
+  describe('FileSizePipe', () => {
+    const pipe = new FileSizePipe();
+
+    it('should format file size', () => {
+      expect(pipe.transform(1024)).toBe('1 KB');
+      expect(pipe.transform(1048576)).toBe('1 MB');
+      expect(pipe.transform(1073741824)).toBe('1 GB');
+    });
+
+    it('should return 0 Bytes for 0', () => {
+      expect(pipe.transform(0)).toBe('0 Bytes');
+    });
+  });
+
+  describe('HighlightPipe', () => {
+    const pipe = new HighlightPipe();
+
+    it('should highlight search term', () => {
+      const result = pipe.transform('Hello World', 'World');
+      expect(result).toBe('Hello <mark>World</mark>');
+    });
+
+    it('should return original text if no search term', () => {
+      expect(pipe.transform('Hello World', '')).toBe('Hello World');
+    });
+  });
+
+  describe('EnumToArrayPipe', () => {
+    const pipe = new EnumToArrayPipe();
+
+    enum TestEnum {
+      A = 'Value A',
+      B = 'Value B'
+    }
+
+    it('should convert enum to array', () => {
+      const result = pipe.transform(TestEnum);
+      expect(result).toEqual([
+        { key: 'A', value: 'Value A' },
+        { key: 'B', value: 'Value B' }
+      ]);
+    });
+  });
+
+  describe('ObjectEntriesPipe', () => {
+    const pipe = new ObjectEntriesPipe();
+
+    it('should convert object to entries', () => {
+      const obj = { a: 1, b: 2 };
+      const result = pipe.transform(obj);
+      expect(result).toEqual([['a', 1], ['b', 2]]);
+    });
+  });
+
+  describe('GroupByPipe', () => {
+    const pipe = new GroupByPipe();
+    const items = [
+      { name: 'John', category: 'A' },
+      { name: 'Jane', category: 'B' },
+      { name: 'Bob', category: 'A' }
+    ];
+
+    it('should group items', () => {
+      const result = pipe.transform(items, 'category');
+      expect(result.length).toBe(2);
+      expect(result[0].key).toBe('A');
+      expect(result[0].value.length).toBe(2);
+    });
+
+    it('should return empty array for null input', () => {
+      expect(pipe.transform(null, 'category')).toEqual([]);
+    });
+  });
+
+  describe('DebouncePipe', () => {
+    let pipe: DebouncePipe;
+
+    beforeEach(() => {
+      pipe = new DebouncePipe();
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should debounce value changes', () => {
+      let result = pipe.transform('test1');
+      expect(result).toBeNull();
+
+      result = pipe.transform('test2');
+      expect(result).toBeNull();
+
+      jest.advanceTimersByTime(300);
+      expect(result).toBe('test2');
+    });
+
+    it('should clean up on destroy', () => {
+      const completeSpy = jest.spyOn(pipe['subject'], 'complete');
+      pipe.ngOnDestroy();
+      expect(completeSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('IsEmptyPipe', () => {
+    const pipe = new IsEmptyPipe();
+
+    it('should check if value is empty', () => {
+      expect(pipe.transform(null)).toBe(true);
+      expect(pipe.transform(undefined)).toBe(true);
+      expect(pipe.transform([])).toBe(true);
+      expect(pipe.transform({})).toBe(true);
+      expect(pipe.transform('')).toBe(true);
+      expect(pipe.transform('  ')).toBe(true);
+      expect(pipe.transform([1, 2, 3])).toBe(false);
+      expect(pipe.transform({ a: 1 })).toBe(false);
+      expect(pipe.transform('text')).toBe(false);
+    });
+  });
+
+  describe('HighlightChangePipe', () => {
+    const pipe = new HighlightChangePipe();
+
+    it('should highlight changes', () => {
+      expect(pipe.transform('new', 'old')).toBe('highlight highlight-2000');
+      expect(pipe.transform('same', 'same')).toBe('');
+    });
+
+    it('should use custom duration', () => {
+      expect(pipe.transform('new', 'old', 1000)).toBe('highlight highlight-1000');
+    });
+  });
+});
