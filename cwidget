@@ -1,11 +1,11 @@
-  invert: <T extends Record<string, PropertyKey>>(obj: T): { [K in T[keyof T]]: string } => {
+ invert: <T extends Record<string, PropertyKey>>(obj: T): Partial<Record<string, keyof T>> => {
     return Object.entries(obj).reduce((acc, [key, value]) => {
       if (value !== null && value !== undefined) {
         const stringValue = String(value);
         acc[stringValue] = key;
       }
       return acc;
-    }, {} as { [K in T[keyof T]]: string });
+    }, {} as Partial<Record<string, keyof T>>);
   },
 ----------
 // libs/pipes/src/lib/pipes.ts
