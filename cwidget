@@ -1,3 +1,13 @@
+  invert: <T extends Record<string, PropertyKey>>(obj: T): { [K in T[keyof T]]: string } => {
+    return Object.entries(obj).reduce((acc, [key, value]) => {
+      if (value !== null && value !== undefined) {
+        const stringValue = String(value);
+        acc[stringValue] = key;
+      }
+      return acc;
+    }, {} as { [K in T[keyof T]]: string });
+  },
+----------
 // libs/pipes/src/lib/pipes.ts
 
 import { Pipe, PipeTransform, OnDestroy } from '@angular/core';
@@ -51,6 +61,7 @@ export class FilterPipe implements PipeTransform {
 @Pipe({
   name: 'sortBy',
   standalone: true
+
 })
 export class SortByPipe implements PipeTransform {
   transform<T>(array: T[], field: keyof T, order: 'asc' | 'desc' = 'asc'): T[] {
