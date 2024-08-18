@@ -137,22 +137,19 @@ export class ObjectEntriesPipe implements PipeTransform {
   standalone: true
 })
 export class GroupByPipe implements PipeTransform {
-  transform<T>(array: T[], property: keyof T): { key: any; value: T[] }[] {
+  transform<T>(array: T[], property: keyof T): { key: string, value: T[] }[] {
     if (!array) return [];
 
     const groups = array.reduce((acc, item) => {
-      const key = item[property];
-      if (!acc[key]) {
-        acc[key] = [];
+      const key = String(item[property]); // Convert the key to string for consistency
+      if (!acc.has(key)) {
+        acc.set(key, []);
       }
-      acc[key].push(item);
+      acc.get(key)!.push(item);
       return acc;
-    }, {} as { [key: string]: T[] });
+    }, new Map<string, T[]>());
 
-    return Object.keys(groups).map(key => ({
-      key,
-      value: groups[key]
-    }));
+    return Array.from(groups, ([key, value]) => ({ key, value }));
   }
 }
 
