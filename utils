@@ -228,3 +228,165 @@ export const utils = {
 };
 
 export default utils;
+
+--------
+// utils.test.ts
+
+import {
+  arrayUtils,
+  objectUtils,
+  stringUtils,
+  numberUtils,
+  functionUtils,
+  cryptoUtils,
+  jsonUtils,
+  commonUtils,
+  performanceUtils
+} from '@your-workspace/utils';
+
+describe('Array Utilities', () => {
+  test('chunk should split array into chunks', () => {
+    expect(arrayUtils.chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  test('uniq should remove duplicates', () => {
+    expect(arrayUtils.uniq([1, 2, 2, 3, 4, 4, 5])).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test('shuffle should randomize array elements', () => {
+    const original = [1, 2, 3, 4, 5];
+    const shuffled = arrayUtils.shuffle([...original]);
+    expect(shuffled).not.toEqual(original);
+    expect(shuffled.sort()).toEqual(original);
+  });
+});
+
+describe('Object Utilities', () => {
+  test('pick should select specific properties', () => {
+    expect(objectUtils.pick({ a: 1, b: 2, c: 3 }, ['a', 'c'])).toEqual({ a: 1, c: 3 });
+  });
+
+  test('omit should exclude specific properties', () => {
+    expect(objectUtils.omit({ a: 1, b: 2, c: 3 }, ['b'])).toEqual({ a: 1, c: 3 });
+  });
+
+  test('get should retrieve nested properties safely', () => {
+    const obj = { a: { b: { c: 42 } } };
+    expect(objectUtils.get(obj, 'a.b.c', 0)).toBe(42);
+    expect(objectUtils.get(obj, 'a.b.d', 0)).toBe(0);
+  });
+});
+
+describe('String Utilities', () => {
+  test('camelCase should convert string to camel case', () => {
+    expect(stringUtils.camelCase('hello world')).toBe('helloWorld');
+  });
+
+  test('truncate should shorten string with ellipsis', () => {
+    expect(stringUtils.truncate('hello world', 8)).toBe('hello...');
+  });
+
+  test('isPalindrome should detect palindromes', () => {
+    expect(stringUtils.isPalindrome('A man a plan a canal Panama')).toBe(true);
+    expect(stringUtils.isPalindrome('hello')).toBe(false);
+  });
+});
+
+describe('Number Utilities', () => {
+  test('clamp should restrict number to range', () => {
+    expect(numberUtils.clamp(10, 0, 5)).toBe(5);
+    expect(numberUtils.clamp(-1, 0, 5)).toBe(0);
+    expect(numberUtils.clamp(3, 0, 5)).toBe(3);
+  });
+
+  test('round should round to specified decimal places', () => {
+    expect(numberUtils.round(3.14159, 2)).toBe(3.14);
+  });
+
+  test('formatCurrency should format number as currency', () => {
+    expect(numberUtils.formatCurrency(1234.56, 'USD', 'en-US')).toBe('$1,234.56');
+  });
+});
+
+describe('Function Utilities', () => {
+  test('debounce should delay function execution', (done) => {
+    let calls = 0;
+    const debouncedFn = functionUtils.debounce(() => { calls++; }, 50);
+    debouncedFn();
+    debouncedFn();
+    setTimeout(() => {
+      expect(calls).toBe(1);
+      done();
+    }, 100);
+  });
+
+  test('once should ensure function is called only once', () => {
+    let calls = 0;
+    const onceFn = functionUtils.once(() => { calls++; });
+    onceFn();
+    onceFn();
+    onceFn();
+    expect(calls).toBe(1);
+  });
+});
+
+describe('Crypto Utilities', () => {
+  test('generateGuid should create unique identifiers', () => {
+    const guid1 = cryptoUtils.generateGuid();
+    const guid2 = cryptoUtils.generateGuid();
+    expect(guid1).not.toBe(guid2);
+    expect(guid1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+});
+
+describe('JSON Utilities', () => {
+  const obj1 = { a: 1, b: [1, 2, 3], c: { d: 4 } };
+  const obj2 = { a: 1, b: [1, 2, 4], c: { d: 5 }, e: 6 };
+
+  test('compareJSON should correctly compare objects', () => {
+    expect(jsonUtils.compareJSON(obj1, obj2)).toBe(false);
+    expect(jsonUtils.compareJSON(obj1, { ...obj1 })).toBe(true);
+  });
+
+  test('findJSONDifference should identify differences', () => {
+    const diff = jsonUtils.findJSONDifference(obj1, obj2);
+    expect(diff).toEqual({
+      b: { 2: { obj1: 3, obj2: 4 } },
+      c: { d: { obj1: 4, obj2: 5 } },
+      e: { obj1: undefined, obj2: 6 }
+    });
+  });
+
+  test('hasDifference should detect any differences', () => {
+    expect(jsonUtils.hasDifference(obj1, obj2)).toBe(true);
+    expect(jsonUtils.hasDifference(obj1, { ...obj1 })).toBe(false);
+  });
+});
+
+describe('Common Utilities', () => {
+  test('isEmpty should correctly identify empty values', () => {
+    expect(commonUtils.isEmpty([])).toBe(true);
+    expect(commonUtils.isEmpty({})).toBe(true);
+    expect(commonUtils.isEmpty('')).toBe(true);
+    expect(commonUtils.isEmpty(null)).toBe(true);
+    expect(commonUtils.isEmpty(undefined)).toBe(true);
+    expect(commonUtils.isEmpty([1, 2, 3])).toBe(false);
+    expect(commonUtils.isEmpty({ a: 1 })).toBe(false);
+    expect(commonUtils.isEmpty('hello')).toBe(false);
+  });
+});
+
+describe('Performance Utilities', () => {
+  test('measureExecutionTime should measure function execution time', () => {
+    const [result, time] = performanceUtils.measureExecutionTime(() => {
+      let sum = 0;
+      for (let i = 0; i < 1000000; i++) {
+        sum += i;
+      }
+      return sum;
+    });
+    expect(typeof result).toBe('number');
+    expect(typeof time).toBe('number');
+    expect(time).toBeGreaterThan(0);
+  });
+});
