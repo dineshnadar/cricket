@@ -14,7 +14,7 @@
       }
 
       normalizedBody[lookupName] = items
-        .map(item => this.normalizeItem(item))
+        .map((item: LookupItem) => this.normalizeItem(item))
         .filter((item): item is StandardLookupItem => item !== null);
 
       if (normalizedBody[lookupName].length === 0) {
@@ -29,7 +29,7 @@
     return { body: normalizedBody };
   }
 
-  private normalizeItem(item: LookupItem): StandardLookupItem | null {
+  private normalizeItem = (item: LookupItem): StandardLookupItem | null => {
     if (!item || typeof item !== 'object') {
       console.warn('Invalid lookup item:', item);
       return null;
@@ -48,13 +48,13 @@
     }
   }
 
-  private isStandardLookupItem(item: any): item is StandardLookupItem {
+  private isStandardLookupItem = (item: any): item is StandardLookupItem => {
     return item && typeof item === 'object' && 
            'dbVal' in item && typeof item.dbVal === 'string' &&
            'dbDesc' in item && typeof item.dbDesc === 'string';
   }
 
-  private isMappedLookupItem(item: any): item is MappedLookupItem {
+  private isMappedLookupItem = (item: any): item is MappedLookupItem => {
     return item && typeof item === 'object' && 
            'value' in item && typeof item.value === 'string' &&
            'displayValue' in item && typeof item.displayValue === 'string';
