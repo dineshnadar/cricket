@@ -1,3 +1,25 @@
+private normalizeItem(item: LookupItem): StandardLookupItem {
+    if (this.isStandardLookupItem(item)) {
+      return item;
+    } else if (this.isMappedLookupItem(item)) {
+      return {
+        dbVal: item.value,
+        dbDesc: item.displayValue
+      };
+    } else {
+      console.warn('Unexpected item format:', item);
+      return { dbVal: '', dbDesc: '' };
+    }
+  }
+
+  private isStandardLookupItem(item: LookupItem): item is StandardLookupItem {
+    return 'dbVal' in item && 'dbDesc' in item;
+  }
+
+  private isMappedLookupItem(item: LookupItem): item is MappedLookupItem {
+    return 'value' in item && 'displayValue' in item;
+  }
+-----------
 import { Component, Injectable, ViewContainerRef, ViewChild, effect, inject, signal, computed, Type } from '@angular/core';
 import { AsyncPipe, NgFor, NgClass, NgIf } from '@angular/common';
 import { FormBuilder, FormGroup, FormArray, Validators, ReactiveFormsModule } from '@angular/forms';
