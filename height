@@ -214,3 +214,135 @@ describe('SetHeightDirective', () => {
     Object.defineProperty(window, 'innerHeight', { value: originalHeight, configurable: true });
   });
 });
+
+
+---------
+
+import { Component, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { SetHeightDirective } from './set-height.directive';
+
+@Component({
+  selector: 'app-height-examples',
+  standalone: true,
+  imports: [CommonModule, SetHeightDirective],
+  template: `
+    <div class="container">
+      <h2>SetHeight Directive Examples</h2>
+
+      <div class="example">
+        <h3>1. Full Height</h3>
+        <div [appSetHeight]="1" class="box full-height">
+          100% of window height
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>2. 67% Height</h3>
+        <div [appSetHeight]="0.67" class="box sixty-seven-percent">
+          67% of window height
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>3. Half Height with Pixel Offset</h3>
+        <div [appSetHeight]="0.5" heightOffset="50px" class="box half-height-offset">
+          50% of window height minus 50px
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>4. Dynamic Height with Sibling</h3>
+        <div class="sibling-container">
+          <div class="sibling">
+            <p>Sibling content</p>
+            <button (click)="toggleSiblingContent()">Toggle Extra Content</button>
+            @if (showExtraContent()) {
+              <p>Extra content that affects height</p>
+            }
+          </div>
+          <div 
+            [appSetHeight]="0.8" 
+            heightOffset="10%" 
+            siblingSelector=".sibling" 
+            class="box dynamic-height"
+          >
+            80% of window height minus 10% and minus sibling height
+          </div>
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>5. Reactive Height</h3>
+        <div 
+          [appSetHeight]="heightRatio()" 
+          [heightOffset]="offsetValue()"
+          class="box reactive-height"
+        >
+          {{ heightRatio() * 100 }}% of window height minus {{ offsetValue() }}px
+        </div>
+        <div class="controls">
+          <button (click)="updateRatio()">Change Ratio</button>
+          <button (click)="updateOffset()">Change Offset</button>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .container { 
+      font-family: Arial, sans-serif; 
+      padding: 20px; 
+    }
+    .example { 
+      margin-bottom: 30px; 
+    }
+    .box { 
+      border: 2px solid #007bff; 
+      padding: 10px; 
+      margin-top: 10px;
+      overflow-y: auto; 
+      background-color: #f8f9fa;
+      color: #333;
+    }
+    .sibling { 
+      background-color: #e9ecef; 
+      padding: 10px; 
+      margin-bottom: 10px; 
+      border: 1px solid #ced4da;
+    }
+    .controls { 
+      margin-top: 10px; 
+    }
+    button { 
+      margin-right: 10px; 
+      padding: 5px 10px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+  `]
+})
+export class HeightExamplesComponent {
+  showExtraContent = signal(false);
+  heightRatio = signal(0.4);
+  offsetValue = signal(20);
+
+  toggleSiblingContent() {
+    this.showExtraContent.update(v => !v);
+  }
+
+  updateRatio() {
+    this.heightRatio.update(current => {
+      let newValue = (current + 0.1) % 1;
+      return newValue === 0 ? 0.1 : newValue; // Avoid 0
+    });
+  }
+
+  updateOffset() {
+    this.offsetValue.update(current => (current + 10) % 100);
+  }
+}
