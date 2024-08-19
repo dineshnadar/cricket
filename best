@@ -1,4 +1,60 @@
-private normalizeItem(item: LookupItem): StandardLookupItem {
+private normalizeApiResponse(response: ApiResponse | null | undefined): ApiResponse {
+    if (!response) {
+      console.warn('Received null or undefined API response');
+      return { body: {} };
+    }
+
+    if (typeof response !== 'object') {
+      console.warn('Received non-object API response:', response);
+      return { body: {} };
+    }
+
+    if (!response.body || typeof response.body !== 'object') {
+      console.warn('API response body is missing or not an object:', response);
+      return { body: {} };
+    }
+
+    const normalizedBody: ApiResponse['body'] = {};
+    
+    for (const [lookupName, items] of Object.entries(response.body)) {
+      if (!items) {
+        console.warn(`Null or undefined items for lookup "${lookupName}"`);
+        normalizedBody[lookupName] = [];
+        continue;
+      }
+
+      if (!Array.isArray(items)) {
+        console.warn(`Invalid items for lookup "${lookupName}": expected array, got`, typeof items);
+        normalizedBody[lookupName] = [];
+        continue;
+      }
+
+      if (items.length === 0) {
+        console.warn(`Empty array for lookup "${lookupName}"`);
+        normalizedBody[lookupName] = [];
+        continue;
+      }
+
+      normalizedBody[lookupName] = items.map(item => this.normalizeItem(item)).filter(Boolean);
+
+      if (normalizedBody[lookupName].length === 0) {
+        console.warn(`All items were invalid for lookup "${lookupName}"`);
+      }
+    }
+
+    if (Object.keys(normalizedBody).length === 0) {
+      console.warn('No valid lookup data found in the API response');
+    }
+
+    return { body: normalizedBody };
+  }
+
+  private normalizeItem(item: LookupItem | null | undefined): StandardLookupItem | null {
+    if (!item || typeof item !== 'object') {
+      console.warn('Invalid lookup item:', item);
+      return null;
+    }
+
     if (this.isStandardLookupItem(item)) {
       return item;
     } else if (this.isMappedLookupItem(item)) {
@@ -8,16 +64,20 @@ private normalizeItem(item: LookupItem): StandardLookupItem {
       };
     } else {
       console.warn('Unexpected item format:', item);
-      return { dbVal: '', dbDesc: '' };
+      return null;
     }
   }
 
-  private isStandardLookupItem(item: LookupItem): item is StandardLookupItem {
-    return 'dbVal' in item && 'dbDesc' in item;
+  private isStandardLookupItem(item: any): item is StandardLookupItem {
+    return item && typeof item === 'object' && 
+           'dbVal' in item && typeof item.dbVal === 'string' &&
+           'dbDesc' in item && typeof item.dbDesc === 'string';
   }
 
-  private isMappedLookupItem(item: LookupItem): item is MappedLookupItem {
-    return 'value' in item && 'displayValue' in item;
+  private isMappedLookupItem(item: any): item is MappedLookupItem {
+    return item && typeof item === 'object' && 
+           'value' in item && typeof item.value === 'string' &&
+           'displayValue' in item && typeof item.displayValue === 'string';
   }
 -----------
 import { Component, Injectable, ViewContainerRef, ViewChild, effect, inject, signal, computed, Type } from '@angular/core';
