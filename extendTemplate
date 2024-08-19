@@ -387,3 +387,372 @@ bootstrapApplication(AppComponent, {
 
 ---------------------------
 
+import { TestBed } from '@angular/core/testing';
+import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
+import { LookupDataService } from './lookup-data.service';
+import { ApiResponse, LookupDataState } from './lookup-data.model';
+
+describe('LookupDataService', () => {
+  let service: LookupDataService;
+  let httpMock: HttpTestingController;
+
+  const mockApiResponse: ApiResponse = {
+    body: {
+      countries: [
+        { dbVal: 'US', dbDesc: 'United States' },
+        { dbVal: 'CA', dbDesc: 'Canada' },
+      ],
+      cities: [
+        { dbVal: 'NYC', dbDesc: 'New York City' },
+        { dbVal: 'LA', dbDesc: 'Los Angeles' },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      imports: [HttpClientTestingModule],
+      providers: [LookupDataService],
+    });
+
+    service = TestBed.inject(LookupDataService);
+    httpMock = TestBed.inject(HttpTestingController);
+
+    // Clear localStorage before each test
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    httpMock.verify();
+  });
+
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
+
+  describe('resolveData', () => {
+    it('should fetch data from API when not cached', (done) => {
+      service.resolveData().subscribe((response) => {
+        expect(response).toEqual(mockApiResponse);
+        expect(service.state()).toBe(LookupDataState.LOADED);
+        done();
+      });
+
+      const req = httpMock.expectOne('api/lookup-data');
+      expect(req.request.method).toBe('GET');
+      req.flush(mockApiResponse);
+    });
+
+    it('should return cached data when available', (done) => {
+      // First, populate the cache
+      service.resolveData().subscribe(() => {
+        // Then, call resolveData again
+        service.resolveData().subscribe((response) => {
+          expect(response).toEqual(mockApiResponse);
+          expect(service.state()).toBe(LookupDataState.LOADED);
+          // Ensure no HTTP request was made for the second call
+          httpMock.expectNone('api/lookup-data');
+          done();
+        });
+      });
+
+      const req = httpMock.expectOne('api/lookup-data');
+      req.flush(mockApiResponse);
+    });
+
+    it('should handle API errors', (done) => {
+      service.resolveData().subscribe(
+        () => {
+          fail('should have failed with the 404 error');
+        },
+        (error: Error) => {
+          expect(error.message).toContain('Server-side error: 404');
+          expect(service.state()).toBe(LookupDataState.ERROR);
+          expect(service.getErrorMessage()).toContain('Server-side error: 404');
+          done();
+        }
+      );
+
+      const req = httpMock.expectOne('api/lookup-data');
+      req.flush('Not Found', { status: 404, statusText: 'Not Found' });
+    });
+  });
+
+  describe('Helper Methods', () => {
+    beforeEach(() => {
+      // Populate the service with mock data
+      service['cachedData'].set(mockApiResponse);
+      service['dataState'].set(LookupDataState.LOADED);
+    });
+
+    it('should return correct lookup names', () => {
+      expect(service.lookupNames()).toEqual(['countries', 'cities']);
+    });
+
+    it('should return correct lookup items', () => {
+      expect(service.getLookupItems('countries')).toEqual([
+        { dbVal: 'US', dbDesc: 'United States' },
+        { dbVal: 'CA', dbDesc: 'Canada' },
+      ]);
+    });
+
+    it('should return correct mapped lookup items', () => {
+      expect(service.getMappedLookupItems('cities')).toEqual([
+        { value: 'NYC', displayValue: 'New York City' },
+        { value: 'LA', displayValue: 'Los Angeles' },
+      ]);
+    });
+
+    it('should find lookup item by value', () => {
+      expect(service.getLookupItemByValue('countries', 'US')).toEqual({
+        dbVal: 'US',
+        dbDesc: 'United States',
+      });
+    });
+
+    it('should find lookup item by description', () => {
+      expect(service.getLookupItemByDescription('cities', 'Los Angeles')).toEqual({
+        dbVal: 'LA',
+        dbDesc: 'Los Angeles',
+      });
+    });
+
+    it('should get description by value', () => {
+      expect(service.getDescriptionByValue('countries', 'CA')).toBe('Canada');
+    });
+
+    it('should get value by description', () => {
+      expect(service.getValueByDescription('cities', 'New York City')).toBe('NYC');
+    });
+
+    it('should check if lookup exists', () => {
+      expect(service.hasLookup('countries')).toBe(true);
+      expect(service.hasLookup('nonexistent')).toBe(false);
+    });
+
+    it('should get lookup item count', () => {
+      expect(service.getLookupItemCount('cities')).toBe(2);
+    });
+
+    it('should find items by partial match', () => {
+      const partialMatches = service.getAllStandardItemsByPartialMatch('countries', 'United');
+      expect(partialMatches).toEqual([{ dbVal: 'US', dbDesc: 'United States' }]);
+    });
+
+    it('should get distinct values', () => {
+      expect(service.getDistinctValues('countries')).toEqual(['US', 'CA']);
+    });
+
+    it('should get distinct descriptions', () => {
+      expect(service.getDistinctDescriptions('cities')).toEqual(['New York City', 'Los Angeles']);
+    });
+  });
+
+  describe('localStorage Integration', () => {
+    it('should save data to localStorage after fetching', (done) => {
+      service.resolveData().subscribe(() => {
+        const storedData = localStorage.getItem('lookupData');
+        expect(storedData).toBeTruthy();
+        expect(JSON.parse(storedData!)).toEqual(mockApiResponse);
+        done();
+      });
+
+      const req = httpMock.expectOne('api/lookup-data');
+      req.flush(mockApiResponse);
+    });
+
+    it('should load data from localStorage on service initialization', () => {
+      localStorage.setItem('lookupData', JSON.stringify(mockApiResponse));
+      
+      // Re-create the service to trigger constructor
+      service = TestBed.inject(LookupDataService);
+      
+      expect(service.state()).toBe(LookupDataState.LOADED);
+      expect(service.lookupNames()).toEqual(['countries', 'cities']);
+    });
+  });
+
+  describe('refreshData', () => {
+    it('should clear cache and fetch new data', (done) => {
+      // First, populate the cache
+      service.resolveData().subscribe(() => {
+        // Then, refresh the data
+        service.refreshData().subscribe((response) => {
+          expect(response).toEqual(mockApiResponse);
+          expect(service.state()).toBe(LookupDataState.LOADED);
+          expect(localStorage.getItem('lookupData')).toBeTruthy();
+          done();
+        });
+      });
+
+      // Handle both HTTP requests
+      httpMock.expectOne('api/lookup-data').flush(mockApiResponse);
+      httpMock.expectOne('api/lookup-data').flush(mockApiResponse);
+    });
+  });
+});
+
+--------------------------
+
+// src/app/app.config.ts
+import { ApplicationConfig } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { routes } from './app.routes';
+import { provideHttpClient } from '@angular/common/http';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideRouter(routes),
+    provideHttpClient()
+  ]
+};
+
+// src/app/app.routes.ts
+import { Routes } from '@angular/router';
+import { lookupDataResolver } from './lookup/lookup-data.resolver';
+
+export const routes: Routes = [
+  {
+    path: '',
+    loadComponent: () => import('./home/home.component').then(m => m.HomeComponent)
+  },
+  {
+    path: 'lookup-example',
+    loadComponent: () => import('./lookup/lookup-example.component').then(m => m.LookupExampleComponent),
+    resolve: { lookupData: lookupDataResolver }
+  }
+];
+
+// src/app/app.component.ts
+import { Component } from '@angular/core';
+import { RouterOutlet, RouterLink } from '@angular/router';
+
+@Component({
+  selector: 'app-root',
+  standalone: true,
+  imports: [RouterOutlet, RouterLink],
+  template: `
+    <nav>
+      <a routerLink="/">Home</a> |
+      <a routerLink="/lookup-example">Lookup Example</a>
+    </nav>
+    <router-outlet></router-outlet>
+  `
+})
+export class AppComponent { }
+
+// src/app/home/home.component.ts
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-home',
+  standalone: true,
+  template: '<h1>Welcome to Lookup Data Example</h1>'
+})
+export class HomeComponent { }
+
+// src/app/lookup/lookup-example.component.ts
+import { Component, inject, OnInit } from '@angular/core';
+import { AsyncPipe, NgFor, NgIf, NgSwitch, NgSwitchCase } from '@angular/common';
+import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { LookupDataService } from './lookup-data.service';
+import { LookupDataState, LookupOption, MappedLookupItem } from './lookup-data.model';
+
+@Component({
+  selector: 'app-lookup-example',
+  standalone: true,
+  imports: [NgFor, NgIf, NgSwitch, NgSwitchCase, AsyncPipe, ReactiveFormsModule],
+  template: `
+    <ng-container [ngSwitch]="lookupDataService.state()">
+      <ng-container *ngSwitchCase="LookupDataState.LOADING">
+        <p>Loading lookup data...</p>
+      </ng-container>
+      
+      <ng-container *ngSwitchCase="LookupDataState.LOADED">
+        <form [formGroup]="form">
+          <div *ngFor="let name of lookupDataService.lookupNames()">
+            <label>
+              {{ name }} ({{ lookupDataService.getLookupItemCount(name) }} items):
+              <select [formControlName]="name">
+                <option value="">Select an option</option>
+                <option *ngFor="let option of getLookupOptions(name)" [value]="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+        </form>
+        <div *ngFor="let name of lookupDataService.lookupNames()">
+          <h3>{{ name }}</h3>
+          <p>Selected Value: {{ getSelectedValue(name) }}</p>
+          <p>Selected Description: {{ getSelectedDescription(name) }}</p>
+          <p>Distinct Values: {{ lookupDataService.getDistinctValues(name).join(', ') }}</p>
+          <p>Distinct Descriptions: {{ lookupDataService.getDistinctDescriptions(name).join(', ') }}</p>
+          <h4>Partial Match Results (matching 'a'):</h4>
+          <ul>
+            <li *ngFor="let item of getPartialMatchItems(name, 'a')">
+              {{ item.value }} - {{ item.displayValue }}
+            </li>
+          </ul>
+        </div>
+      </ng-container>
+      
+      <ng-container *ngSwitchCase="LookupDataState.ERROR">
+        <p>Error: {{ lookupDataService.getErrorMessage() }}</p>
+      </ng-container>
+    </ng-container>
+    
+    <button (click)="refreshData()" [disabled]="lookupDataService.isLoading()">
+      {{ lookupDataService.isLoading() ? 'Refreshing...' : 'Refresh Data' }}
+    </button>
+  `
+})
+export class LookupExampleComponent implements OnInit {
+  private lookupDataService = inject(LookupDataService);
+  private fb = inject(FormBuilder);
+  
+  LookupDataState = LookupDataState;
+  form: FormGroup;
+
+  ngOnInit() {
+    this.initForm();
+  }
+
+  initForm() {
+    const formControls = {};
+    this.lookupDataService.lookupNames().forEach(name => {
+      formControls[name] = [''];
+    });
+    this.form = this.fb.group(formControls);
+  }
+
+  getLookupOptions(name: string): LookupOption[] {
+    return this.lookupDataService.getLookupOptions(name);
+  }
+
+  getSelectedValue(name: string): string {
+    return this.form.get(name)?.value || '';
+  }
+
+  getSelectedDescription(name: string): string {
+    const value = this.getSelectedValue(name);
+    return this.lookupDataService.getDescriptionByValue(name, value);
+  }
+
+  getPartialMatchItems(name: string, partialValue: string): MappedLookupItem[] {
+    return this.lookupDataService.getAllMappedItemsByPartialMatch(name, partialValue);
+  }
+
+  refreshData() {
+    this.lookupDataService.refreshData().subscribe(() => this.initForm());
+  }
+}
+
+// src/main.ts
+import { bootstrapApplication } from '@angular/platform-browser';
+import { AppComponent } from './app/app.component';
+import { appConfig } from './app/app.config';
+
+bootstrapApplication(AppComponent, appConfig)
+  .catch(err => console.error(err));
+
