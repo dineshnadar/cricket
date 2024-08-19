@@ -1,4 +1,4 @@
-import { Directive, ElementRef, Input, effect, signal, computed, untracked, inject, DestroyRef, AfterViewInit } from '@angular/core';
+import { Directive, ElementRef, Input, effect, signal, computed, untracked, inject, DestroyRef, AfterViewInit, Renderer2 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { fromEvent, animationFrameScheduler } from 'rxjs';
 import { debounceTime, throttleTime, observeOn } from 'rxjs/operators';
@@ -9,6 +9,7 @@ import { debounceTime, throttleTime, observeOn } from 'rxjs/operators';
 })
 export class SetHeightDirective implements AfterViewInit {
   private el = inject(ElementRef);
+  private renderer = inject(Renderer2);
   private destroyRef = inject(DestroyRef);
 
   @Input({ required: true }) set appSetHeight(value: number) {
@@ -33,7 +34,7 @@ export class SetHeightDirective implements AfterViewInit {
       const height = `${this.computedHeight()}px`;
       untracked(() => {
         animationFrameScheduler.schedule(() => {
-          this.el.nativeElement.style.height = height;
+          this.renderer.setStyle(this.el.nativeElement, 'height', height);
         });
       });
     }, { allowSignalWrites: true });
@@ -82,112 +83,17 @@ export class SetHeightDirective implements AfterViewInit {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
       if (value.endsWith('px')) return parseInt(value, 10);
-      if (value.endsWith('%')) return (parseInt(value, 10) / 100) * window.innerHeight;
+      if (value.endsWith('%')) return (parseInt(value, 10) / 100) * this.windowHeight();
     }
     return 0;
   }
 }
-------------
 
-import { Component, signal, effect } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { SetHeightDirective } from './set-height.directive';
-
-@Component({
-  selector: 'app-height-examples',
-  standalone: true,
-  imports: [CommonModule, SetHeightDirective],
-  template: `
-    <div class="container">
-      <div class="example">
-        <h3>1. Full Height</h3>
-        <div [appSetHeight]="1" class="box full-height">
-          100% of window height
-        </div>
-      </div>
-
-      <div class="example">
-        <h3>2. Half Height with Offset</h3>
-        <div [appSetHeight]="0.5" heightOffset="50px" class="box half-height">
-          50% of window height minus 50px
-        </div>
-      </div>
-
-      <div class="example">
-        <h3>3. Dynamic Height with Sibling</h3>
-        <div class="sibling-container">
-          <div class="sibling" #sibling>
-            <p>Sibling content</p>
-            <button (click)="toggleSiblingContent()">Toggle Extra Content</button>
-            @if (showExtraContent()) {
-              <p>Extra content that affects height</p>
-            }
-          </div>
-          <div 
-            [appSetHeight]="0.6" 
-            heightOffset="10%" 
-            siblingSelector=".sibling" 
-            class="box dynamic-height"
-          >
-            60% of window height minus 10% of window height and minus sibling height
-          </div>
-        </div>
-      </div>
-
-      <div class="example">
-        <h3>4. Reactive Height</h3>
-        <div 
-          [appSetHeight]="heightRatio()" 
-          [heightOffset]="offsetValue()"
-          class="box reactive-height"
-        >
-          {{ heightRatio() * 100 }}% of window height minus {{ offsetValue() }}px
-        </div>
-        <div class="controls">
-          <button (click)="updateRatio()">Change Ratio</button>
-          <button (click)="updateOffset()">Change Offset</button>
-        </div>
-      </div>
-    </div>
-  `,
-  styles: [`
-    .container { display: flex; flex-wrap: wrap; gap: 20px; }
-    .example { flex: 1 1 45%; min-width: 300px; }
-    .box { border: 1px solid #ccc; padding: 10px; overflow-y: auto; }
-    .sibling { background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; }
-    .controls { margin-top: 10px; }
-    button { margin-right: 10px; }
-  `]
-})
-export class HeightExamplesComponent {
-  showExtraContent = signal(false);
-  heightRatio = signal(0.4);
-  offsetValue = signal(20);
-
-  constructor() {
-    effect(() => {
-      console.log(`Height ratio changed to ${this.heightRatio() * 100}%`);
-      console.log(`Offset changed to ${this.offsetValue()}px`);
-    });
-  }
-
-  toggleSiblingContent() {
-    this.showExtraContent.update(v => !v);
-  }
-
-  updateRatio() {
-    this.heightRatio.update(current => (current + 0.1) % 1);
-  }
-
-  updateOffset() {
-    this.offsetValue.update(current => (current + 10) % 100);
-  }
-}
 
 ----------
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Component, DebugElement } from '@angular/core';
+import { Component, DebugElement, Renderer2 } from '@angular/core';
 import { By } from '@angular/platform-browser';
 import { SetHeightDirective } from './set-height.directive';
 
@@ -203,16 +109,26 @@ describe('SetHeightDirective', () => {
   let component: TestComponent;
   let fixture: ComponentFixture<TestComponent>;
   let divElement: DebugElement;
+  let renderer: Renderer2;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [TestComponent],
-      imports: [SetHeightDirective]
+      imports: [SetHeightDirective],
+      providers: [
+        {
+          provide: Renderer2,
+          useValue: {
+            setStyle: jest.fn()
+          }
+        }
+      ]
     }).compileComponents();
 
     fixture = TestBed.createComponent(TestComponent);
     component = fixture.componentInstance;
     divElement = fixture.debugElement.query(By.css('div'));
+    renderer = TestBed.inject(Renderer2);
     fixture.detectChanges();
   });
 
@@ -225,10 +141,13 @@ describe('SetHeightDirective', () => {
     component.ratio = 1;
     fixture.detectChanges();
     
-    // We need to manually trigger the effect since we're in a test environment
     jest.runAllTimers();
     
-    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight}px`);
+    expect(renderer.setStyle).toHaveBeenCalledWith(
+      divElement.nativeElement,
+      'height',
+      `${window.innerHeight}px`
+    );
   });
 
   it('should set half height when ratio is 0.5', () => {
@@ -237,7 +156,11 @@ describe('SetHeightDirective', () => {
     
     jest.runAllTimers();
     
-    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight * 0.5}px`);
+    expect(renderer.setStyle).toHaveBeenCalledWith(
+      divElement.nativeElement,
+      'height',
+      `${window.innerHeight * 0.5}px`
+    );
   });
 
   it('should apply pixel offset correctly', () => {
@@ -247,7 +170,11 @@ describe('SetHeightDirective', () => {
     
     jest.runAllTimers();
     
-    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight - 50}px`);
+    expect(renderer.setStyle).toHaveBeenCalledWith(
+      divElement.nativeElement,
+      'height',
+      `${window.innerHeight - 50}px`
+    );
   });
 
   it('should apply percentage offset correctly', () => {
@@ -257,7 +184,11 @@ describe('SetHeightDirective', () => {
     
     jest.runAllTimers();
     
-    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight * 0.9}px`);
+    expect(renderer.setStyle).toHaveBeenCalledWith(
+      divElement.nativeElement,
+      'height',
+      `${window.innerHeight * 0.9}px`
+    );
   });
 
   it('should update height on window resize', () => {
@@ -273,7 +204,11 @@ describe('SetHeightDirective', () => {
     // We need to manually trigger the debounced resize handler
     jest.runAllTimers();
     
-    expect(divElement.nativeElement.style.height).toBe(`${newHeight}px`);
+    expect(renderer.setStyle).toHaveBeenCalledWith(
+      divElement.nativeElement,
+      'height',
+      `${newHeight}px`
+    );
     
     // Reset window.innerHeight
     Object.defineProperty(window, 'innerHeight', { value: originalHeight, configurable: true });
