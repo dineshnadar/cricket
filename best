@@ -1,44 +1,24 @@
-private normalizeApiResponse(response: ApiResponse | null | undefined): ApiResponse {
-    if (!response) {
-      console.warn('Received null or undefined API response');
-      return { body: {} };
-    }
-
-    if (typeof response !== 'object') {
-      console.warn('Received non-object API response:', response);
-      return { body: {} };
-    }
-
-    if (!response.body || typeof response.body !== 'object') {
-      console.warn('API response body is missing or not an object:', response);
+  private normalizeApiResponse(response: ApiResponse | null | undefined): ApiResponse {
+    if (!response || typeof response !== 'object' || !response.body || typeof response.body !== 'object') {
+      console.warn('Invalid API response:', response);
       return { body: {} };
     }
 
     const normalizedBody: ApiResponse['body'] = {};
     
     for (const [lookupName, items] of Object.entries(response.body)) {
-      if (!items) {
-        console.warn(`Null or undefined items for lookup "${lookupName}"`);
-        normalizedBody[lookupName] = [];
-        continue;
-      }
-
       if (!Array.isArray(items)) {
         console.warn(`Invalid items for lookup "${lookupName}": expected array, got`, typeof items);
         normalizedBody[lookupName] = [];
         continue;
       }
 
-      if (items.length === 0) {
-        console.warn(`Empty array for lookup "${lookupName}"`);
-        normalizedBody[lookupName] = [];
-        continue;
-      }
-
-      normalizedBody[lookupName] = items.map(item => this.normalizeItem(item)).filter(Boolean);
+      normalizedBody[lookupName] = items
+        .map(item => this.normalizeItem(item))
+        .filter((item): item is StandardLookupItem => item !== null);
 
       if (normalizedBody[lookupName].length === 0) {
-        console.warn(`All items were invalid for lookup "${lookupName}"`);
+        console.warn(`No valid items found for lookup "${lookupName}"`);
       }
     }
 
@@ -49,7 +29,7 @@ private normalizeApiResponse(response: ApiResponse | null | undefined): ApiRespo
     return { body: normalizedBody };
   }
 
-  private normalizeItem(item: LookupItem | null | undefined): StandardLookupItem | null {
+  private normalizeItem(item: LookupItem): StandardLookupItem | null {
     if (!item || typeof item !== 'object') {
       console.warn('Invalid lookup item:', item);
       return null;
