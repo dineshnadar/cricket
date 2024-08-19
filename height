@@ -183,3 +183,99 @@ export class HeightExamplesComponent {
     this.offsetValue.update(current => (current + 10) % 100);
   }
 }
+
+----------
+
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { Component, DebugElement } from '@angular/core';
+import { By } from '@angular/platform-browser';
+import { SetHeightDirective } from './set-height.directive';
+
+@Component({
+  template: `<div [appSetHeight]="ratio" [heightOffset]="offset">Test</div>`
+})
+class TestComponent {
+  ratio = 1;
+  offset = '0px';
+}
+
+describe('SetHeightDirective', () => {
+  let component: TestComponent;
+  let fixture: ComponentFixture<TestComponent>;
+  let divElement: DebugElement;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [TestComponent],
+      imports: [SetHeightDirective]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(TestComponent);
+    component = fixture.componentInstance;
+    divElement = fixture.debugElement.query(By.css('div'));
+    fixture.detectChanges();
+  });
+
+  it('should create an instance', () => {
+    const directive = divElement.injector.get(SetHeightDirective);
+    expect(directive).toBeTruthy();
+  });
+
+  it('should set full height when ratio is 1', () => {
+    component.ratio = 1;
+    fixture.detectChanges();
+    
+    // We need to manually trigger the effect since we're in a test environment
+    jest.runAllTimers();
+    
+    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight}px`);
+  });
+
+  it('should set half height when ratio is 0.5', () => {
+    component.ratio = 0.5;
+    fixture.detectChanges();
+    
+    jest.runAllTimers();
+    
+    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight * 0.5}px`);
+  });
+
+  it('should apply pixel offset correctly', () => {
+    component.ratio = 1;
+    component.offset = '50px';
+    fixture.detectChanges();
+    
+    jest.runAllTimers();
+    
+    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight - 50}px`);
+  });
+
+  it('should apply percentage offset correctly', () => {
+    component.ratio = 1;
+    component.offset = '10%';
+    fixture.detectChanges();
+    
+    jest.runAllTimers();
+    
+    expect(divElement.nativeElement.style.height).toBe(`${window.innerHeight * 0.9}px`);
+  });
+
+  it('should update height on window resize', () => {
+    const originalHeight = window.innerHeight;
+    const newHeight = originalHeight + 100;
+    
+    // Mock window resize
+    Object.defineProperty(window, 'innerHeight', { value: newHeight, configurable: true });
+    
+    // Trigger resize event
+    window.dispatchEvent(new Event('resize'));
+    
+    // We need to manually trigger the debounced resize handler
+    jest.runAllTimers();
+    
+    expect(divElement.nativeElement.style.height).toBe(`${newHeight}px`);
+    
+    // Reset window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { value: originalHeight, configurable: true });
+  });
+});
