@@ -1,0 +1,185 @@
+import { Directive, ElementRef, Input, effect, signal, computed, untracked, inject, DestroyRef, AfterViewInit } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { fromEvent, animationFrameScheduler } from 'rxjs';
+import { debounceTime, throttleTime, observeOn } from 'rxjs/operators';
+
+@Directive({
+  selector: '[appSetHeight]',
+  standalone: true
+})
+export class SetHeightDirective implements AfterViewInit {
+  private el = inject(ElementRef);
+  private destroyRef = inject(DestroyRef);
+
+  @Input({ required: true }) set appSetHeight(value: number) {
+    this.heightRatio.set(value);
+  }
+  @Input() set heightOffset(value: number | string) {
+    this.offset.set(this.parseOffset(value));
+  }
+  @Input() siblingSelector: string = '';
+
+  private windowHeight = signal(window.innerHeight);
+  private heightRatio = signal(1);
+  private offset = signal(0);
+  private siblingHeight = signal(0);
+
+  private computedHeight = computed(() => 
+    Math.max(0, this.windowHeight() * this.heightRatio() - this.offset() - this.siblingHeight())
+  );
+
+  constructor() {
+    effect(() => {
+      const height = `${this.computedHeight()}px`;
+      untracked(() => {
+        animationFrameScheduler.schedule(() => {
+          this.el.nativeElement.style.height = height;
+        });
+      });
+    }, { allowSignalWrites: true });
+  }
+
+  ngAfterViewInit() {
+    this.setupResizeListener();
+    this.updateSiblingHeight();
+
+    if (this.siblingSelector) {
+      const sibling = this.el.nativeElement.parentElement.querySelector(this.siblingSelector);
+      if (sibling) {
+        const observer = new MutationObserver(() => this.updateSiblingHeight());
+        observer.observe(sibling, { childList: true, subtree: true, attributes: true });
+        this.destroyRef.onDestroy(() => observer.disconnect());
+      }
+    }
+  }
+
+  private setupResizeListener() {
+    fromEvent(window, 'resize')
+      .pipe(
+        throttleTime(16),
+        debounceTime(100),
+        observeOn(animationFrameScheduler),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe(() => {
+        this.windowHeight.set(window.innerHeight);
+        this.updateSiblingHeight();
+      });
+  }
+
+  private updateSiblingHeight() {
+    if (this.siblingSelector) {
+      const sibling = this.el.nativeElement.parentElement.querySelector(this.siblingSelector);
+      if (sibling) {
+        animationFrameScheduler.schedule(() => {
+          this.siblingHeight.set(sibling.offsetHeight);
+        });
+      }
+    }
+  }
+
+  private parseOffset(value: number | string): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      if (value.endsWith('px')) return parseInt(value, 10);
+      if (value.endsWith('%')) return (parseInt(value, 10) / 100) * window.innerHeight;
+    }
+    return 0;
+  }
+}
+------------
+
+import { Component, signal, effect } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { SetHeightDirective } from './set-height.directive';
+
+@Component({
+  selector: 'app-height-examples',
+  standalone: true,
+  imports: [CommonModule, SetHeightDirective],
+  template: `
+    <div class="container">
+      <div class="example">
+        <h3>1. Full Height</h3>
+        <div [appSetHeight]="1" class="box full-height">
+          100% of window height
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>2. Half Height with Offset</h3>
+        <div [appSetHeight]="0.5" heightOffset="50px" class="box half-height">
+          50% of window height minus 50px
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>3. Dynamic Height with Sibling</h3>
+        <div class="sibling-container">
+          <div class="sibling" #sibling>
+            <p>Sibling content</p>
+            <button (click)="toggleSiblingContent()">Toggle Extra Content</button>
+            @if (showExtraContent()) {
+              <p>Extra content that affects height</p>
+            }
+          </div>
+          <div 
+            [appSetHeight]="0.6" 
+            heightOffset="10%" 
+            siblingSelector=".sibling" 
+            class="box dynamic-height"
+          >
+            60% of window height minus 10% of window height and minus sibling height
+          </div>
+        </div>
+      </div>
+
+      <div class="example">
+        <h3>4. Reactive Height</h3>
+        <div 
+          [appSetHeight]="heightRatio()" 
+          [heightOffset]="offsetValue()"
+          class="box reactive-height"
+        >
+          {{ heightRatio() * 100 }}% of window height minus {{ offsetValue() }}px
+        </div>
+        <div class="controls">
+          <button (click)="updateRatio()">Change Ratio</button>
+          <button (click)="updateOffset()">Change Offset</button>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .container { display: flex; flex-wrap: wrap; gap: 20px; }
+    .example { flex: 1 1 45%; min-width: 300px; }
+    .box { border: 1px solid #ccc; padding: 10px; overflow-y: auto; }
+    .sibling { background-color: #f0f0f0; padding: 10px; margin-bottom: 10px; }
+    .controls { margin-top: 10px; }
+    button { margin-right: 10px; }
+  `]
+})
+export class HeightExamplesComponent {
+  showExtraContent = signal(false);
+  heightRatio = signal(0.4);
+  offsetValue = signal(20);
+
+  constructor() {
+    effect(() => {
+      console.log(`Height ratio changed to ${this.heightRatio() * 100}%`);
+      console.log(`Offset changed to ${this.offsetValue()}px`);
+    });
+  }
+
+  toggleSiblingContent() {
+    this.showExtraContent.update(v => !v);
+  }
+
+  updateRatio() {
+    this.heightRatio.update(current => (current + 0.1) % 1);
+  }
+
+  updateOffset() {
+    this.offsetValue.update(current => (current + 10) % 100);
+  }
+}
