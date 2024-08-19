@@ -1,173 +1,389 @@
-import { Injectable } from '@angular/core';
-import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
-import { FormExtensionService } from '@angular-monorepo/store';
-import { Signal } from '@angular/core';
+// src/app/lookup/lookup-data.model.ts
+export interface BaseLookupItem {
+  [key: string]: string;
+}
+
+export interface StandardLookupItem extends BaseLookupItem {
+  dbVal: string;
+  dbDesc: string;
+}
+
+export interface MappedLookupItem extends BaseLookupItem {
+  value: string;
+  displayValue: string;
+}
+
+export type LookupItem = StandardLookupItem | MappedLookupItem;
+
+export interface ApiResponse {
+  body: {
+    [lookupName: string]: LookupItem[];
+  };
+}
+
+export enum LookupDataState {
+  INITIAL,
+  LOADING,
+  LOADED,
+  ERROR
+}
+
+export interface LookupOption {
+  value: string;
+  label: string;
+}
+
+// src/app/lookup/lookup-data.service.ts
+import { Injectable, signal, computed } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, of, catchError, map, tap, shareReplay, throwError } from 'rxjs';
+import { ApiResponse, StandardLookupItem, MappedLookupItem, LookupDataState, LookupOption } from './lookup-data.model';
+
 @Injectable({
   providedIn: 'root'
 })
-export class ComplexFormService {
-  private form: FormGroup;
+export class LookupDataService {
+  private cachedData = signal<ApiResponse | null>(null);
+  private dataFetch$: Observable<ApiResponse> | null = null;
+  private dataState = signal<LookupDataState>(LookupDataState.INITIAL);
+  private errorMessage = signal<string | null>(null);
+  private readonly STORAGE_KEY = 'lookupData';
 
-  constructor(
-    private fb: FormBuilder,
-    private formExtensionService: FormExtensionService
-  ) {
-    this.form = this.initializeForm();
+  readonly lookupNames = computed(() => {
+    const data = this.cachedData();
+    return data ? Object.keys(data.body) : [];
+  });
+
+  readonly state = computed(() => this.dataState());
+  readonly error = computed(() => this.errorMessage());
+
+  constructor(private http: HttpClient) {
+    this.loadFromStorage();
   }
 
-  private initializeForm(): FormGroup {
-    const form = this.fb.group({
-      personalInfo: this.fb.group({
-        name: ['', Validators.required],
-        age: [0, [Validators.required, Validators.min(0)]],
-      }),
-      orders: this.fb.array([])
-    });
-
-    this.formExtensionService.setForm(form);
-    
-    // Extend the entire form
-    this.formExtensionService.extendControl(form, { label: 'Customer Form' });
-    
-    // Extend the personalInfo group
-    this.formExtensionService.extendControl(form.get('personalInfo')!, { label: 'Personal Information' });
-    
-    // Extend individual controls
-    this.formExtensionService.extendControl(form.get('personalInfo.name')!, { label: 'Full Name' });
-    this.formExtensionService.extendControl(form.get('personalInfo.age')!, { label: 'Age' });
-    
-    // Extend the orders array
-    this.formExtensionService.extendControl(form.get('orders')!, { label: 'Orders' });
-
-    this.registerCustomComputations(form);
-
-    return form;
+  private loadFromStorage(): void {
+    const storedData = localStorage.getItem(this.STORAGE_KEY);
+    if (storedData) {
+      const data = JSON.parse(storedData);
+      this.cachedData.set(data);
+      this.dataState.set(LookupDataState.LOADED);
+    }
   }
 
-  private registerCustomComputations(form: FormGroup) {
-    // Compute total age in months
-    this.formExtensionService.registerCustomComputation('personalInfo.age', {
-      compute: (control, form) => {
-        const age = control.value || 0;
-        return age * 12;
-      }
-    });
+  private saveToStorage(data: ApiResponse): void {
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+  }
 
-    // Compute total order value
-    this.formExtensionService.registerCustomComputation('orders', {
-      compute: (control, form) => {
-        if (control instanceof FormArray) {
-          return control.controls.reduce((total, orderControl) => {
-            return total + (orderControl.get('value')?.value || 0);
-          }, 0);
+  resolveData(): Observable<ApiResponse> {
+    if (this.isDataLoaded() && this.cachedData()) {
+      return of(this.cachedData()!);
+    }
+
+    if (this.dataFetch$) {
+      return this.dataFetch$;
+    }
+
+    this.dataState.set(LookupDataState.LOADING);
+    this.errorMessage.set(null);
+
+    this.dataFetch$ = this.http.get<ApiResponse>('api/lookup-data').pipe(
+      map(this.normalizeApiResponse),
+      tap(data => {
+        if (Object.keys(data.body).length === 0) {
+          throw new Error('No lookup data available');
         }
-        return 0;
-      }
-    });
+        this.cachedData.set(data);
+        this.dataState.set(LookupDataState.LOADED);
+        this.saveToStorage(data);
+      }),
+      catchError(this.handleError),
+      shareReplay(1)
+    );
+
+    return this.dataFetch$;
   }
 
-  addOrder() {
-    const ordersArray = this.form.get('orders') as FormArray;
-    const newOrder = this.fb.group({
-      product: ['', Validators.required],
-      value: [0, [Validators.required, Validators.min(0)]]
-    });
+  private normalizeApiResponse(response: ApiResponse): ApiResponse {
+    const normalizedBody: ApiResponse['body'] = {};
     
-    ordersArray.push(newOrder);
-    
-    // Extend the new order group
-    this.formExtensionService.extendControl(newOrder, { label: `Order ${ordersArray.length}` });
-    this.formExtensionService.extendControl(newOrder.get('product')!, { label: 'Product' });
-    this.formExtensionService.extendControl(newOrder.get('value')!, { label: 'Value' });
-    this.formExtensionService.extendControl(this.form.get('personalInfo.name')!, { visible: false });
-    this.formExtensionService.triggerUpdate();
+    for (const [lookupName, items] of Object.entries(response.body)) {
+      normalizedBody[lookupName] = items.map(item => this.normalizeItem(item));
+    }
+
+    return { body: normalizedBody };
   }
 
-  getForm(): FormGroup {
-    return this.form;
+  private normalizeItem(item: LookupItem): StandardLookupItem {
+    if ('dbVal' in item && 'dbDesc' in item) {
+      return item;
+    } else if ('value' in item && 'displayValue' in item) {
+      return {
+        dbVal: item.value,
+        dbDesc: item.displayValue
+      };
+    } else {
+      console.warn('Unexpected item format:', item);
+      return { dbVal: '', dbDesc: '' };
+    }
   }
 
-  getReadView(): Signal<any> {
-    return this.formExtensionService.getReadView();
+  private handleError = (error: HttpErrorResponse) => {
+    let errorMsg: string;
+    if (error.error instanceof ErrorEvent) {
+      errorMsg = `Client-side error: ${error.error.message}`;
+    } else {
+      errorMsg = `Server-side error: ${error.status} ${error.message}`;
+    }
+    console.error(errorMsg);
+    this.dataState.set(LookupDataState.ERROR);
+    this.errorMessage.set(errorMsg);
+    this.dataFetch$ = null;
+    return throwError(() => new Error(errorMsg));
+  };
+
+  refreshData(): Observable<ApiResponse> {
+    this.cachedData.set(null);
+    this.dataFetch$ = null;
+    localStorage.removeItem(this.STORAGE_KEY);
+    return this.resolveData();
+  }
+
+  getLookupItems(lookupName: string): StandardLookupItem[] {
+    const data = this.cachedData();
+    return data?.body[lookupName] ?? [];
+  }
+
+  getMappedLookupItems(lookupName: string): MappedLookupItem[] {
+    return this.getLookupItems(lookupName).map(item => ({
+      value: item.dbVal,
+      displayValue: item.dbDesc
+    }));
+  }
+
+  getLookupItemByValue(lookupName: string, value: string): StandardLookupItem | undefined {
+    return this.getLookupItems(lookupName).find(item => item.dbVal === value);
+  }
+
+  getLookupItemByDescription(lookupName: string, description: string): StandardLookupItem | undefined {
+    return this.getLookupItems(lookupName).find(item => item.dbDesc === description);
+  }
+
+  getDescriptionByValue(lookupName: string, value: string): string {
+    return this.getLookupItemByValue(lookupName, value)?.dbDesc ?? '';
+  }
+
+  getValueByDescription(lookupName: string, description: string): string {
+    return this.getLookupItemByDescription(lookupName, description)?.dbVal ?? '';
+  }
+
+  getMappedLookupItemByValue(lookupName: string, value: string): MappedLookupItem | undefined {
+    const item = this.getLookupItemByValue(lookupName, value);
+    return item ? { value: item.dbVal, displayValue: item.dbDesc } : undefined;
+  }
+
+  getMappedLookupItemByDisplayValue(lookupName: string, displayValue: string): MappedLookupItem | undefined {
+    const item = this.getLookupItemByDescription(lookupName, displayValue);
+    return item ? { value: item.dbVal, displayValue: item.dbDesc } : undefined;
+  }
+
+  // Helper Methods
+  isDataLoaded(): boolean {
+    return this.dataState() === LookupDataState.LOADED;
+  }
+
+  isLoading(): boolean {
+    return this.dataState() === LookupDataState.LOADING;
+  }
+
+  hasError(): boolean {
+    return this.dataState() === LookupDataState.ERROR;
+  }
+
+  getErrorMessage(): string | null {
+    return this.errorMessage();
+  }
+
+  getLookupOptions(lookupName: string): LookupOption[] {
+    return this.getLookupItems(lookupName).map(item => ({
+      value: item.dbVal,
+      label: item.dbDesc
+    }));
+  }
+
+  hasLookup(lookupName: string): boolean {
+    return this.lookupNames().includes(lookupName);
+  }
+
+  getLookupItemCount(lookupName: string): number {
+    return this.getLookupItems(lookupName).length;
+  }
+
+  findStandardItemByPartialMatch(lookupName: string, partialValue: string): StandardLookupItem | undefined {
+    return this.getLookupItems(lookupName).find(item => 
+      item.dbVal.toLowerCase().includes(partialValue.toLowerCase()) || 
+      item.dbDesc.toLowerCase().includes(partialValue.toLowerCase())
+    );
+  }
+
+  getAllStandardItemsByPartialMatch(lookupName: string, partialValue: string): StandardLookupItem[] {
+    return this.getLookupItems(lookupName).filter(item => 
+      item.dbVal.toLowerCase().includes(partialValue.toLowerCase()) || 
+      item.dbDesc.toLowerCase().includes(partialValue.toLowerCase())
+    );
+  }
+
+  findMappedItemByPartialMatch(lookupName: string, partialValue: string): MappedLookupItem | undefined {
+    const standardItem = this.findStandardItemByPartialMatch(lookupName, partialValue);
+    return standardItem ? { value: standardItem.dbVal, displayValue: standardItem.dbDesc } : undefined;
+  }
+
+  getAllMappedItemsByPartialMatch(lookupName: string, partialValue: string): MappedLookupItem[] {
+    return this.getAllStandardItemsByPartialMatch(lookupName, partialValue)
+      .map(item => ({ value: item.dbVal, displayValue: item.dbDesc }));
+  }
+
+  getDistinctValues(lookupName: string): string[] {
+    return [...new Set(this.getLookupItems(lookupName).map(item => item.dbVal))];
+  }
+
+  getDistinctDescriptions(lookupName: string): string[] {
+    return [...new Set(this.getLookupItems(lookupName).map(item => item.dbDesc))];
   }
 }
 
+// src/app/lookup/lookup-data.resolver.ts
+import { ResolveFn } from '@angular/router';
+import { inject } from '@angular/core';
+import { LookupDataService } from './lookup-data.service';
+import { ApiResponse } from './lookup-data.model';
 
----------------------------------------
+export const lookupDataResolver: ResolveFn<ApiResponse> = () => {
+  const lookupDataService = inject(LookupDataService);
+  return lookupDataService.resolveData();
+};
 
-import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
-import { ReactiveFormsModule, FormGroup , FormArray} from '@angular/forms';
-import { CommonModule} from '@angular/common'
-import { ComplexFormService } from './kyc.service';
-import { Signal } from '@angular/core';
-
-interface ReadViewItem {
-  label: string;
-  value: any;
-  editable: boolean;
-  computedValue?: any;
-  children?: ReadViewItem[];
-}
+// src/app/lookup/lookup-example.component.ts
+import { Component, inject, OnInit } from '@angular/core';
+import { AsyncPipe, NgFor, NgIf, NgSwitch, NgSwitchCase } from '@angular/common';
+import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { LookupDataService } from './lookup-data.service';
+import { LookupDataState, LookupOption, MappedLookupItem } from './lookup-data.model';
 
 @Component({
-  selector: 'app-complex-form',
-  standalone : true,
-  imports: [CommonModule,ReactiveFormsModule],
+  selector: 'app-lookup-example',
+  standalone: true,
+  imports: [NgFor, NgIf, NgSwitch, NgSwitchCase, AsyncPipe, ReactiveFormsModule],
   template: `
-    <form [formGroup]="form">
-      <div formGroupName="personalInfo">
-        <label>
-          Full Name: {{form.get('personalInfo')?.get('name')?.visible}}
-          <input formControlName="name">
-        </label>
-        <label>
-          Age:
-          <input type="number" formControlName="age">
-        </label>
-      </div>
+    <ng-container [ngSwitch]="lookupDataService.state()">
+      <ng-container *ngSwitchCase="LookupDataState.LOADING">
+        <p>Loading lookup data...</p>
+      </ng-container>
       
-      <div formArrayName="orders">
-        <div *ngFor="let order of ordersArray.controls; let i = index" [formGroupName]="i">
-          <label>
-            Product:
-            <input formControlName="product">
-          </label>
-          <label>
-            Value:
-            <input type="number" formControlName="value">
-          </label>
+      <ng-container *ngSwitchCase="LookupDataState.LOADED">
+        <form [formGroup]="form">
+          <div *ngFor="let name of lookupDataService.lookupNames()">
+            <label>
+              {{ name }} ({{ lookupDataService.getLookupItemCount(name) }} items):
+              <select [formControlName]="name">
+                <option value="">Select an option</option>
+                <option *ngFor="let option of getLookupOptions(name)" [value]="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+        </form>
+        <div *ngFor="let name of lookupDataService.lookupNames()">
+          <h3>{{ name }}</h3>
+          <p>Selected Value: {{ getSelectedValue(name) }}</p>
+          <p>Selected Description: {{ getSelectedDescription(name) }}</p>
+          <p>Distinct Values: {{ lookupDataService.getDistinctValues(name).join(', ') }}</p>
+          <p>Distinct Descriptions: {{ lookupDataService.getDistinctDescriptions(name).join(', ') }}</p>
+          <h4>Partial Match Results:</h4>
+          <ul>
+            <li *ngFor="let item of getPartialMatchItems(name, 'a')">
+              {{ item.value }} - {{ item.displayValue }}
+            </li>
+          </ul>
         </div>
-      </div>
+      </ng-container>
       
-      <button type="button" (click)="addOrder()">Add Order</button>
-    </form>
-
-    <h2>Read View:</h2>
-    <pre>{{ readView() | json }}</pre>
-  `,
-  changeDetection: ChangeDetectionStrategy.OnPush
+      <ng-container *ngSwitchCase="LookupDataState.ERROR">
+        <p>Error: {{ lookupDataService.getErrorMessage() }}</p>
+      </ng-container>
+    </ng-container>
+    
+    <button (click)="refreshData()" [disabled]="lookupDataService.isLoading()">
+      {{ lookupDataService.isLoading() ? 'Refreshing...' : 'Refresh Data' }}
+    </button>
+  `
 })
-export class KycpocComponent implements OnInit {
-  form!: FormGroup;
-  readView!: Signal<ReadViewItem[]>;
-
-  get ordersArray() {
-    return this.form.get('orders') as FormArray;
-  }
-
-  constructor(private complexFormService: ComplexFormService) {}
+export class LookupExampleComponent implements OnInit {
+  private lookupDataService = inject(LookupDataService);
+  private fb = inject(FormBuilder);
+  
+  LookupDataState = LookupDataState;
+  form: FormGroup;
 
   ngOnInit() {
-    this.form = this.complexFormService.getForm();
-    this.readView = this.complexFormService.getReadView();
-    console.log(this.form);
-    
+    this.initForm();
   }
 
-  addOrder() {
-    this.complexFormService.addOrder();
-    this.form.get('personalInfo')?.get('name')?.setValue("dsk");
-   // this.form.get('personalInfo')?.get('name')?['visible'] = false;
-   console.log(this.form);
+  initForm() {
+    const formControls = {};
+    this.lookupDataService.lookupNames().forEach(name => {
+      formControls[name] = [''];
+    });
+    this.form = this.fb.group(formControls);
+  }
+
+  getLookupOptions(name: string): LookupOption[] {
+    return this.lookupDataService.getLookupOptions(name);
+  }
+
+  getSelectedValue(name: string): string {
+    return this.form.get(name)?.value || '';
+  }
+
+  getSelectedDescription(name: string): string {
+    const value = this.getSelectedValue(name);
+    return this.lookupDataService.getDescriptionByValue(name, value);
+  }
+
+  getPartialMatchItems(name: string, partialValue: string): MappedLookupItem[] {
+    return this.lookupDataService.getAllMappedItemsByPartialMatch(name, partialValue);
+  }
+
+  refreshData() {
+    this.lookupDataService.refreshData().subscribe(() => this.initForm());
   }
 }
+
+// src/app/app.routes.ts
+import { Routes } from '@angular/router';
+import { lookupDataResolver } from './lookup/lookup-data.resolver';
+import { LookupExampleComponent } from './lookup/lookup-example.component';
+
+export const routes: Routes = [
+  {
+    path: 'lookup-example',
+    component: LookupExampleComponent,
+    resolve: { lookupData: lookupDataResolver }
+  },
+  // ... other routes
+];
+
+// src/main.ts
+import { bootstrapApplication } from '@angular/platform-browser';
+import { AppComponent } from './app/app.component';
+import { provideRouter } from '@angular/router';
+import { routes } from './app/app.routes';
+import { provideHttpClient } from '@angular/common/http';
+
+bootstrapApplication(AppComponent, {
+  providers: [
+    provideRouter(routes),
+    provideHttp
+
+---------------------------
+
