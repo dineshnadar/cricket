@@ -12,12 +12,12 @@ import map from 'lodash-es/map';
 import sortBy from 'lodash-es/sortBy';
 import compact from 'lodash-es/compact';
 import shuffle from 'lodash-es/shuffle';
-import pick from 'lodash-es/pick';
-import omit from 'lodash-es/omit';
-import merge from 'lodash-es/merge';
-import cloneDeep from 'lodash-es/cloneDeep';
-import get from 'lodash-es/get';
-import has from 'lodash-es/has';
+import pickLodash from 'lodash-es/pick';
+import omitLodash from 'lodash-es/omit';
+import mergeLodash from 'lodash-es/merge';
+import cloneDeepLodash from 'lodash-es/cloneDeep';
+import getLodash from 'lodash-es/get';
+import hasLodash from 'lodash-es/has';
 import camelCase from 'lodash-es/camelCase';
 import snakeCase from 'lodash-es/snakeCase';
 import kebabCase from 'lodash-es/kebabCase';
@@ -53,13 +53,13 @@ export const arrayUtils = {
 };
 
 export const objectUtils = {
-  pick,
-  omit,
-  merge,
-  cloneDeep,
-  get,
-  has,
-  invert: <T extends Record<string, PropertyKey>>(obj: T): Partial<Record<string, keyof T>> => {
+  pickProps: pickLodash,
+  omitProps: omitLodash,
+  mergeObjects: mergeLodash,
+  deepClone: cloneDeepLodash,
+  getNestedValue: getLodash,
+  hasProperty: hasLodash,
+  invertObject: <T extends Record<string, PropertyKey>>(obj: T): Partial<Record<string, keyof T>> => {
     return Object.entries(obj).reduce((acc, [key, value]) => {
       if (value !== null && value !== undefined) {
         const stringValue = String(value);
@@ -110,11 +110,17 @@ export const cryptoUtils = {
     let index = 0;
     
     return guidTemplate.replace(/[xy]/g, (c) => {
-      const r = (index < hexTimestamp.length) 
-        ? parseInt(hexTimestamp[index++], 16) 
-        : Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
+      if (c === 'x') {
+        if (index < hexTimestamp.length) {
+          return hexTimestamp[index++];
+        } else {
+          return randomPart();
+        }
+      } else {
+        // For 'y', we use a random number but ensure it's one of 8, 9, a, or b
+        const r = Math.floor(Math.random() * 4) + 8;
+        return r.toString(16);
+      }
     });
   }
 };
@@ -498,3 +504,111 @@ export const utils = {
 };
 
 export default utils;
+
+
+---------------------
+
+  // Example usage of the utility library
+
+import utils from '@your-workspace/utils';
+
+console.log('Array Utilities:');
+const numbers = [1, 2, 3, 4, 5, 5, 6];
+console.log('Chunk:', utils.chunk(numbers, 2));
+console.log('Unique:', utils.uniq(numbers));
+console.log('Flatten:', utils.flatten([[1, 2], [3, 4], [5, [6, 7]]]));
+console.log('Shuffled:', utils.shuffle(numbers));
+
+const users = [
+  { id: 1, name: 'Alice', age: 30 },
+  { id: 2, name: 'Bob', age: 25 },
+  { id: 3, name: 'Charlie', age: 35 },
+  { id: 4, name: 'David', age: 28 }
+];
+console.log('Filtered users:', utils.filterArray(users, user => user.age > 28));
+console.log('Sorted users:', utils.sortArray(users, user => user.age));
+
+console.log('\nObject Utilities:');
+const obj = { a: 1, b: { c: 2, d: [3, 4] }, e: 5 };
+console.log('Picked props:', utils.pickProps(obj, ['a', 'b']));
+console.log('Omitted props:', utils.omitProps(obj, ['e']));
+console.log('Has property:', utils.hasProperty(obj, 'b.c'));
+console.log('Get nested value:', utils.getNestedValue(obj, 'b.d[1]', 'default'));
+
+console.log('\nString Utilities:');
+const str = 'Hello World';
+console.log('Camel case:', utils.camelCase(str));
+console.log('Kebab case:', utils.kebabCase(str));
+console.log('Truncated:', utils.truncate(str, 7));
+console.log('Is palindrome:', utils.isPalindrome('A man a plan a canal Panama'));
+
+console.log('\nNumber Utilities:');
+console.log('Clamped:', utils.clamp(15, 0, 10));
+console.log('Random:', utils.random(1, 10));
+console.log('Formatted currency:', utils.formatCurrency(1234.56, 'EUR', 'de-DE'));
+
+console.log('\nFunction Utilities:');
+const expensiveOperation = (n: number) => {
+  let result = 0;
+  for (let i = 0; i < n; i++) {
+    result += Math.sqrt(i);
+  }
+  return result;
+};
+
+const memoizedOperation = utils.memoize(expensiveOperation);
+
+console.time('First call');
+console.log('Result:', memoizedOperation(1000000));
+console.timeEnd('First call');
+
+console.time('Second call (memoized)');
+console.log('Result:', memoizedOperation(1000000));
+console.timeEnd('Second call (memoized)');
+
+console.log('\nCrypto Utilities:');
+console.log('Generated GUID:', utils.generateGuid());
+console.log('Generated GUID with timestamp:', utils.generateGuid(1625097600000)); // July 1, 2021 UTC
+
+console.log('\nCommon Utilities:');
+console.log('Is empty:', utils.isEmpty([]));
+console.log('Is not empty:', utils.isNotEmpty([1, 2, 3]));
+console.log('Is empty detailed (NaN):', utils.isEmptyDetailed(NaN));
+
+console.log('\nPerformance Utilities:');
+const [result, executionTime] = utils.measureExecutionTime(() => {
+  let sum = 0;
+  for (let i = 0; i < 1000000; i++) {
+    sum += i;
+  }
+  return sum;
+});
+console.log(`Sum calculation result: ${result}, Execution time: ${executionTime.toFixed(2)}ms`);
+
+console.log('\nJSON Utilities:');
+const obj1 = { a: 1, b: [1, 2, 3], c: { d: 4 } };
+const obj2 = { a: 1, b: [1, 2, 4], c: { d: 5 }, e: 6 };
+console.log('JSON Comparison:', utils.compareJSON(obj1, obj2));
+console.log('JSON Differences:', utils.findJSONDifference(obj1, obj2));
+console.log('Has differences:', utils.hasDifference(obj1, obj2));
+
+// Complex example: Data processing pipeline
+console.log('\nComplex Example - Data Processing Pipeline:');
+const rawData = [
+  { name: 'John Doe', age: '32', salary: '$50000' },
+  { name: 'Jane Smith', age: '28', salary: '$60000' },
+  { name: 'Bob Johnson', age: '45', salary: '$75000' }
+];
+
+const processedData = utils.filterArray(
+  utils.mapArray(rawData, item => ({
+    ...item,
+    id: utils.generateGuid(),
+    age: parseInt(item.age),
+    salary: parseInt(item.salary.replace('$', '')),
+    name: utils.startCase(item.name.toLowerCase())
+  })),
+  item => item.age > 30
+);
+
+console.log('Processed Data:', processedData);
