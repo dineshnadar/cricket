@@ -1,36 +1,38 @@
 // libs/utils/src/index.ts
 
-import {
-  chunk,
-  uniq,
-  flatten,
-  intersection,
-  difference,
-  isEmpty,
-  filter,
-  find,
-  map,
-  sortBy,
-  groupBy,
-  pick,
-  omit,
-  merge,
-  cloneDeep,
-  has,
-  camelCase,
-  snakeCase,
-  kebabCase,
-  startCase,
-  truncate,
-  clamp,
-  random,
-  debounce,
-  throttle,
-  memoize,
-  sumBy,
-  meanBy,
-  flowRight
-} from 'lodash-es';
+import chunk from 'lodash-es/chunk';
+import uniq from 'lodash-es/uniq';
+import flatten from 'lodash-es/flatten';
+import intersection from 'lodash-es/intersection';
+import difference from 'lodash-es/difference';
+import groupBy from 'lodash-es/groupBy';
+import filter from 'lodash-es/filter';
+import find from 'lodash-es/find';
+import map from 'lodash-es/map';
+import sortBy from 'lodash-es/sortBy';
+import compact from 'lodash-es/compact';
+import shuffle from 'lodash-es/shuffle';
+import pick from 'lodash-es/pick';
+import omit from 'lodash-es/omit';
+import merge from 'lodash-es/merge';
+import cloneDeep from 'lodash-es/cloneDeep';
+import get from 'lodash-es/get';
+import has from 'lodash-es/has';
+import camelCase from 'lodash-es/camelCase';
+import snakeCase from 'lodash-es/snakeCase';
+import kebabCase from 'lodash-es/kebabCase';
+import startCase from 'lodash-es/startCase';
+import truncate from 'lodash-es/truncate';
+import capitalize from 'lodash-es/capitalize';
+import clamp from 'lodash-es/clamp';
+import random from 'lodash-es/random';
+import round from 'lodash-es/round';
+import debounce from 'lodash-es/debounce';
+import throttle from 'lodash-es/throttle';
+import memoize from 'lodash-es/memoize';
+import negate from 'lodash-es/negate';
+import once from 'lodash-es/once';
+import isEmpty from 'lodash-es/isEmpty';
 
 export const arrayUtils = {
   chunk,
@@ -38,27 +40,16 @@ export const arrayUtils = {
   flatten,
   intersection,
   difference,
+  groupByArray: groupBy,
   filterArray: filter,
   findInArray: find,
   mapArray: map,
   sortArray: sortBy,
-  groupByArray: groupBy,
-  uniqArray: uniq,
-  compact: <T>(array: T[]): T[] => array.filter(Boolean),
+  compact,
+  shuffle,
   groupBySize: <T>(array: T[], size: number): T[][] => {
-    return array.reduce((acc, _, i) => {
-      if (i % size === 0) acc.push(array.slice(i, i + size));
-      return acc;
-    }, [] as T[][]);
-  },
-  shuffle: <T>(array: T[]): T[] => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  },
+    return chunk(array, size);
+  }
 };
 
 export const objectUtils = {
@@ -66,16 +57,8 @@ export const objectUtils = {
   omit,
   merge,
   cloneDeep,
+  get,
   has,
-  get: <T>(obj: any, path: string, defaultValue: T): T => {
-    const travel = (regexp: RegExp) =>
-      String.prototype.split
-        .call(path, regexp)
-        .filter(Boolean)
-        .reduce((res, key) => (res !== null && res !== undefined ? res[key] : res), obj);
-    const result = travel(/[,[\]]+?/) || travel(/[,[\].]+?/);
-    return result === undefined || result === obj ? defaultValue : result;
-  },
   invert: <T extends Record<string, PropertyKey>>(obj: T): Partial<Record<string, keyof T>> => {
     return Object.entries(obj).reduce((acc, [key, value]) => {
       if (value !== null && value !== undefined) {
@@ -84,7 +67,7 @@ export const objectUtils = {
       }
       return acc;
     }, {} as Partial<Record<string, keyof T>>);
-  },
+  }
 };
 
 export const stringUtils = {
@@ -93,41 +76,29 @@ export const stringUtils = {
   kebabCase,
   startCase,
   truncate,
-  capitalize: (str: string): string => str.charAt(0).toUpperCase() + str.slice(1),
+  capitalize,
   reverse: (str: string): string => str.split('').reverse().join(''),
   isPalindrome: (str: string): boolean => {
     const normalized = str.toLowerCase().replace(/[^a-z0-9]/g, '');
     return normalized === normalized.split('').reverse().join('');
-  },
+  }
 };
 
 export const numberUtils = {
   clamp,
   random,
-  round: (num: number, decimals: number): number => {
-    return Number(Math.round(Number(num + 'e' + decimals)) + 'e-' + decimals);
-  },
+  round,
   formatCurrency: (num: number, currency: string = 'USD', locale: string = 'en-US'): string => {
     return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(num);
-  },
+  }
 };
 
 export const functionUtils = {
   debounce,
   throttle,
   memoize,
-  negate: <T>(predicate: (value: T) => boolean) => (value: T): boolean => !predicate(value),
-  once: <T extends (...args: any[]) => any>(fn: T): T => {
-    let result: ReturnType<T>;
-    let called = false;
-    return ((...args: Parameters<T>): ReturnType<T> => {
-      if (!called) {
-        called = true;
-        result = fn(...args);
-      }
-      return result;
-    }) as T;
-  },
+  negate,
+  once
 };
 
 export const cryptoUtils = {
@@ -145,30 +116,18 @@ export const cryptoUtils = {
       const v = c === 'x' ? r : (r & 0x3 | 0x8);
       return v.toString(16);
     });
-  },
+  }
 };
 
 export const commonUtils = {
   isEmpty,
   isNotEmpty: <T>(value: T): boolean => !isEmpty(value),
-  
   isEmptyDetailed: (value: any): boolean => {
-    if (value == null) {
-      return true;
-    }
-    if (typeof value === 'string' || Array.isArray(value)) {
-      return value.length === 0;
-    }
-    if (typeof value === 'object') {
-      return Object.keys(value).length === 0;
-    }
-    if (typeof value === 'number') {
-      return isNaN(value);
-    }
+    if (isEmpty(value)) return true;
+    if (typeof value === 'number') return isNaN(value);
     return false;
   },
-  
-  isNotEmptyDetailed: (value: any): boolean => !commonUtils.isEmptyDetailed(value),
+  isNotEmptyDetailed: (value: any): boolean => !commonUtils.isEmptyDetailed(value)
 };
 
 export const performanceUtils = {
@@ -177,7 +136,7 @@ export const performanceUtils = {
     const result = fn();
     const end = performance.now();
     return [result, end - start];
-  },
+  }
 };
 
 export const jsonUtils = {
@@ -233,7 +192,7 @@ export const jsonUtils = {
   },
   hasDifference: (obj1: any, obj2: any): boolean => {
     return Object.keys(jsonUtils.findJSONDifference(obj1, obj2)).length > 0;
-  },
+  }
 };
 
 export const utils = {
@@ -245,10 +204,7 @@ export const utils = {
   ...cryptoUtils,
   ...commonUtils,
   ...performanceUtils,
-  ...jsonUtils,
-  sumBy,
-  meanBy,
-  flowRight,
+  ...jsonUtils
 };
 
 export default utils;
