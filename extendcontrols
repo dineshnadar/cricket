@@ -1,3 +1,51 @@
+private getReadViewForControl(control: AbstractControl, path: string = ''): ReadViewItem[] {
+    const extendedControl = control as ExtendedAbstractControl;
+    const item = this.createReadViewItem(control, path);
+
+    if (control instanceof FormGroup) {
+      item.children = Object.entries(control.controls).map(([key, childControl]) => {
+        const childPath = path ? `${path}.${key}` : key;
+        return this.getReadViewForControl(childControl, childPath)[0];
+      });
+    } else if (control instanceof FormArray) {
+      item.children = control.controls.map((childControl, index) => {
+        const childPath = path ? `${path}.${index}` : index.toString();
+        return this.getReadViewForControl(childControl, childPath)[0];
+      });
+    }
+
+    return [item];
+  }
+
+  private createReadViewItem(control: AbstractControl, path: string): ReadViewItem {
+    const extendedControl = control as ExtendedAbstractControl;
+    const rawValue = control.value;
+    let transformedValue = this.transformValue(rawValue, extendedControl);
+
+    const item: ReadViewItem = {
+      label: extendedControl.label || path.split('.').pop() || '',
+      fldName: extendedControl.fldName || path,
+      value: transformedValue,
+      oldValue: extendedControl._oldValue,
+      editable: extendedControl.editable ?? true,
+      visible: extendedControl.visible ?? true,
+      expand: extendedControl.expand ?? false,
+      sectionName: extendedControl.sectionName,
+      subSectionName: extendedControl.subSectionName,
+      seq: extendedControl.seq,
+      reqBorder: extendedControl.reqBorder ?? false,
+      subName: extendedControl.subName,
+      children: []
+    };
+
+    const customComputation = this.customComputations.get(path);
+    if (customComputation) {
+      item.computedValue = customComputation.compute(control, control.root as FormGroup);
+    }
+
+    return item;
+  }
+--------
 import { Injectable, signal, computed, Signal } from '@angular/core';
 import { FormGroup, FormArray, AbstractControl } from '@angular/forms';
 
