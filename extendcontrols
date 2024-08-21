@@ -17,6 +17,9 @@ interface ExtendedControlOptions {
   expand?: boolean;
   sectionName?: string;
   subSectionName?: string;
+  seq?: number;
+  reqBorder?: boolean;
+  subName?: string;
 }
 
 type ExtendedControlProperties = {
@@ -43,6 +46,9 @@ interface ReadViewItem {
   sectionName?: string;
   subSectionName?: string;
   children?: ReadViewItem[];
+  seq?: number;
+  reqBorder?: boolean;
+  subName?: string;
 }
 
 @Injectable({
@@ -52,12 +58,18 @@ export class FormExtensionService {
   private formSignal = signal<FormGroup | null>(null);
   private updateTrigger = signal(0);
   private customComputations = new Map<string, CustomComputation>();
+  private readViewCache = new Map<string, Signal<ReadViewItem[]>>();
 
   setForm(form: FormGroup) {
     this.formSignal.set(form);
+    this.readViewCache.clear();
+    this.triggerUpdate();
   }
 
-  extendControl(control: AbstractControl, options: ExtendedControlOptions, path = '') {
+  extendControl(controlOrPath: AbstractControl | string, options: ExtendedControlOptions) {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return;
+
     const extendedControl = control as ExtendedAbstractControl;
     let changed = false;
 
@@ -75,8 +87,34 @@ export class FormExtensionService {
 
     if (changed) {
       if (control instanceof FormGroup || control instanceof FormArray) {
-        this.extendNestedControls(control, path);
+        this.extendNestedControls(control);
       }
+      this.triggerUpdate();
+    }
+  }
+
+  private extendNestedControls(control: FormGroup | FormArray) {
+    Object.values(control.controls).forEach(childControl => {
+      this.extendControl(childControl, {});
+    });
+  }
+
+  updateControlProperty<K extends keyof ExtendedControlOptions>(
+    controlOrPath: AbstractControl | string,
+    property: K,
+    value: ExtendedControlOptions[K]
+  ) {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return;
+
+    const extendedControl = control as ExtendedAbstractControl;
+    if (property === 'regex') {
+      if (!this.areRegexArraysEqual(extendedControl[property], value as string[])) {
+        extendedControl[property] = value as any;
+        this.triggerUpdate();
+      }
+    } else if (extendedControl[property] !== value) {
+      extendedControl[property] = value as any;
       this.triggerUpdate();
     }
   }
@@ -88,127 +126,90 @@ export class FormExtensionService {
     return arr1.every((regex, index) => regex === arr2[index]);
   }
 
-  updateControlProperty<K extends keyof ExtendedControlOptions>(
-    controlPath: string,
-    property: K,
-    value: ExtendedControlOptions[K]
-  ) {
-    const form = this.formSignal();
-    if (form) {
-      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
-      if (control) {
-        if (property === 'regex') {
-          if (!this.areRegexArraysEqual(control[property], value as string[])) {
-            control[property] = value as any;
-            this.triggerUpdate();
-          }
-        } else if (control[property] !== value) {
-          (control as any)[property] = value;
-          this.triggerUpdate();
-        }
-      }
-    }
-  }
-
-  private extendNestedControls(control: FormGroup | FormArray, parentPath: string) {
-    if (control instanceof FormGroup) {
-      Object.keys(control.controls).forEach(key => {
-        const childPath = parentPath ? `${parentPath}.${key}` : key;
-        this.extendControl(control.get(key)!, {}, childPath);
-      });
-    } else if (control instanceof FormArray) {
-      control.controls.forEach((ctrl, index) => {
-        const childPath = parentPath ? `${parentPath}.${index}` : index.toString();
-        this.extendControl(ctrl, {}, childPath);
-      });
-    }
-  }
-
-  private getControlByPath(form: FormGroup, path: string): AbstractControl | null {
-    return path.split('.').reduce((acc: AbstractControl | null, part: string) => {
-      if (acc instanceof FormGroup) {
-        return acc.get(part);
-      } else if (acc instanceof FormArray) {
-        const index = parseInt(part, 10);
-        return acc.at(index);
-      }
-      return null;
-    }, form);
-  }
-
   triggerUpdate() {
     this.updateTrigger.update(v => v + 1);
+    this.readViewCache.clear();
   }
 
-  registerCustomComputation(controlPath: string, computation: CustomComputation) {
-    this.customComputations.set(controlPath, computation);
+  registerCustomComputation(controlOrPath: AbstractControl | string, computation: CustomComputation) {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return;
+
+    const path = this.getControlPath(control);
+    this.customComputations.set(path, computation);
     this.triggerUpdate();
   }
 
-  getReadView(): Signal<ReadViewItem[]> {
-    return computed(() => {
-      this.updateTrigger();
-      const form = this.formSignal();
-      if (!form) return [];
+  getReadView(controlOrPath: AbstractControl | string = ''): Signal<ReadViewItem[]> {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return computed(() => []);
 
-      return this.getReadViewForControl(form);
-    });
+    const path = this.getControlPath(control);
+    if (!this.readViewCache.has(path)) {
+      const readViewSignal = computed(() => {
+        this.updateTrigger(); // Depend on the update trigger
+        return this.getReadViewForControl(control);
+      });
+      this.readViewCache.set(path, readViewSignal);
+    }
+    return this.readViewCache.get(path)!;
   }
 
-  private getReadViewForControl(control: AbstractControl, path = ''): ReadViewItem[] {
+  private getReadViewForControl(control: AbstractControl): ReadViewItem[] {
     if (control instanceof FormGroup) {
-      return Object.keys(control.controls)
-        .map(key => {
-          const childPath = path ? `${path}.${key}` : key;
-          const childControl = control.get(key)!;
-          return this.createReadViewItem(childControl, childPath, key);
+      const groupItem = this.createReadViewItem(control);
+      groupItem.children = Object.entries(control.controls)
+        .map(([key, childControl]) => {
+          const childItem = this.getReadViewForControl(childControl)[0];
+          childItem.fldName = childItem.fldName || key;
+          return childItem;
         })
         .filter(item => item.visible);
+      return [groupItem];
     } else if (control instanceof FormArray) {
       return control.controls.map((ctrl, index) => {
-        const childPath = path ? `${path}.${index}` : index.toString();
-        return this.createReadViewItem(ctrl, childPath, index.toString());
+        const item = this.createReadViewItem(ctrl);
+        item.fldName = item.fldName || index.toString();
+        return item;
       }).filter(item => item.visible);
     } else {
-      return [this.createReadViewItem(control, path)];
+      return [this.createReadViewItem(control)];
     }
   }
 
-  private createReadViewItem(control: AbstractControl, path: string, key = ''): ReadViewItem {
+  private createReadViewItem(control: AbstractControl): ReadViewItem {
     const extendedControl = control as ExtendedAbstractControl;
     const rawValue = control.value;
     let transformedValue = this.transformValue(rawValue, extendedControl);
 
     const item: ReadViewItem = {
-      label: extendedControl.label || key,
-      fldName: extendedControl.fldName || key,
+      label: extendedControl.label || '',
+      fldName: extendedControl.fldName || '',
       value: transformedValue,
       oldValue: extendedControl._oldValue,
       editable: extendedControl.editable ?? true,
       visible: extendedControl.visible ?? true,
       expand: extendedControl.expand ?? false,
       sectionName: extendedControl.sectionName,
-      subSectionName: extendedControl.subSectionName
+      subSectionName: extendedControl.subSectionName,
+      seq: extendedControl.seq,
+      reqBorder: extendedControl.reqBorder ?? false,
+      subName: extendedControl.subName
     };
 
+    const path = this.getControlPath(control);
     const customComputation = this.customComputations.get(path);
     if (customComputation) {
-      item.computedValue = customComputation.compute(control, this.formSignal()!);
-    }
-
-    if (control instanceof FormGroup || control instanceof FormArray) {
-      item.children = this.getReadViewForControl(control, path);
+      item.computedValue = customComputation.compute(control, control.root as FormGroup);
     }
 
     return item;
   }
 
   private transformValue(value: any, control: ExtendedAbstractControl): any {
-    // Transform based on Y/N values
     if (value === 'Y') return 'Yes';
     if (value === 'N') return 'No';
 
-    // Transform based on lookup data
     if (control.lookupData && Array.isArray(control.lookupData)) {
       const matchingLookup = control.lookupData.find(item => item.value === value);
       if (matchingLookup) return matchingLookup.label;
@@ -217,22 +218,23 @@ export class FormExtensionService {
     return value;
   }
 
-  getComputedValue(controlPath: string): Signal<any | undefined> {
+  getComputedValue(controlOrPath: AbstractControl | string): Signal<any | undefined> {
     return computed(() => {
       this.updateTrigger();
-      const form = this.formSignal();
-      if (!form) return undefined;
-
-      const control = this.getControlByPath(form, controlPath);
+      const control = this.resolveControl(controlOrPath);
       if (!control) return undefined;
 
-      const customComputation = this.customComputations.get(controlPath);
-      return customComputation ? customComputation.compute(control, form) : undefined;
+      const path = this.getControlPath(control);
+      const customComputation = this.customComputations.get(path);
+      return customComputation ? customComputation.compute(control, control.root as FormGroup) : undefined;
     });
   }
 
-  applyDefaultValues(form: FormGroup, storeOldValue: boolean = false) {
-    this.applyDefaultValuesRecursive(form, storeOldValue);
+  applyDefaultValues(controlOrPath: AbstractControl | string, storeOldValue: boolean = false) {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return;
+
+    this.applyDefaultValuesRecursive(control, storeOldValue);
     this.triggerUpdate();
   }
 
@@ -246,8 +248,8 @@ export class FormExtensionService {
         }
         this.setFormGroupValue(control, extendedControl.dfltVal);
       } else {
-        Object.keys(control.controls).forEach(key => {
-          this.applyDefaultValuesRecursive(control.get(key)!, storeOldValue);
+        Object.values(control.controls).forEach(childControl => {
+          this.applyDefaultValuesRecursive(childControl, storeOldValue);
         });
       }
     } else if (control instanceof FormArray) {
@@ -267,63 +269,102 @@ export class FormExtensionService {
   }
 
   private isFormGroupEmpty(group: FormGroup): boolean {
-    return Object.keys(group.controls).every(key => {
-      const control = group.get(key);
-      return control?.value === null || control?.value === '';
-    });
+    return Object.values(group.controls).every(control =>
+      control.value === null || control.value === ''
+    );
   }
 
   private getFormGroupValue(group: FormGroup): any {
     const value: any = {};
-    Object.keys(group.controls).forEach(key => {
-      value[key] = group.get(key)!.value;
+    Object.entries(group.controls).forEach(([key, control]) => {
+      value[key] = control.value;
     });
     return value;
   }
 
   private setFormGroupValue(group: FormGroup, value: any) {
     if (typeof value === 'object' && value !== null) {
-      Object.keys(value).forEach(key => {
+      Object.entries(value).forEach(([key, val]) => {
         if (group.get(key)) {
-          group.get(key)!.setValue(value[key]);
+          group.get(key)!.setValue(val);
         }
       });
     }
   }
 
-  getOldValue(controlPath: string): any | undefined {
-    const form = this.formSignal();
-    if (form) {
-      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
-      return control?._oldValue;
-    }
-    return undefined;
+  getOldValue(controlOrPath: AbstractControl | string): any | undefined {
+    const control = this.resolveControl(controlOrPath);
+    return control ? (control as ExtendedAbstractControl)._oldValue : undefined;
   }
 
-  getExtendedProperties(controlPath: string): Partial<ExtendedControlProperties> | null {
-    const form = this.formSignal();
-    if (form) {
-      const control = this.getControlByPath(form, controlPath) as ExtendedAbstractControl | null;
-      if (control) {
-        return {
-          label: control.label,
-          fldName: control.fldName,
-          visible: control.visible,
-          editable: control.editable,
-          lookup: control.lookup,
-          lookupData: control.lookupData,
-          regex: control.regex,
-          fldMax: control.fldMax,
-          fieldType: control.fieldType,
-          dfltVal: control.dfltVal,
-          required: control.required,
-          oldValue: control._oldValue,
-          expand: control.expand,
-          sectionName: control.sectionName,
-          subSectionName: control.subSectionName
-        };
-      }
+  getExtendedProperties(controlOrPath: AbstractControl | string): Partial<ExtendedControlProperties> | null {
+    const control = this.resolveControl(controlOrPath);
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+    return {
+      label: extendedControl.label,
+      fldName: extendedControl.fldName,
+      visible: extendedControl.visible,
+      editable: extendedControl.editable,
+      lookup: extendedControl.lookup,
+      lookupData: extendedControl.lookupData,
+      regex: extendedControl.regex,
+      fldMax: extendedControl.fldMax,
+      fieldType: extendedControl.fieldType,
+      dfltVal: extendedControl.dfltVal,
+      required: extendedControl.required,
+      oldValue: extendedControl._oldValue,
+      expand: extendedControl.expand,
+      sectionName: extendedControl.sectionName,
+      subSectionName: extendedControl.subSectionName,
+      seq: extendedControl.seq,
+      reqBorder: extendedControl.reqBorder,
+      subName: extendedControl.subName
+    };
+  }
+
+  batchUpdates(updates: () => void) {
+    updates();
+    this.triggerUpdate();
+  }
+
+  private resolveControl(controlOrPath: AbstractControl | string): AbstractControl | null {
+    if (typeof controlOrPath === 'string') {
+      const form = this.formSignal();
+      return form ? this.getControlByPath(form, controlOrPath) : null;
     }
-    return null;
+    return controlOrPath;
+  }
+
+  private getControlByPath(form: FormGroup, path: string): AbstractControl | null {
+    return path.split('.').reduce((acc: AbstractControl | null, part: string) => {
+      if (acc instanceof FormGroup) {
+        return acc.get(part);
+      } else if (acc instanceof FormArray) {
+        const index = parseInt(part, 10);
+        return acc.at(index);
+      }
+      return null;
+    }, form);
+  }
+
+  private getControlPath(control: AbstractControl): string {
+    let path = '';
+    let currentControl: AbstractControl | null = control;
+    while (currentControl && currentControl.parent) {
+      if (currentControl.parent instanceof FormArray) {
+        const index = (currentControl.parent as FormArray).controls.indexOf(currentControl);
+        path = `${index}${path ? '.' + path : ''}`;
+      } else if (currentControl.parent instanceof FormGroup) {
+        const parentGroup = currentControl.parent as FormGroup;
+        const key = Object.keys(parentGroup.controls).find(k => parentGroup.get(k) === currentControl);
+        if (key) {
+          path = `${key}${path ? '.' + path : ''}`;
+        }
+      }
+      currentControl = currentControl.parent;
+    }
+    return path;
   }
 }
