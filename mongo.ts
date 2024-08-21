@@ -1,3 +1,42 @@
+// Original fields array
+const fields = [
+  { label: "Age", controlName: "age", value: "10" },
+  { label: "SSN", controlName: "ssninfo", value: { ssn: "ssd", type: "s" } },
+  { label: "Relation", controlName: "relation", value: [["key1", "value1"], ["key2", "value2"]] }
+];
+
+// Mappings array
+const mappings = [
+  { controlName: 'age', newLabel: 'User Age', section: 'left' },
+  { controlName: 'ssninfo', newLabel: 'Social Security Number', section: 'right' },
+  { controlName: 'relation', newLabel: 'User Relation', section: 'left' }
+];
+
+// Function to find mapping for a field
+const findMapping = (field, mappings) => {
+  return mappings.find(mapping => mapping.controlName === field.controlName) || {};
+};
+
+// Function to apply mappings to fields
+const applyMappingsToFields = (fields, mappings) => {
+  return fields.map((field, index) => {
+    const { newLabel, section } = findMapping(field, mappings);
+    return {
+      ...field,
+      label: newLabel || field.label, // Use new label if provided, otherwise keep original
+      section: section || 'left', // Default to 'left' if not specified
+      seq: index + 1
+    };
+  });
+};
+
+// Apply mappings and get final fields
+const finalFields = applyMappingsToFields(fields, mappings);
+
+// Log the result
+console.log(JSON.stringify(finalFields, null, 2));
+
+
 // src/app/models/profile.model.ts
 export interface Profile {
   profileIdentifier: string;
