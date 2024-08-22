@@ -985,4 +985,103 @@ export class ComplexFormComponent implements OnInit {
   }
 }
 
+
+----------
+
+  @Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionService {
+  // ... other methods and properties
+
+  getUIReadView(formGroup: FormGroup, options: UIReadViewOptions = {}): UIReadViewItem[] {
+    const layout = this.formLayouts.get(formGroup);
+    if (!layout) {
+      console.warn('No layout found for this form group. Returning basic read view.');
+      return this.getReadView(formGroup).map(item => this.convertToUIReadViewItem(item, formGroup.get(item.fldName)));
+    }
+    return this.applyLayoutToFormGroup(formGroup, layout, options);
+  }
+
+  private applyLayoutToFormGroup(formGroup: FormGroup, layout: FormLayout, options: UIReadViewOptions): UIReadViewItem[] {
+    return layout.sections
+      .filter(section => this.shouldIncludeSection(section, options))
+      .flatMap(section => {
+        const sectionFields = section.fields
+          .filter(field => this.shouldIncludeField(field, options))
+          .map(field => this.createUIReadViewItem(formGroup.get(field.name), field, options))
+          .filter((item): item is UIReadViewItem => item !== null);
+
+        if (sectionFields.length === 0) {
+          return [];
+        }
+
+        const sectionItem: UIReadViewItem = {
+          type: section.type,
+          label: this.getSectionLabel(section),
+          fldName: `section_${section.type}`,
+          value: '', // Add a default value for sections
+          editable: false,
+          visible: true,
+          expand: true,
+          side: 'main', // Add a default side for sections
+          seq: 0, // Add a default sequence for sections
+          isValid: true,
+          status: 'VALID',
+          touched: false,
+          dirty: false,
+          fields: sectionFields
+        };
+
+        return [sectionItem, ...sectionFields];
+      });
+  }
+
+  private createUIReadViewItem(control: AbstractControl | null, field: {name: string; side: string; seq: number}, options: UIReadViewOptions): UIReadViewItem | null {
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+    const basicItem = this.createReadViewItem(control, field);
+    if (!basicItem) return null;
+
+    const item: UIReadViewItem = {
+      ...basicItem,
+      side: field.side,
+      seq: field.seq,
+      isValid: control.valid,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty,
+      type: extendedControl.fieldType || 'text', // Add a default type
+      fields: [] // Initialize fields as an empty array
+    };
+
+    if (options.includeOldValues) {
+      item.oldValue = extendedControl._oldValue;
+    }
+
+    if (options.includeErrors) {
+      item.errors = control.errors;
+    }
+
+    return item;
+  }
+
+  private convertToUIReadViewItem(item: ReadViewItem, control: AbstractControl | null): UIReadViewItem {
+    return {
+      ...item,
+      type: (control as ExtendedAbstractControl)?.fieldType || 'text',
+      side: 'main',
+      seq: 0,
+      isValid: control?.valid ?? true,
+      status: control?.status ?? 'VALID',
+      touched: control?.touched ?? false,
+      dirty: control?.dirty ?? false,
+      fields: []
+    };
+  }
+
+  // ... other methods
+}
+
   
