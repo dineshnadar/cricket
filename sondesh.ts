@@ -1,5 +1,25 @@
 import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
-import { FormGroup, FormArray, AbstractControl, ValidatorFn, ValidationErrors, Validators } from '@angular/forms';
+import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn, ValidationErrors, Validators } from '@angular/forms';
+
+interface UIReadViewOptions {
+  includeSections?: string[];
+  excludeSections?: string[];
+  includeFields?: string[];
+  excludeFields?: string[];
+  includeOldValues?: boolean;
+  includeErrors?: boolean;
+}
+
+interface UIReadViewItem extends ReadViewItem {
+  side: string;
+  seq: number;
+  isValid: boolean;
+  status: string;
+  touched: boolean;
+  dirty: boolean;
+  oldValue?: any;
+  errors?: ValidationErrors | null;
+}
 
 interface ExtendedControlOptions {
   label?: string;
@@ -20,6 +40,7 @@ interface ExtendedControlOptions {
   reqBorder?: boolean;
   subName?: string;
   align?: string;
+  isArray?: boolean;
 }
 
 type ExtendedControlProperties = {
@@ -48,6 +69,8 @@ interface ReadViewItem {
   align?: string;
   side?: string;
   seq?: number;
+  fieldType?: string;
+  isArray?: boolean;
 }
 
 interface LayoutSection {
@@ -74,7 +97,7 @@ export class FormExtensionService {
   private extendedPropertiesCache = new WeakMap<AbstractControl, ExtendedControlProperties>();
   private customValidatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
 
-  constructor() {
+  constructor(private fb: FormBuilder) {
     effect(() => {
       this.updateTrigger();
       this.clearCaches();
@@ -107,11 +130,19 @@ export class FormExtensionService {
   }
 
   private extendNestedControls(control: FormGroup | FormArray): void {
-    Object.values(control.controls).forEach(childControl => {
-      if (!this.hasExtendedProperties(childControl)) {
-        this.extendControl(childControl, {});
-      }
-    });
+    if (control instanceof FormGroup) {
+      Object.values(control.controls).forEach(childControl => {
+        if (!this.hasExtendedProperties(childControl)) {
+          this.extendControl(childControl, {});
+        }
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(childControl => {
+        if (!this.hasExtendedProperties(childControl)) {
+          this.extendControl(childControl, {});
+        }
+      });
+    }
   }
 
   private hasExtendedProperties(control: AbstractControl): boolean {
@@ -183,7 +214,6 @@ export class FormExtensionService {
     return layout.sections.map(section => ({
       label: this.getSectionLabel(section),
       fldName: `section_${section.type}`,
-      value: null,
       editable: false,
       visible: true,
       expand: true,
@@ -198,9 +228,7 @@ export class FormExtensionService {
     if (!item) return [];
 
     if (control instanceof FormGroup || control instanceof FormArray) {
-      item.children = Object.entries(control.controls)
-        .map(([key, childControl]) => this.createReadViewItem(childControl, { name: key, side: 'full', seq: 0 }))
-        .filter((child): child is ReadViewItem => child !== null);
+      item.children = this.getChildrenReadViewItems(control);
     }
 
     return [item];
@@ -224,7 +252,9 @@ export class FormExtensionService {
       subSectionName: extendedControl.subSectionName,
       reqBorder: extendedControl.reqBorder ?? false,
       subName: extendedControl.subName,
-      align: extendedControl.align
+      align: extendedControl.align,
+      fieldType: extendedControl.fieldType,
+      isArray: extendedControl.isArray
     };
 
     if (field) {
@@ -237,6 +267,19 @@ export class FormExtensionService {
     }
 
     return item;
+  }
+
+  private getChildrenReadViewItems(control: FormGroup | FormArray): ReadViewItem[] {
+    if (control instanceof FormGroup) {
+      return Object.entries(control.controls).map(([key, childControl]) => 
+        this.createReadViewItem(childControl, { name: key, side: 'full', seq: 0 })
+      ).filter((item): item is ReadViewItem => item !== null);
+    } else if (control instanceof FormArray) {
+      return control.controls.map((childControl, index) => 
+        this.createReadViewItem(childControl, { name: index.toString(), side: 'full', seq: index })
+      ).filter((item): item is ReadViewItem => item !== null);
+    }
+    return [];
   }
 
   private transformValue(value: any, control: ExtendedAbstractControl): any {
@@ -351,7 +394,8 @@ export class FormExtensionService {
         subSectionName: extendedControl.subSectionName,
         reqBorder: extendedControl.reqBorder,
         subName: extendedControl.subName,
-        align: extendedControl.align
+        align: extendedControl.align,
+        isArray: extendedControl.isArray
       };
       this.extendedPropertiesCache.set(control, properties);
     }
@@ -396,7 +440,7 @@ export class FormExtensionService {
     control.updateValueAndValidity();
   }
 
-addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
+  addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
     const currentValidators = this.customValidatorsCache.get(control) || [];
     currentValidators.push(validator);
     this.customValidatorsCache.set(control, currentValidators);
@@ -411,6 +455,33 @@ addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
       this.customValidatorsCache.set(control, currentValidators);
       this.updateValidators(control);
     }
+  }
+
+  handleArrayOperation(formArray: FormArray, operation: 'add' | 'remove', index?: number): void {
+    const arrayExtendedControl = formArray as ExtendedAbstractControl;
+    
+    if (operation === 'add') {
+      if (arrayExtendedControl.fieldType === 'arrayGroup') {
+        const newGroup = this.createNewArrayGroupItem(formArray);
+        formArray.push(newGroup);
+      } else if (arrayExtendedControl.fieldType === 'arraySimple') {
+        formArray.push(this.fb.control(null));
+      }
+    } else if (operation === 'remove' && index !== undefined) {
+      formArray.removeAt(index);
+    }
+
+    this.triggerUpdate();
+  }
+
+  private createNewArrayGroupItem(formArray: FormArray): FormGroup {
+    const template = (formArray.at(0) as FormGroup).controls;
+    const newGroup = this.fb.group({});
+    Object.entries(template).forEach(([key, control]) => {
+      newGroup.addControl(key, this.fb.control(null, control.validator));
+      this.extendControl(newGroup.get(key)!, this.getExtendedProperties(control));
+    });
+    return newGroup;
   }
 
   // Utility method to get raw form group value
@@ -533,3 +604,385 @@ addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
     }
   }
 }
+
+  // Method to get only the read view
+  getReadView(control: AbstractControl): ReadViewItem[] {
+    return this.getBasicReadViewForControl(control);
+  }
+
+    getUIReadView(formGroup: FormGroup, options: UIReadViewOptions = {}): UIReadViewItem[] {
+    const layout = this.formLayouts.get(formGroup);
+    if (!layout) {
+      console.warn('No layout found for this form group. Returning basic read view.');
+      return this.getReadView(formGroup);
+    }
+
+    return this.applyLayoutToFormGroup(formGroup, layout, options);
+  }
+
+  private applyLayoutToFormGroup(formGroup: FormGroup, layout: FormLayout, options: UIReadViewOptions): UIReadViewItem[] {
+    return layout.sections
+      .filter(section => this.shouldIncludeSection(section, options))
+      .map(section => ({
+        type: section.type,
+        label: this.getSectionLabel(section),
+        fldName: `section_${section.type}`,
+        editable: false,
+        visible: true,
+        expand: true,
+        fields: section.fields
+          .filter(field => this.shouldIncludeField(field, options))
+          .map(field => this.createUIReadViewItem(formGroup.get(field.name), field, options))
+          .filter((item): item is UIReadViewItem => item !== null)
+      }));
+  }
+
+  private createUIReadViewItem(control: AbstractControl | null, field: {name: string; side: string; seq: number}, options: UIReadViewOptions): UIReadViewItem | null {
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+    const basicItem = this.createReadViewItem(control, field);
+    if (!basicItem) return null;
+
+    const item: UIReadViewItem = {
+      ...basicItem,
+      side: field.side,
+      seq: field.seq,
+      isValid: control.valid,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+
+    if (options.includeOldValues) {
+      item.oldValue = extendedControl._oldValue;
+    }
+
+    if (options.includeErrors) {
+      item.errors = control.errors;
+    }
+
+    return item;
+  }
+
+  private shouldIncludeSection(section: LayoutSection, options: UIReadViewOptions): boolean {
+    if (options.includeSections && !options.includeSections.includes(section.type)) {
+      return false;
+    }
+    if (options.excludeSections && options.excludeSections.includes(section.type)) {
+      return false;
+    }
+    return true;
+  }
+
+  private shouldIncludeField(field: {name: string; side: string; seq: number}, options: UIReadViewOptions): boolean {
+    if (options.includeFields && !options.includeFields.includes(field.name)) {
+      return false;
+    }
+    if (options.excludeFields && options.excludeFields.includes(field.name)) {
+      return false;
+    }
+    return true;
+  }
+
+
+----------
+
+  // Get the full UI read view
+const fullView = this.formExtensionService.getUIReadView(this.complexForm);
+
+// Get only specific sections
+const personalInfoView = this.formExtensionService.getUIReadView(this.complexForm, {
+  includeSections: ['commonHeader']
+});
+
+// Exclude certain fields
+const viewWithoutEmail = this.formExtensionService.getUIReadView(this.complexForm, {
+  excludeFields: ['email']
+});
+
+// Include old values and errors
+const detailedView = this.formExtensionService.getUIReadView(this.complexForm, {
+  includeOldValues: true,
+  includeErrors: true
+});
+
+// Combine multiple options
+const customView = this.formExtensionService.getUIReadView(this.complexForm, {
+  includeSections: ['commonHeader', 'accordion'],
+  excludeFields: ['sensitive_data'],
+  includeOldValues: true,
+  includeErrors: false
+});
+
+-----------
+
+  import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
+import { FormExtensionService } from './form-extension.service';
+
+@Component({
+  selector: 'app-complex-form',
+  template: `
+    <form [formGroup]="complexForm" (ngSubmit)="onSubmit()">
+      <!-- Form fields would be rendered here based on the UI read view -->
+    </form>
+    <button (click)="addSkill()">Add Skill</button>
+    <button (click)="resetForm()">Reset Form</button>
+    <h2>Form Data:</h2>
+    <pre>{{ formData | json }}</pre>
+    <h2>UI Read View:</h2>
+    <pre>{{ uiReadView | json }}</pre>
+  `
+})
+export class ComplexFormComponent implements OnInit {
+  complexForm: FormGroup;
+  formData: any;
+  uiReadView: any;
+
+  constructor(
+    private fb: FormBuilder,
+    private formExtensionService: FormExtensionService
+  ) {}
+
+  ngOnInit() {
+    this.initForm();
+    this.extendFormControls();
+    this.setFormLayout();
+    this.formExtensionService.applyDefaultValues(this.complexForm, true);
+    this.updateViews();
+  }
+
+  private initForm() {
+    this.complexForm = this.fb.group({
+      personalInfo: this.fb.group({
+        firstName: ['', Validators.required],
+        lastName: ['', Validators.required],
+        email: ['', [Validators.required, Validators.email]]
+      }),
+      address: this.fb.group({
+        street: [''],
+        city: [''],
+        country: ['']
+      }),
+      skills: this.fb.array([]),
+      preferences: this.fb.group({
+        theme: ['light'],
+        notifications: [true]
+      })
+    });
+  }
+
+  private extendFormControls() {
+    // Extend personal info controls
+    this.formExtensionService.extendControl(this.complexForm.get('personalInfo.firstName'), {
+      label: 'First Name',
+      fieldType: 'text',
+      required: true
+    });
+    this.formExtensionService.extendControl(this.complexForm.get('personalInfo.lastName'), {
+      label: 'Last Name',
+      fieldType: 'text',
+      required: true
+    });
+    this.formExtensionService.extendControl(this.complexForm.get('personalInfo.email'), {
+      label: 'Email',
+      fieldType: 'email',
+      required: true
+    });
+
+    // Extend address controls
+    this.formExtensionService.extendControl(this.complexForm.get('address.street'), {
+      label: 'Street',
+      fieldType: 'text'
+    });
+    this.formExtensionService.extendControl(this.complexForm.get('address.city'), {
+      label: 'City',
+      fieldType: 'text'
+    });
+    this.formExtensionService.extendControl(this.complexForm.get('address.country'), {
+      label: 'Country',
+      fieldType: 'text'
+    });
+
+    // Extend skills array
+    this.formExtensionService.extendControl(this.complexForm.get('skills'), {
+      label: 'Skills',
+      fieldType: 'arraySimple',
+      isArray: true
+    });
+
+    // Extend preferences controls
+    this.formExtensionService.extendControl(this.complexForm.get('preferences.theme'), {
+      label: 'Theme',
+      fieldType: 'select',
+      lookupData: [
+        { label: 'Light', value: 'light' },
+        { label: 'Dark', value: 'dark' }
+      ]
+    });
+    this.formExtensionService.extendControl(this.complexForm.get('preferences.notifications'), {
+      label: 'Enable Notifications',
+      fieldType: 'checkbox'
+    });
+  }
+
+  private setFormLayout() {
+    const layout: FormLayout = {
+      type: 'multipleSection',
+      sections: [
+        {
+          type: 'commonHeader',
+          commonHeader: 'Personal Information',
+          fields: [
+            { name: 'personalInfo.firstName', side: 'left', seq: 1 },
+            { name: 'personalInfo.lastName', side: 'right', seq: 2 },
+            { name: 'personalInfo.email', side: 'full', seq: 3 }
+          ]
+        },
+        {
+          type: 'commonHeader',
+          commonHeader: 'Address',
+          fields: [
+            { name: 'address.street', side: 'full', seq: 1 },
+            { name: 'address.city', side: 'left', seq: 2 },
+            { name: 'address.country', side: 'right', seq: 3 }
+          ]
+        },
+        {
+          type: 'accordion',
+          accordionHeader: 'Skills',
+          fields: [
+            { name: 'skills', side: 'full', seq: 1 }
+          ]
+        },
+        {
+          type: 'commonHeader',
+          commonHeader: 'Preferences',
+          fields: [
+            { name: 'preferences.theme', side: 'left', seq: 1 },
+            { name: 'preferences.notifications', side: 'right', seq: 2 }
+          ]
+        }
+      ]
+    };
+    this.formExtensionService.setFormGroupLayout(this.complexForm, layout);
+  }
+
+  addSkill() {
+    const skills = this.complexForm.get('skills') as FormArray;
+    this.formExtensionService.handleArrayOperation(skills, 'add');
+    this.updateViews();
+  }
+
+  resetForm() {
+    this.formExtensionService.resetForm(this.complexForm);
+    this.updateViews();
+  }
+
+  onSubmit() {
+    if (this.complexForm.valid) {
+      console.log('Form submitted:', this.formExtensionService.getRawFormGroupValue(this.complexForm));
+    } else {
+      console.log('Form is invalid');
+      this.formExtensionService.markAllAsTouched(this.complexForm);
+      console.log('Form errors:', this.formExtensionService.getAllErrors(this.complexForm));
+    }
+    this.updateViews();
+  }
+
+  private updateViews() {
+    this.formData = this.formExtensionService.getRawFormGroupValue(this.complexForm);
+    this.uiReadView = this.formExtensionService.getUIReadView(this.complexForm, {
+      includeOldValues: true,
+      includeErrors: true
+    });
+  }
+}
+
+------------
+
+  import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { FormExtensionService } from './form-extension.service';
+
+@Component({
+  selector: 'app-complex-form',
+  template: `
+    <form [formGroup]="complexForm" (ngSubmit)="onSubmit()">
+      <ng-container *ngFor="let section of uiStructure">
+        <h2>{{ section.label }}</h2>
+        <div [ngSwitch]="section.type">
+          <div *ngSwitchCase="'commonHeader'" class="form-row">
+            <ng-container *ngFor="let field of section.fields">
+              <div [ngClass]="{'form-field': true, 'full-width': field.side === 'full'}">
+                <label [for]="field.fldName">{{ field.label }}</label>
+                <input 
+                  [id]="field.fldName" 
+                  [formControlName]="field.fldName" 
+                  [type]="field.fieldType"
+                  [required]="field.required"
+                >
+                <div *ngIf="field.errors && field.touched" class="error-message">
+                  {{ getErrorMessage(field.errors) }}
+                </div>
+              </div>
+            </ng-container>
+          </div>
+          <!-- Handle other section types (accordion, etc.) similarly -->
+        </div>
+      </ng-container>
+      <button type="submit">Submit</button>
+    </form>
+  `,
+  styles: [`
+    .form-row { display: flex; flex-wrap: wrap; }
+    .form-field { flex: 1 1 45%; margin: 10px; }
+    .full-width { flex: 1 1 100%; }
+    .error-message { color: red; font-size: 0.8em; }
+  `]
+})
+export class ComplexFormComponent implements OnInit {
+  complexForm: FormGroup;
+  uiStructure: any[];
+
+  constructor(
+    private fb: FormBuilder,
+    private formExtensionService: FormExtensionService
+  ) {}
+
+  ngOnInit() {
+    this.initForm();
+    this.updateUIStructure();
+  }
+
+  private initForm() {
+    // Initialize your form and set layout as before
+    // ...
+  }
+
+  private updateUIStructure() {
+    this.uiStructure = this.formExtensionService.getUIReadView(this.complexForm, {
+      includeErrors: true
+    });
+  }
+
+  onSubmit() {
+    if (this.complexForm.valid) {
+      console.log('Form submitted:', this.formExtensionService.getRawFormGroupValue(this.complexForm));
+    } else {
+      this.formExtensionService.markAllAsTouched(this.complexForm);
+      this.updateUIStructure(); // Refresh UI to show validation errors
+    }
+  }
+
+  getErrorMessage(errors: any): string {
+    // Logic to return appropriate error message based on error type
+    if (errors.required) return 'This field is required';
+    if (errors.email) return 'Invalid email format';
+    // ... handle other error types
+    return 'Invalid input';
+  }
+}
+
+  
