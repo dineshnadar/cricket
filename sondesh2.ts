@@ -1,5 +1,5 @@
 import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
-import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn, ValidationErrors, Validators } from '@angular/forms';
+import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn, ValidationErrors, Validators, FormControl } from '@angular/forms';
 
 interface ExtendedControlOptions {
   label?: string;
@@ -35,20 +35,18 @@ type ExtendedAbstractControl = AbstractControl & ExtendedControlProperties;
 interface ReadViewItem {
   label: string;
   fldName: string;
-  value: any;
-  oldValue?: any;
+  type: string;
   editable: boolean;
   visible: boolean;
-  computedValue?: any;
   expand: boolean;
-  sectionName?: string;
-  subSectionName?: string;
   children?: ReadViewItem[];
-  reqBorder?: boolean;
-  subName?: string;
-  align?: string;
-  side?: string;
-  seq?: number;
+}
+
+interface FieldItem extends ReadViewItem {
+  value: any;
+  oldValue?: any;
+  side: string;
+  seq: number;
   fieldType?: string;
   isArray?: boolean;
   lookupData?: Array<{ label: string; value: any }>;
@@ -215,13 +213,13 @@ export class FormExtensionService {
       visible: true,
       expand: true,
       children: section.fields
-        .map(field => this.createReadViewItem(formGroup.get(field.name), field))
-        .filter((item): item is ReadViewItem => item !== null),
+        .map(field => this.createFieldItem(formGroup.get(field.name), field))
+        .filter((item): item is FieldItem => item !== null)
     }));
   }
 
   private getBasicReadViewForControl(control: AbstractControl): ReadViewItem[] {
-    const item = this.createReadViewItem(control);
+    const item = this.createFieldItem(control, { name: control instanceof FormGroup ? 'group' : 'control', side: 'full', seq: 0 });
     if (!item) return [];
 
     if (control instanceof FormGroup || control instanceof FormArray) {
@@ -231,27 +229,23 @@ export class FormExtensionService {
     return [item];
   }
 
-  private createReadViewItem(control: AbstractControl | null, field?: {name: string; side: string; seq: number}): ReadViewItem | null {
+  private createFieldItem(control: AbstractControl | null, field: {name: string; side: string; seq: number}): FieldItem | null {
     if (!control) return null;
     const extendedControl = control as ExtendedAbstractControl;
-    const rawValue = control.value;
-    const transformedValue = this.transformValue(rawValue, extendedControl);
-
-    const item: ReadViewItem = {
-      label: extendedControl.label || field?.name || '',
-      fldName: extendedControl.fldName || field?.name || '',
-      value: transformedValue,
+    
+    return {
+      label: extendedControl.label || field.name,
+      fldName: field.name,
+      type: 'field',
+      value: control.value,
       oldValue: extendedControl._oldValue,
       editable: extendedControl.editable ?? true,
       visible: extendedControl.visible ?? true,
-      expand: extendedControl.expand ?? false,
-      sectionName: extendedControl.sectionName,
-      subSectionName: extendedControl.subSectionName,
-      reqBorder: extendedControl.reqBorder ?? false,
-      subName: extendedControl.subName,
-      align: extendedControl.align,
+      side: field.side,
+      seq: field.seq,
       fieldType: extendedControl.fieldType,
       isArray: extendedControl.isArray,
+      expand: extendedControl.expand ?? false,
       lookupData: extendedControl.lookupData,
       isValid: control.valid,
       errors: control.errors,
@@ -260,42 +254,19 @@ export class FormExtensionService {
       dirty: control.dirty,
       required: extendedControl.required
     };
-
-    if (field) {
-      item.side = field.side;
-      item.seq = field.seq;
-    }
-
-    if (extendedControl._customComputation) {
-      item.computedValue = extendedControl._customComputation(control, control.root as FormGroup);
-    }
-
-    return item;
   }
 
-  private getChildrenReadViewItems(control: FormGroup | FormArray): ReadViewItem[] {
+  private getChildrenReadViewItems(control: FormGroup | FormArray): FieldItem[] {
     if (control instanceof FormGroup) {
       return Object.entries(control.controls).map(([key, childControl]) => 
-        this.createReadViewItem(childControl, { name: key, side: 'full', seq: 0 })
-      ).filter((item): item is ReadViewItem => item !== null);
+        this.createFieldItem(childControl, { name: key, side: 'full', seq: 0 })
+      ).filter((item): item is FieldItem => item !== null);
     } else if (control instanceof FormArray) {
       return control.controls.map((childControl, index) => 
-        this.createReadViewItem(childControl, { name: index.toString(), side: 'full', seq: index })
-      ).filter((item): item is ReadViewItem => item !== null);
+        this.createFieldItem(childControl, { name: index.toString(), side: 'full', seq: index })
+      ).filter((item): item is FieldItem => item !== null);
     }
     return [];
-  }
-
-  private transformValue(value: any, control: ExtendedAbstractControl): any {
-    if (value === 'Y') return 'Yes';
-    if (value === 'N') return 'No';
-
-    if (control.lookupData && Array.isArray(control.lookupData)) {
-      const matchingLookup = control.lookupData.find(item => item.value === value);
-      if (matchingLookup) return matchingLookup.label;
-    }
-
-    return value;
   }
 
   private getSectionLabel(section: LayoutSection): string {
@@ -420,7 +391,7 @@ export class FormExtensionService {
     this.extendedPropertiesCache = new WeakMap();
   }
 
-  private updateValidators(control: AbstractControl): void {
+private updateValidators(control: AbstractControl): void {
     const extendedControl = control as ExtendedAbstractControl;
     const validators: ValidatorFn[] = [];
 
@@ -603,22 +574,23 @@ export class FormExtensionService {
       .filter(section => this.shouldIncludeSection(section, options))
       .map(section => ({
         ...section,
-        fields: section.children?.filter(field => this.shouldIncludeField(field, options))
-          .map(field => this.applyFieldOptions(field, options)) || []
+        children: section.children
+          ?.filter(field => this.shouldIncludeField(field as FieldItem, options))
+          .map(field => this.applyFieldOptions(field as FieldItem, options)) || []
       }));
   }
 
   private shouldIncludeSection(section: ReadViewItem, options: UIReadViewOptions): boolean {
-    if (options.includeSections && !options.includeSections.includes(section.type!)) {
+    if (options.includeSections && !options.includeSections.includes(section.type)) {
       return false;
     }
-    if (options.excludeSections && options.excludeSections.includes(section.type!)) {
+    if (options.excludeSections && options.excludeSections.includes(section.type)) {
       return false;
     }
     return true;
   }
 
-  private shouldIncludeField(field: ReadViewItem, options: UIReadViewOptions): boolean {
+  private shouldIncludeField(field: FieldItem, options: UIReadViewOptions): boolean {
     if (options.includeFields && !options.includeFields.includes(field.fldName)) {
       return false;
     }
@@ -628,7 +600,7 @@ export class FormExtensionService {
     return true;
   }
 
-  private applyFieldOptions(field: ReadViewItem, options: UIReadViewOptions): ReadViewItem {
+  private applyFieldOptions(field: FieldItem, options: UIReadViewOptions): FieldItem {
     const result = { ...field };
     if (!options.includeOldValues) {
       delete result.oldValue;
@@ -656,7 +628,3 @@ export class FormExtensionService {
     }
   }
 }
-
-----------
-
-  
