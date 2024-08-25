@@ -1,0 +1,256 @@
+// parameter-config.store.ts
+import { Injectable, signal, computed } from '@angular/core';
+
+export interface ParamConfig {
+  context: string;
+  required?: string[];
+  optional?: string[];
+  featureNames: string[];
+  validate?: Record<string, { 
+    validate: (value: string) => boolean; 
+    errorMessage: string; 
+  } | { 
+    validate: (value: string) => boolean; 
+    errorMessage: string; 
+  }[]>;
+}
+
+export const initialParameterConfigs: Record<string, ParamConfig> = {
+  'kyc': {
+    context: 'kyc',
+    required: ['customerId'],
+    optional: ['source'],
+    featureNames: ['customerId', 'source', 'kycFeature1', 'kycFeature2'],
+    validate: {
+      // Validation logic here
+    }
+  },
+  'prospect/create': {
+    context: 'prospect-create',
+    optional: ['campaignId', 'source'],
+    featureNames: ['campaignId', 'source', 'prospectCreateFeature'],
+    validate: {
+      // Validation logic here
+    }
+  },
+  'client-onboarding': {
+    context: 'client-onboarding',
+    required: ['applicationType'],
+    optional: ['referralCode', 'source'],
+    featureNames: [],  // Empty featureNames for testing
+    validate: {
+      // Validation logic here
+    }
+  },
+  // Add more configurations as needed
+};
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ParameterConfigStore {
+  private _configs = signal<Record<string, ParamConfig>>(initialParameterConfigs);
+  
+  configs = computed(() => this._configs());
+  
+  getConfig(route: string) {
+    return computed(() => this._configs()[route]);
+  }
+  
+  getFeatureNames(route: string) {
+    return computed(() => this._configs()[route]?.featureNames || []);
+  }
+}
+
+// feature-flag.service.ts
+import { Injectable, inject, signal, computed } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { catchError, tap, map } from 'rxjs/operators';
+import { of, Observable } from 'rxjs';
+import { ParameterConfigStore } from './parameter-config.store';
+
+interface FeatureFlag {
+  featureName: string;
+  rollout: boolean;
+  message: string;
+}
+
+interface FeatureFlagResponse {
+  body: FeatureFlag[];
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FeatureFlagService {
+  private http = inject(HttpClient);
+  private paramConfigStore = inject(ParameterConfigStore);
+
+  private featuresSignal = signal<Record<string, FeatureFlag>>({});
+  private loadedSignal = signal<boolean>(false);
+
+  isLoaded = computed(() => this.loadedSignal());
+
+  loadFeatures(route: string, params: Record<string, string>): Observable<boolean> {
+    const config = this.paramConfigStore.getConfig(route)();
+    if (!config) {
+      console.error(`No configuration found for route: ${route}`);
+      return of(true);
+    }
+
+    const featureNames = this.paramConfigStore.getFeatureNames(route)();
+    
+    if (featureNames.length === 0) {
+      console.log(`No feature names specified for route: ${route}. Resolving to true.`);
+      this.loadedSignal.set(true);
+      return of(true);
+    }
+
+    const sourceApp = params['source'] || 'defaultApp';
+
+    const payload = {
+      featureNames,
+      sourceApp,
+      context: config.context
+    };
+
+    return this.http.post<FeatureFlagResponse>('your-feature-api-url', payload).pipe(
+      tap(response => {
+        const featureMap: Record<string, FeatureFlag> = {};
+        response.body.forEach(feature => {
+          featureMap[feature.featureName] = feature;
+        });
+        this.featuresSignal.set(featureMap);
+        this.loadedSignal.set(true);
+      }),
+      map(() => true),
+      catchError(error => {
+        console.error('Failed to load feature flags:', error);
+        this.loadedSignal.set(true);
+        return of(true);
+      })
+    );
+  }
+
+  isFeatureEnabled(featureName: string) {
+    return computed(() => this.featuresSignal()[featureName]?.rollout ?? false);
+  }
+
+  getFeatureMessage(featureName: string) {
+    return computed(() => this.featuresSignal()[featureName]?.message ?? '');
+  }
+}
+
+// feature-flag.resolver.ts
+import { Injectable, inject } from '@angular/core';
+import { Resolve, ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
+import { Observable } from 'rxjs';
+import { FeatureFlagService } from './feature-flag.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FeatureFlagResolver implements Resolve<boolean> {
+  private featureFlagService = inject(FeatureFlagService);
+
+  resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): Observable<boolean> {
+    const params = { ...route.params, ...route.queryParams };
+    return this.featureFlagService.loadFeatures(route.routeConfig?.path || '', params);
+  }
+}
+
+// app-routing.module.ts
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { FeatureFlagResolver } from './feature-flag.resolver';
+import { KycComponent } from './kyc.component';
+import { ProspectCreateComponent } from './prospect-create.component';
+import { ClientOnboardingComponent } from './client-onboarding.component';
+
+const routes: Routes = [
+  {
+    path: 'kyc',
+    component: KycComponent,
+    resolve: { featureFlags: FeatureFlagResolver }
+  },
+  {
+    path: 'prospect/create',
+    component: ProspectCreateComponent,
+    resolve: { featureFlags: FeatureFlagResolver }
+  },
+  {
+    path: 'client-onboarding',
+    component: ClientOnboardingComponent,
+    resolve: { featureFlags: FeatureFlagResolver }
+  }
+];
+
+@NgModule({
+  imports: [RouterModule.forRoot(routes)],
+  exports: [RouterModule]
+})
+export class AppRoutingModule { }
+
+// kyc.component.ts
+import { Component, inject } from '@angular/core';
+import { FeatureFlagService } from './feature-flag.service';
+
+@Component({
+  selector: 'app-kyc',
+  template: `
+    <div *ngIf="isCustomerIdEnabled()">
+      Customer ID is enabled!
+      <p>{{ customerIdMessage() }}</p>
+    </div>
+    <div *ngIf="isKycFeature1Enabled()">
+      KYC Feature 1 is enabled!
+      <p>{{ kycFeature1Message() }}</p>
+    </div>
+  `
+})
+export class KycComponent {
+  private featureFlagService = inject(FeatureFlagService);
+
+  isCustomerIdEnabled = this.featureFlagService.isFeatureEnabled('customerId');
+  customerIdMessage = this.featureFlagService.getFeatureMessage('customerId');
+
+  isKycFeature1Enabled = this.featureFlagService.isFeatureEnabled('kycFeature1');
+  kycFeature1Message = this.featureFlagService.getFeatureMessage('kycFeature1');
+}
+
+// client-onboarding.component.ts
+import { Component, inject } from '@angular/core';
+import { FeatureFlagService } from './feature-flag.service';
+
+@Component({
+  selector: 'app-client-onboarding',
+  template: `
+    <div>
+      Client Onboarding Component
+      <p>This component has no feature flags.</p>
+    </div>
+  `
+})
+export class ClientOnboardingComponent {
+  private featureFlagService = inject(FeatureFlagService);
+
+  constructor() {
+    console.log('Feature flags loaded:', this.featureFlagService.isLoaded());
+  }
+}
+
+// app.component.ts
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-root',
+  template: `
+    <nav>
+      <a routerLink="/kyc">KYC</a>
+      <a routerLink="/prospect/create">Create Prospect</a>
+      <a routerLink="/client-onboarding">Client Onboarding</a>
+    </nav>
+    <router-outlet></router-outlet>
+  `
+})
+export class AppComponent {}
