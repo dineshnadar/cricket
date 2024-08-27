@@ -723,14 +723,15 @@ export class ProfileBuilderService {
 
 ---------------
 
-import { Component, inject, Signal, computed } from '@angular/core';
+iimport { Component, inject, computed, Signal } from '@angular/core';
 import { NgFor, NgIf, NgClass } from '@angular/common';
 import { ProfileBuilderService } from './profile-builder.service';
 import { WidgetConfig, SubMenuItem, WidgetState } from './widget-config';
 
-interface MenuItemWithState extends WidgetConfig {
+interface WidgetWithStateAndClasses extends WidgetConfig {
   state: WidgetState;
-  subMenuItems?: MenuItemWithState[];
+  classes: { [key: string]: boolean };
+  subItems?: WidgetWithStateAndClasses[];
 }
 
 @Component({
@@ -740,7 +741,7 @@ interface MenuItemWithState extends WidgetConfig {
   template: `
     <nav>
       <ul>
-        <ng-container *ngFor="let widget of visibleWidgets()">
+        <ng-container *ngFor="let widget of processedWidgets()">
           <li>
             <ng-container *ngTemplateOutlet="menuItem; context: { $implicit: widget }"></ng-container>
           </li>
@@ -749,14 +750,14 @@ interface MenuItemWithState extends WidgetConfig {
     </nav>
 
     <ng-template #menuItem let-item>
-      <div [ngClass]="getItemClasses(item.state)" (click)="setActiveWidget(item.name)">
+      <div [ngClass]="item.classes" (click)="setActiveWidget(item.name)">
         {{ item.label }}
         <span *ngIf="item.state.hasError" class="error-indicator">!</span>
         <span *ngIf="item.state.status === 'completed'" class="completion-indicator">✓</span>
         <span *ngIf="item.state.status === 'in-progress'" class="in-progress-indicator">⋯</span>
       </div>
-      <ul *ngIf="item.subMenuItems?.length">
-        <li *ngFor="let subItem of item.subMenuItems">
+      <ul *ngIf="item.subItems?.length">
+        <li *ngFor="let subItem of item.subItems">
           <ng-container *ngTemplateOutlet="menuItem; context: { $implicit: subItem }"></ng-container>
         </li>
       </ul>
@@ -767,23 +768,27 @@ interface MenuItemWithState extends WidgetConfig {
 export class LeftMenuComponent {
   private profileService = inject(ProfileBuilderService);
 
-  visibleWidgets: Signal<MenuItemWithState[]> = computed(() => {
-    const widgets = this.profileService.getVisibleWidgets();
-    return this.mapToMenuItemWithState(widgets());
+  processedWidgets: Signal<WidgetWithStateAndClasses[]> = computed(() => {
+    const visibleWidgets = this.profileService.getVisibleWidgets()();
+    return this.processWidgets(visibleWidgets);
   });
 
-  private mapToMenuItemWithState(items: (WidgetConfig | SubMenuItem)[]): MenuItemWithState[] {
-    return items.map(item => {
-      const subMenuItems = this.profileService.getSubMenuItems(item);
+  private processWidgets(widgets: (WidgetConfig | SubMenuItem)[]): WidgetWithStateAndClasses[] {
+    return widgets.map(widget => {
+      const state = this.profileService.getActiveProfileWidgetStates()?.[widget.name] || 
+                    this.profileService['initialWidgetState'];
+      const subItems = this.profileService.getSubMenuItems(widget);
+      
       return {
-        ...item,
-        state: this.profileService.getActiveProfileWidgetStates()?.[item.name] || this.profileService['initialWidgetState'],
-        subMenuItems: subMenuItems.length ? this.mapToMenuItemWithState(subMenuItems) : undefined
+        ...widget,
+        state,
+        classes: this.getItemClasses(state),
+        subItems: subItems.length ? this.processWidgets(subItems) : undefined
       };
     });
   }
 
-  getItemClasses(state: WidgetState): { [key: string]: boolean } {
+  private getItemClasses(state: WidgetState): { [key: string]: boolean } {
     return {
       'menu-item': true,
       'active': state.active,
