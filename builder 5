@@ -477,5 +477,92 @@ export class ProfileBuilderService {
     return this.isLoading;
   }
 
+validateAllWidgets(): boolean {
+    const activeProfile = this.getActiveProfile();
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfile || !activeProfileWidgetStates) return false;
+
+    let isValid = true;
+    const visibleWidgets = this.getVisibleWidgets()();
+
+    visibleWidgets.forEach(widget => {
+      const widgetForm = activeProfile.get(widget.name);
+      const widgetValid = widgetForm?.valid ?? false;
+      this.updateWidgetState(widget.name, { 
+        hasError: !widgetValid, 
+        status: widgetValid ? 'completed' : 'error' 
+      });
+      isValid = isValid && widgetValid;
+    });
+
+    return isValid;
+  }
+
+  loadAllWidgets() {
+    const visibleWidgets = this.getVisibleWidgets()();
+
+    visibleWidgets.forEach(widget => {
+      this.updateWidgetState(widget.name, { visited: true, status: 'in-progress' });
+    });
+  }
+
+  getNextIncompleteWidget(): string | null {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return null;
+
+    const visibleWidgets = this.getVisibleWidgets()();
+    const incompleteWidget = visibleWidgets.find(widget => 
+      activeProfileWidgetStates[widget.name]?.status !== 'completed'
+    );
+
+    return incompleteWidget ? incompleteWidget.name : null;
+  }
+
+  getCompletionPercentage(): number {
+    const activeProfileWidgetStates = this.getActiveProfileWidgetStates();
+    if (!activeProfileWidgetStates) return 0;
+
+    const visibleWidgets = this.getVisibleWidgets()();
+    const completedWidgets = visibleWidgets.filter(widget => 
+      activeProfileWidgetStates[widget.name]?.status === 'completed'
+    );
+
+    return (completedWidgets.length / visibleWidgets.length) * 100;
+  }
+
+  acknowledgeWidget(widgetName: string) {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      const profileStates = { ...newAllStates[activeProfileIndex] };
+
+      // Acknowledge the widget and its children
+      this.acknowledgeWidgetRecursively(widgetName, profileStates);
+
+      // Update parent states
+      this.updateParentStates(widgetName, profileStates);
+
+      newAllStates[activeProfileIndex] = profileStates;
+      return newAllStates;
+    });
+  }
+
+  private acknowledgeWidgetRecursively(widgetName: string, profileStates: Record<string, WidgetState>) {
+    profileStates[widgetName] = {
+      ...profileStates[widgetName],
+      acknowledged: true
+    };
+
+    const widget = this.findWidgetByName(widgetName);
+    if (widget) {
+      const subItems = this.getSubMenuItems(widget);
+      subItems.forEach(subItem => {
+        this.acknowledgeWidgetRecursively(subItem.name, profileStates);
+      });
+    }
+  }
+
   // Additional methods for profile management, data fetching, etc. would go here
 }
