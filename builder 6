@@ -422,29 +422,25 @@ export class ProfileBuilderService {
     return find(WIDGET_CONFIG);
   }
 
+  
   private updateParentStates(widgetName: string, profileStates: Record<string, WidgetState>) {
     const updateRecursively = (items: (WidgetConfig | SubMenuItem)[]): boolean => {
       for (const item of items) {
-        const subItems = this.getSubMenuItems(item);
-        if (item.name === widgetName || updateRecursively(subItems)) {
+        if (item.name === widgetName) {
+          const subItems = this.getSubMenuItems(item);
+          if (subItems.length === 0) {
+            // If there are no sub-items, don't update the parent
+            return false;
+          }
+          
           const childStates = subItems.map(subItem => profileStates[subItem.name]);
-          const allChildrenCompleted = childStates.every(state => state.status === 'completed');
-          const anyChildError = childStates.some(state => state.status === 'error');
-          const allChildrenAcknowledged = childStates.every(state => state.acknowledged);
-          const anyChildVisited = childStates.some(state => state.visited);
-
-          let newStatus: WidgetState['status'] = 'pending';
-          if (allChildrenCompleted) newStatus = 'completed';
-          else if (anyChildError) newStatus = 'error';
-          else if (childStates.some(state => state.status === 'in-progress')) newStatus = 'in-progress';
-
-          profileStates[item.name] = {
-            ...profileStates[item.name],
-            status: newStatus,
-            acknowledged: allChildrenAcknowledged,
-            visited: anyChildVisited || profileStates[item.name].visited,
-            hasError: anyChildError
-          };
+          this.updateParentState(item.name, childStates, profileStates);
+          return true;
+        }
+        
+        const subItems = this.getSubMenuItems(item);
+        if (updateRecursively(subItems)) {
+          this.updateParentState(item.name, subItems.map(subItem => profileStates[subItem.name]), profileStates);
           return true;
         }
       }
@@ -453,6 +449,27 @@ export class ProfileBuilderService {
 
     updateRecursively(WIDGET_CONFIG);
   }
+
+  private updateParentState(parentName: string, childStates: WidgetState[], profileStates: Record<string, WidgetState>) {
+    const allChildrenCompleted = childStates.every(state => state.status === 'completed');
+    const anyChildError = childStates.some(state => state.status === 'error');
+    const allChildrenAcknowledged = childStates.every(state => state.acknowledged);
+    const anyChildVisited = childStates.some(state => state.visited);
+
+    let newStatus: WidgetState['status'] = 'pending';
+    if (allChildrenCompleted) newStatus = 'completed';
+    else if (anyChildError) newStatus = 'error';
+    else if (childStates.some(state => state.status === 'in-progress')) newStatus = 'in-progress';
+
+    profileStates[parentName] = {
+      ...profileStates[parentName],
+      status: newStatus,
+      acknowledged: allChildrenAcknowledged,
+      visited: anyChildVisited || profileStates[parentName].visited,
+      hasError: anyChildError
+    };
+  }
+
 
   resetWidgetStates() {
     const index = this.activeProfileIndex();
