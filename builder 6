@@ -705,3 +705,89 @@ export class ProfileBuilderService {
 }
 
 ---------------
+
+import { Component, inject, Signal } from '@angular/core';
+import { NgFor, NgIf, NgClass } from '@angular/common';
+import { ProfileBuilderService } from './profile-builder.service';
+import { WidgetConfig, SubMenuItem, WidgetState } from './widget-config';
+
+interface MenuItemWithState extends WidgetConfig {
+  state: WidgetState;
+  subItems?: MenuItemWithState[];
+}
+
+@Component({
+  selector: 'app-left-menu',
+  standalone: true,
+  imports: [NgFor, NgIf, NgClass],
+  template: `
+    <nav>
+      <ul>
+        <ng-container *ngFor="let widget of visibleWidgets()">
+          <li>
+            <ng-container *ngTemplateOutlet="menuItem; context: { $implicit: widget }"></ng-container>
+          </li>
+        </ng-container>
+      </ul>
+    </nav>
+
+    <ng-template #menuItem let-item>
+      <div [ngClass]="getItemClasses(item.state)" (click)="setActiveWidget(item.name)">
+        {{ item.label }}
+        <span *ngIf="item.state.hasError" class="error-indicator">!</span>
+        <span *ngIf="item.state.status === 'completed'" class="completion-indicator">✓</span>
+        <span *ngIf="item.state.status === 'in-progress'" class="in-progress-indicator">⋯</span>
+      </div>
+      <ul *ngIf="item.subItems?.length">
+        <li *ngFor="let subItem of item.subItems">
+          <ng-container *ngTemplateOutlet="menuItem; context: { $implicit: subItem }"></ng-container>
+        </li>
+      </ul>
+    </ng-template>
+  `,
+  styles: [`
+    ul { list-style-type: none; padding-left: 20px; }
+    li { margin-bottom: 5px; }
+    .menu-item { 
+      cursor: pointer; 
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px;
+      border-radius: 4px;
+    }
+    .active { background-color: #e0e0e0; font-weight: bold; }
+    .visited { text-decoration: underline; }
+    .error { color: red; }
+    .acknowledged { font-style: italic; }
+    .completed { color: green; }
+    .in-progress { color: orange; }
+    .error-indicator, .completion-indicator, .in-progress-indicator { 
+      font-weight: bold; 
+      margin-left: 5px; 
+    }
+    .error-indicator { color: red; }
+    .completion-indicator { color: green; }
+    .in-progress-indicator { color: orange; }
+  `]
+})
+export class LeftMenuComponent {
+  private profileService = inject(ProfileBuilderService);
+
+  visibleWidgets: Signal<MenuItemWithState[]> = this.profileService.getVisibleWidgets;
+
+  getItemClasses(state: WidgetState): { [key: string]: boolean } {
+    return {
+      'menu-item': true,
+      'active': state.active,
+      'visited': state.visited,
+      'error': state.hasError,
+      'acknowledged': state.acknowledged,
+      [state.status]: true
+    };
+  }
+
+  setActiveWidget(widgetName: string): void {
+    this.profileService.setActiveWidget(widgetName);
+  }
+}
