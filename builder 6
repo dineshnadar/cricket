@@ -713,7 +713,7 @@ import { WidgetConfig, SubMenuItem, WidgetState } from './widget-config';
 
 interface MenuItemWithState extends WidgetConfig {
   state: WidgetState;
-  subItems?: MenuItemWithState[];
+  subMenuItems?: MenuItemWithState[];
 }
 
 @Component({
@@ -738,8 +738,8 @@ interface MenuItemWithState extends WidgetConfig {
         <span *ngIf="item.state.status === 'completed'" class="completion-indicator">✓</span>
         <span *ngIf="item.state.status === 'in-progress'" class="in-progress-indicator">⋯</span>
       </div>
-      <ul *ngIf="item.subItems?.length">
-        <li *ngFor="let subItem of item.subItems">
+      <ul *ngIf="item.subMenuItems?.length">
+        <li *ngFor="let subItem of item.subMenuItems">
           <ng-container *ngTemplateOutlet="menuItem; context: { $implicit: subItem }"></ng-container>
         </li>
       </ul>
@@ -751,15 +751,19 @@ export class LeftMenuComponent {
   private profileService = inject(ProfileBuilderService);
 
   visibleWidgets: Signal<MenuItemWithState[]> = computed(() => {
-    const widgets = this.profileService.getVisibleWidgets()();
-    return this.mapToMenuItemWithState(widgets);
+    const widgets = this.profileService.getVisibleWidgets();
+    return this.mapToMenuItemWithState(widgets());
   });
 
-  private mapToMenuItemWithState(items: (WidgetConfig | SubMenuItem & { state: WidgetState, subItems?: any[] })[]): MenuItemWithState[] {
-    return items.map(item => ({
-      ...item,
-      subItems: item.subItems ? this.mapToMenuItemWithState(item.subItems) : undefined
-    }));
+  private mapToMenuItemWithState(items: (WidgetConfig | SubMenuItem)[]): MenuItemWithState[] {
+    return items.map(item => {
+      const subMenuItems = this.profileService.getSubMenuItems(item);
+      return {
+        ...item,
+        state: this.profileService.getActiveProfileWidgetStates()?.[item.name] || this.profileService['initialWidgetState'],
+        subMenuItems: subMenuItems.length ? this.mapToMenuItemWithState(subMenuItems) : undefined
+      };
+    });
   }
 
   getItemClasses(state: WidgetState): { [key: string]: boolean } {
