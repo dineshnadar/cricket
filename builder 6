@@ -706,7 +706,7 @@ export class ProfileBuilderService {
 
 ---------------
 
-import { Component, inject, Signal } from '@angular/core';
+import { Component, inject, Signal, computed } from '@angular/core';
 import { NgFor, NgIf, NgClass } from '@angular/common';
 import { ProfileBuilderService } from './profile-builder.service';
 import { WidgetConfig, SubMenuItem, WidgetState } from './widget-config';
@@ -745,36 +745,22 @@ interface MenuItemWithState extends WidgetConfig {
       </ul>
     </ng-template>
   `,
-  styles: [`
-    ul { list-style-type: none; padding-left: 20px; }
-    li { margin-bottom: 5px; }
-    .menu-item { 
-      cursor: pointer; 
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 5px;
-      border-radius: 4px;
-    }
-    .active { background-color: #e0e0e0; font-weight: bold; }
-    .visited { text-decoration: underline; }
-    .error { color: red; }
-    .acknowledged { font-style: italic; }
-    .completed { color: green; }
-    .in-progress { color: orange; }
-    .error-indicator, .completion-indicator, .in-progress-indicator { 
-      font-weight: bold; 
-      margin-left: 5px; 
-    }
-    .error-indicator { color: red; }
-    .completion-indicator { color: green; }
-    .in-progress-indicator { color: orange; }
-  `]
+  styles: [/* ... styles remain the same ... */]
 })
 export class LeftMenuComponent {
   private profileService = inject(ProfileBuilderService);
 
-  visibleWidgets: Signal<MenuItemWithState[]> = this.profileService.getVisibleWidgets;
+  visibleWidgets: Signal<MenuItemWithState[]> = computed(() => {
+    const widgets = this.profileService.getVisibleWidgets()();
+    return this.mapToMenuItemWithState(widgets);
+  });
+
+  private mapToMenuItemWithState(items: (WidgetConfig | SubMenuItem & { state: WidgetState, subItems?: any[] })[]): MenuItemWithState[] {
+    return items.map(item => ({
+      ...item,
+      subItems: item.subItems ? this.mapToMenuItemWithState(item.subItems) : undefined
+    }));
+  }
 
   getItemClasses(state: WidgetState): { [key: string]: boolean } {
     return {
