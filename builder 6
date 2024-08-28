@@ -803,3 +803,114 @@ export class LeftMenuComponent {
     this.profileService.setActiveWidget(widgetName);
   }
 }
+
+---
+
+import { Component, inject, computed, Signal } from '@angular/core';
+import { NgFor, NgIf, NgClass } from '@angular/common';
+import { ProfileBuilderService } from './profile-builder.service';
+import { WidgetConfig, SubMenuItem, WidgetState } from './widget-config';
+
+interface WidgetWithState extends WidgetConfig {
+  state: WidgetState;
+  subItems?: WidgetWithState[];
+}
+
+@Component({
+  selector: 'app-left-menu',
+  standalone: true,
+  imports: [NgFor, NgIf, NgClass],
+  template: `
+    <nav>
+      <ul>
+        <ng-container *ngFor="let widget of processedWidgets(); trackBy: trackByWidget">
+          <li [ngClass]="getItemStatusClasses(widget.state)">
+            <div class="menu-item" (click)="setActiveWidget(widget.name)">
+              {{ widget.label }}
+              <span *ngIf="widget.state.hasError" class="error-indicator">!</span>
+              <span *ngIf="widget.state.status === 'completed'" class="completion-indicator">✓</span>
+              <span *ngIf="widget.state.status === 'in-progress'" class="in-progress-indicator">⋯</span>
+            </div>
+            <ul *ngIf="widget.subItems?.length">
+              <ng-container *ngFor="let subItem of widget.subItems; trackBy: trackByWidget">
+                <li [ngClass]="getItemStatusClasses(subItem.state)">
+                  <div class="menu-item" (click)="setActiveWidget(subItem.name)">
+                    {{ subItem.label }}
+                    <span *ngIf="subItem.state.hasError" class="error-indicator">!</span>
+                    <span *ngIf="subItem.state.status === 'completed'" class="completion-indicator">✓</span>
+                    <span *ngIf="subItem.state.status === 'in-progress'" class="in-progress-indicator">⋯</span>
+                  </div>
+                </li>
+              </ng-container>
+            </ul>
+          </li>
+        </ng-container>
+      </ul>
+    </nav>
+  `,
+  styles: [`
+    ul { list-style-type: none; padding-left: 20px; }
+    li { margin-bottom: 5px; }
+    .menu-item { 
+      cursor: pointer; 
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px;
+      border-radius: 4px;
+    }
+    .active > .menu-item { background-color: #e0e0e0; font-weight: bold; }
+    .visited > .menu-item { text-decoration: underline; }
+    .error > .menu-item { color: red; }
+    .acknowledged > .menu-item { font-style: italic; }
+    li.completed > .menu-item { color: green; }
+    li.in-progress > .menu-item { color: orange; }
+    .error-indicator, .completion-indicator, .in-progress-indicator { 
+      font-weight: bold; 
+      margin-left: 5px; 
+    }
+    .error-indicator { color: red; }
+    .completion-indicator { color: green; }
+    .in-progress-indicator { color: orange; }
+  `]
+})
+export class LeftMenuComponent {
+  private profileService = inject(ProfileBuilderService);
+
+  processedWidgets: Signal<WidgetWithState[]> = computed(() => {
+    const visibleWidgets = this.profileService.getVisibleWidgets()();
+    return this.processWidgets(visibleWidgets);
+  });
+
+  private processWidgets(widgets: (WidgetConfig | SubMenuItem)[]): WidgetWithState[] {
+    return widgets.map(widget => {
+      const state = this.profileService.getActiveProfileWidgetStates()?.[widget.name] || 
+                    this.profileService['initialWidgetState'];
+      const subItems = this.profileService.getSubMenuItems(widget);
+      
+      return {
+        ...widget,
+        state,
+        subItems: subItems.length ? this.processWidgets(subItems) : undefined
+      };
+    });
+  }
+
+  getItemStatusClasses(state: WidgetState): { [key: string]: boolean } {
+    return {
+      'active': state.active,
+      'visited': state.visited,
+      'error': state.hasError,
+      'acknowledged': state.acknowledged,
+      [state.status]: true
+    };
+  }
+
+  setActiveWidget(widgetName: string): void {
+    this.profileService.setActiveWidget(widgetName);
+  }
+
+  trackByWidget(index: number, widget: WidgetWithState): string {
+    return widget.name;
+  }
+}
