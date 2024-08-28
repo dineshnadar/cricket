@@ -1,0 +1,159 @@
+import { Injectable, signal, computed, WritableSignal } from '@angular/core';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
+
+// ... existing WidgetState interface and other imports ...
+
+@Injectable({ providedIn: 'root' })
+export class WidgetStateService {
+  private profileWidgetStates: WritableSignal<Record<string, WidgetState>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+
+  // ... existing methods ...
+
+  deleteProfile(index: number) {
+    if (index < 0 || index >= this.profileWidgetStates().length) {
+      console.error('Invalid profile index for deletion');
+      return;
+    }
+
+    this.profileWidgetStates.update(states => {
+      const newStates = [...states];
+      newStates.splice(index, 1);
+      return newStates;
+    });
+
+    // Adjust active profile index if necessary
+    if (this.activeProfileIndex() === index) {
+      this.setActiveProfile(Math.max(0, index - 1));
+    } else if (this.activeProfileIndex() > index) {
+      this.setActiveProfile(this.activeProfileIndex() - 1);
+    }
+  }
+
+  cloneProfile(sourceIndex: number): number {
+    if (sourceIndex < 0 || sourceIndex >= this.profileWidgetStates().length) {
+      console.error('Invalid source profile index for cloning');
+      return -1;
+    }
+
+    const sourceStates = this.profileWidgetStates()[sourceIndex];
+    const clonedStates = JSON.parse(JSON.stringify(sourceStates)); // Deep clone
+
+    this.profileWidgetStates.update(states => [...states, clonedStates]);
+
+    return this.profileWidgetStates().length - 1; // Return the index of the new cloned profile
+  }
+
+  // ... other existing methods ...
+}
+
+
+---------
+
+import { Injectable, inject } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { WidgetStateService } from './widget-state.service';
+import { DynamicMenuService } from './dynamic-menu.service';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private fb = inject(FormBuilder);
+  private widgetStateService = inject(WidgetStateService);
+  private dynamicMenuService = inject(DynamicMenuService);
+
+  private profiles: FormGroup[] = [];
+
+  // ... existing methods ...
+
+  deleteProfile(index: number) {
+    if (index < 0 || index >= this.profiles.length) {
+      console.error('Invalid profile index for deletion');
+      return;
+    }
+
+    // Remove the profile form
+    this.profiles.splice(index, 1);
+
+    // Delete widget states
+    this.widgetStateService.deleteProfile(index);
+
+    // Delete dynamic submenus
+    this.dynamicMenuService.deleteProfileSubmenus(index);
+
+    // Adjust active profile if necessary
+    if (this.profiles.length === 0) {
+      this.widgetStateService.setActiveProfile(null);
+    } else {
+      const newActiveIndex = Math.min(index, this.profiles.length - 1);
+      this.widgetStateService.setActiveProfile(newActiveIndex);
+    }
+  }
+
+  cloneProfile(sourceIndex: number): number {
+    if (sourceIndex < 0 || sourceIndex >= this.profiles.length) {
+      console.error('Invalid source profile index for cloning');
+      return -1;
+    }
+
+    // Clone the profile form
+    const sourceForm = this.profiles[sourceIndex];
+    const clonedForm = this.fb.group(sourceForm.value);
+    this.profiles.push(clonedForm);
+
+    // Clone widget states
+    const newStateIndex = this.widgetStateService.cloneProfile(sourceIndex);
+
+    // Clone dynamic submenus
+    this.dynamicMenuService.cloneProfileSubmenus(sourceIndex);
+
+    return newStateIndex;
+  }
+
+  // ... other existing methods ...
+}
+
+---------
+
+import { Injectable, signal, WritableSignal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { SubMenuItem } from './widget-config';
+
+@Injectable({ providedIn: 'root' })
+export class DynamicMenuService {
+  private dynamicSubMenus: WritableSignal<Record<string, SubMenuItem[]>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+
+  constructor(private http: HttpClient) {}
+
+  // ... existing methods ...
+
+  deleteProfileSubmenus(index: number) {
+    this.dynamicSubMenus.update(menus => {
+      const newMenus = [...menus];
+      newMenus.splice(index, 1);
+      return newMenus;
+    });
+
+    // Adjust active profile index if necessary
+    if (this.activeProfileIndex() === index) {
+      this.setActiveProfile(Math.max(0, index - 1));
+    } else if (this.activeProfileIndex() > index) {
+      this.setActiveProfile(this.activeProfileIndex() - 1);
+    }
+  }
+
+  cloneProfileSubmenus(sourceIndex: number) {
+    if (sourceIndex < 0 || sourceIndex >= this.dynamicSubMenus().length) {
+      console.error('Invalid source profile index for cloning submenus');
+      return;
+    }
+
+    const sourceSubmenus = this.dynamicSubMenus()[sourceIndex];
+    const clonedSubmenus = JSON.parse(JSON.stringify(sourceSubmenus)); // Deep clone
+
+    this.dynamicSubMenus.update(menus => [...menus, clonedSubmenus]);
+  }
+
+  // ... other existing methods ...
+}
