@@ -33,6 +33,286 @@ export class WidgetStateService {
   }
 
   setActiveProfile(index: number) {
+    if (index >= 0 && index < this.profileWidgetStates().length) {
+      this.activeProfileIndex.set(index);
+    } else {
+      console.error('Invalid profile index');
+    }
+  }
+
+  private createInitialWidgetStates(): Record<string, WidgetState> {
+    const initializeStates = (items: (WidgetConfig | SubMenuItem)[]): Record<string, WidgetState> => {
+      return items.reduce((acc, item) => {
+        acc[item.name] = { ...this.initialWidgetState };
+        if (Array.isArray(item.subMenu)) {
+          Object.assign(acc, initializeStates(item.subMenu));
+        }
+        return acc;
+      }, {} as Record<string, WidgetState>);
+    };
+
+    return initializeStates(WIDGET_CONFIG);
+  }
+
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>, profileIndex?: number) {
+    const index = profileIndex ?? this.activeProfileIndex();
+    if (index === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      const profileStates = { ...newAllStates[index] };
+      if (profileStates[widgetName]) {
+        profileStates[widgetName] = { ...profileStates[widgetName], ...update };
+        this.updateParentStates(widgetName, profileStates, index);
+      }
+      newAllStates[index] = profileStates;
+      return newAllStates;
+    });
+  }
+
+  private updateParentStates(widgetName: string, profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const updateRecursively = (items: (WidgetConfig | SubMenuItem)[], parent: WidgetConfig | SubMenuItem | null = null): boolean => {
+      for (const item of items) {
+        if (item.name === widgetName) {
+          if (parent) {
+            this.updateParentState(parent.name, [profileStates[widgetName]], profileStates, profileIndex);
+          }
+          return true;
+        }
+        
+        const subItems = Array.isArray(item.subMenu) ? item.subMenu : [];
+        if (updateRecursively(subItems, item)) {
+          if (parent) {
+            this.updateParentState(parent.name, [profileStates[item.name]], profileStates, profileIndex);
+          }
+          return true;
+        }
+      }
+      return false;
+    };
+
+    updateRecursively(WIDGET_CONFIG);
+  }
+
+  private updateParentState(parentName: string, childStates: WidgetState[], profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const allChildrenCompleted = childStates.every(state => state.status === 'completed');
+    const anyChildError = childStates.some(state => state.status === 'error');
+    const allChildrenAcknowledged = childStates.every(state => state.acknowledged);
+    const anyChildVisited = childStates.some(state => state.visited);
+
+    let newStatus: WidgetState['status'] = 'pending';
+    if (allChildrenCompleted) newStatus = 'completed';
+    else if (anyChildError) newStatus = 'error';
+    else if (childStates.some(state => state.status === 'in-progress')) newStatus = 'in-progress';
+
+    this.updateWidgetState(parentName, {
+      status: newStatus,
+      acknowledged: allChildrenAcknowledged,
+      visited: anyChildVisited || profileStates[parentName].visited,
+      hasError: anyChildError
+    }, profileIndex);
+  }
+
+  getWidgetState(widgetName: string, profileIndex?: number): WidgetState | undefined {
+    const index = profileIndex ?? this.activeProfileIndex();
+    if (index === null) return undefined;
+    return this.profileWidgetStates()[index][widgetName] || { ...this.initialWidgetState };
+  }
+
+  getVisibleWidgets = computed(() => {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return [];
+
+    const profileStates = this.profileWidgetStates()[activeProfileIndex];
+    return WIDGET_CONFIG.filter(widget => profileStates[widget.name]?.visible);
+  });
+
+  initializeDynamicWidgetStates(widgetName: string, subMenuItems: SubMenuItem[], profileIndex?: number) {
+    const index = profileIndex ?? this.activeProfileIndex();
+    if (index === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      const profileStates = { ...newAllStates[index] };
+
+      subMenuItems.forEach(item => {
+        if (!profileStates[item.name]) {
+          profileStates[item.name] = { ...this.initialWidgetState };
+        }
+      });
+
+      newAllStates[index] = profileStates;
+      return newAllStates;
+    });
+  }
+
+  // Helper methods
+  setWidgetVisibility(widgetName: string, visible: boolean, profileIndex?: number) {
+    this.updateWidgetState(widgetName, { visible }, profileIndex);
+  }
+
+  setWidgetActive(widgetName: string, active: boolean, profileIndex?: number) {
+    this.updateWidgetState(widgetName, { active }, profileIndex);
+  }
+
+  setWidgetVisited(widgetName: string, visited: boolean, profileIndex?: number) {
+    this.updateWidgetState(widgetName, { visited }, profileIndex);
+  }
+
+  setWidgetStatus(widgetName: string, status: WidgetState['status'], profileIndex?: number) {
+    this.updateWidgetState(widgetName, { status }, profileIndex);
+  }
+
+  acknowledgeWidget(widgetName: string, profileIndex?: number) {
+    this.updateWidgetState(widgetName, { acknowledged: true }, profileIndex);
+    this.acknowledgeChildWidgets(widgetName, profileIndex);
+  }
+
+  private acknowledgeChildWidgets(widgetName: string, profileIndex?: number) {
+    const acknowledgeRecursively = (items: (WidgetConfig | SubMenuItem)[]) => {
+      for (const item of items) {
+        if (item.name === widgetName) {
+          const subItems = Array.isArray(item.subMenu) ? item.subMenu : [];
+          subItems.forEach(subItem => {
+            this.updateWidgetState(subItem.name, { acknowledged: true }, profileIndex);
+            acknowledgeRecursively([subItem]);
+          });
+          return true;
+        }
+        const subItems = Array.isArray(item.subMenu) ? item.subMenu : [];
+        if (acknowledgeRecursively(subItems)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    acknowledgeRecursively(WIDGET_CONFIG);
+  }
+
+  setWidgetError(widgetName: string, hasError: boolean, errorMessage: string = '', profileIndex?: number) {
+    this.updateWidgetState(widgetName, { hasError, errorMessage }, profileIndex);
+  }
+
+  resetWidgetStates(profileIndex?: number) {
+    const index = profileIndex ?? this.activeProfileIndex();
+    if (index === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      newAllStates[index] = this.createInitialWidgetStates();
+      return newAllStates;
+    });
+  }
+
+  // Additional helper methods
+  isWidgetVisible(widgetName: string, profileIndex?: number): boolean {
+    return this.getWidgetState(widgetName, profileIndex)?.visible ?? false;
+  }
+
+  isWidgetActive(widgetName: string, profileIndex?: number): boolean {
+    return this.getWidgetState(widgetName, profileIndex)?.active ?? false;
+  }
+
+  isWidgetVisited(widgetName: string, profileIndex?: number): boolean {
+    return this.getWidgetState(widgetName, profileIndex)?.visited ?? false;
+  }
+
+  isWidgetAcknowledged(widgetName: string, profileIndex?: number): boolean {
+    return this.getWidgetState(widgetName, profileIndex)?.acknowledged ?? false;
+  }
+
+  getWidgetStatus(widgetName: string, profileIndex?: number): WidgetState['status'] {
+    return this.getWidgetState(widgetName, profileIndex)?.status ?? 'pending';
+  }
+
+  hasWidgetError(widgetName: string, profileIndex?: number): boolean {
+    return this.getWidgetState(widgetName, profileIndex)?.hasError ?? false;
+  }
+
+  getWidgetErrorMessage(widgetName: string, profileIndex?: number): string {
+    return this.getWidgetState(widgetName, profileIndex)?.errorMessage ?? '';
+  }
+
+  getAllProfilesWidgetStates(): Record<string, WidgetState>[] {
+    return this.profileWidgetStates();
+  }
+
+  getProfileCount(): number {
+    return this.profileWidgetStates().length;
+  }
+}
+
+---------------------
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  // ... existing code ...
+
+  async loadDynamicSubMenus() {
+    for (const widget of WIDGET_CONFIG) {
+      if (widget.subMenu === 'dynamic' || widget.subMenu === 'api' || typeof widget.subMenu === 'function') {
+        const subMenuItems = await this.dynamicMenuService.loadDynamicSubMenu(widget.name);
+        this.widgetStateService.initializeDynamicWidgetStates(widget.name, subMenuItems);
+      }
+    }
+  }
+
+  getSubMenuItems(item: WidgetConfig | SubMenuItem): SubMenuItem[] {
+    if (Array.isArray(item.subMenu)) {
+      return item.subMenu;
+    } else if (item.subMenu === 'dynamic' || item.subMenu === 'api') {
+      return this.dynamicMenuService.getDynamicSubMenu(item.name);
+    }
+    return [];
+  }
+
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>) {
+    this.widgetStateService.updateWidgetState(widgetName, update);
+  }
+
+  // ... other methods ...
+}
+
+----------
+
+
+
+import { Injectable, signal, computed, WritableSignal } from '@angular/core';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
+
+export interface WidgetState {
+  visible: boolean;
+  hasError: boolean;
+  errorMessage: string;
+  visited: boolean;
+  acknowledged: boolean;
+  active: boolean;
+  status: 'pending' | 'in-progress' | 'completed' | 'error';
+}
+
+@Injectable({ providedIn: 'root' })
+export class WidgetStateService {
+  private profileWidgetStates: WritableSignal<Record<string, WidgetState>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+
+  private initialWidgetState: WidgetState = {
+    visible: true,
+    hasError: false,
+    errorMessage: '',
+    visited: false,
+    acknowledged: false,
+    active: false,
+    status: 'pending'
+  };
+
+  initializeProfile() {
+    const newProfileWidgetStates = this.createInitialWidgetStates();
+    this.profileWidgetStates.update(states => [...states, newProfileWidgetStates]);
+    return this.profileWidgetStates().length - 1;
+  }
+
+  setActiveProfile(index: number) {
     this.activeProfileIndex.set(index);
   }
 
