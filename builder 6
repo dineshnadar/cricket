@@ -914,3 +914,129 @@ export class LeftMenuComponent {
     return widget.name;
   }
 }
+
+-----
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  // ... other code remains the same
+
+  private async loadSubMenusRecursively(item: WidgetConfig | SubMenuItem) {
+    if (typeof item.subMenu === 'function') {
+      const subMenus = await item.subMenu();
+      this.dynamicSubMenus.update(current => ({ ...current, [item.name]: subMenus }));
+      for (const subItem of subMenus) {
+        await this.loadSubMenusRecursively(subItem);
+      }
+    } else if (item.subMenu === 'dynamic' || item.subMenu === 'api') {
+      const subMenus = await this.fetchDynamicSubMenu(item.name);
+      this.dynamicSubMenus.update(current => ({ ...current, [item.name]: subMenus }));
+      for (const subItem of subMenus) {
+        await this.loadSubMenusRecursively(subItem);
+      }
+    } else if (Array.isArray(item.subMenu)) {
+      for (const subItem of item.subMenu) {
+        await this.loadSubMenusRecursively(subItem);
+      }
+    }
+  }
+
+  private async fetchDynamicSubMenu(widgetName: string): Promise<SubMenuItem[]> {
+    // This is where you'd typically fetch from an API
+    // For this example, we'll return hardcoded data
+    return [
+      {
+        name: 'high-school',
+        label: 'High School',
+        visible: true,
+        component: () => import('./components/high-school.component').then(m => m.HighSchoolComponent),
+        data: { type: 'high-school', years: 4 }
+      },
+      {
+        name: 'university',
+        label: 'University',
+        visible: true,
+        component: () => import('./components/university.component').then(m => m.UniversityComponent),
+        data: { type: 'university', years: 4 }
+      }
+    ];
+  }
+
+  // ... rest of the service remains the same
+}
+
+
+--------
+
+@Component({
+  selector: 'app-party-builder',
+  template: `
+    <div class="profile-selector">
+      <button *ngFor="let profile of profileService.profiles(); let i = index"
+              (click)="profileService.setActiveProfile(i)"
+              [class.active]="i === profileService.activeProfileIndex()">
+        Profile {{ i + 1 }}
+      </button>
+      <button (click)="addNewProfile()">Add New Profile</button>
+    </div>
+    <div class="party-builder" *ngIf="profileService.getActiveProfile()">
+      <app-left-menu></app-left-menu>
+      <div #widgetContainer></div>
+    </div>
+    <button (click)="validateAll()">Validate All</button>
+    <button (click)="loadAllWidgets()">Load All Widgets</button>
+    <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
+  `
+})
+export class PartyBuilderComponent {
+  @ViewChild('widgetContainer', { read: ViewContainerRef, static: false })
+  widgetContainer!: ViewContainerRef;
+
+  profileService = inject(ProfileBuilderService);
+
+  constructor() {
+    effect(() => {
+      const activeWidgetName = this.profileService.getActiveWidgetName()();
+      if (activeWidgetName) {
+        this.loadComponent(activeWidgetName);
+      }
+    });
+  }
+
+  async loadComponent(widgetName: string) {
+    this.widgetContainer.clear();
+    const widgetConfig = this.profileService.findWidgetByName(widgetName);
+
+    if (widgetConfig) {
+      if (widgetConfig.component) {
+        await this.loadWidgetComponent(widgetConfig, widgetName);
+      } else if (this.hasSubMenu(widgetConfig)) {
+        const firstSubMenuItem = this.getFirstSubMenuItem(widgetConfig);
+        if (firstSubMenuItem && firstSubMenuItem.component) {
+          await this.loadWidgetComponent(firstSubMenuItem, firstSubMenuItem.name);
+        }
+      }
+    }
+  }
+
+  private async loadWidgetComponent(widget: WidgetConfig | SubMenuItem, widgetName: string) {
+    if (widget.component) {
+      const component = await widget.component();
+      const componentRef = this.widgetContainer.createComponent(component);
+      const activeProfile = this.profileService.getActiveProfile();
+      if (activeProfile) {
+        const widgetForm = activeProfile.get(widgetName) as FormGroup;
+        if (componentRef.instance.setFormGroup) {
+          componentRef.instance.setFormGroup(widgetForm);
+        }
+        // Pass the data to the component if it exists
+        if ('data' in widget && componentRef.instance.setData) {
+          componentRef.instance.setData(widget.data);
+        }
+      }
+      this.profileService.setWidgetStatus(widgetName, 'in-progress');
+    }
+  }
+
+  // ... rest of the component remains the same
+}
