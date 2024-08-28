@@ -574,3 +574,87 @@ export class PartyBuilderComponent {
 }
 
 
+-------------
+
+import { Injectable, signal, WritableSignal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
+import { SubMenuItem } from './widget-config';
+
+@Injectable({ providedIn: 'root' })
+export class DynamicMenuService {
+  private dynamicSubMenus: WritableSignal<Record<string, SubMenuItem[]>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+
+  constructor(private http: HttpClient) {}
+
+  initializeProfile() {
+    this.dynamicSubMenus.update(menus => [...menus, {}]);
+    return this.dynamicSubMenus().length - 1;
+  }
+
+  setActiveProfile(index: number) {
+    this.activeProfileIndex.set(index);
+  }
+
+  async loadDynamicSubMenu(widgetName: string): Promise<SubMenuItem[]> {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return [];
+
+    try {
+      const subMenus = await this.fetchDynamicSubMenu(widgetName);
+      this.dynamicSubMenus.update(allMenus => {
+        const newAllMenus = [...allMenus];
+        newAllMenus[activeProfileIndex] = { 
+          ...newAllMenus[activeProfileIndex], 
+          [widgetName]: subMenus 
+        };
+        return newAllMenus;
+      });
+      return subMenus;
+    } catch (error) {
+      console.error(`Error loading dynamic sub-menu for ${widgetName}:`, error);
+      return [];
+    }
+  }
+
+  private async fetchDynamicSubMenu(widgetName: string): Promise<SubMenuItem[]> {
+    try {
+      return await firstValueFrom(this.http.get<SubMenuItem[]>(`/api/sub-menu/${widgetName}`));
+    } catch (error) {
+      console.error(`Error fetching dynamic sub-menu for ${widgetName}:`, error);
+      return [];
+    }
+  }
+
+  getDynamicSubMenu(widgetName: string): SubMenuItem[] {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return [];
+    return this.dynamicSubMenus()[activeProfileIndex][widgetName] || [];
+  }
+
+  updateDynamicSubMenu(widgetName: string, subMenus: SubMenuItem[]) {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return;
+
+    this.dynamicSubMenus.update(allMenus => {
+      const newAllMenus = [...allMenus];
+      newAllMenus[activeProfileIndex] = { 
+        ...newAllMenus[activeProfileIndex], 
+        [widgetName]: subMenus 
+      };
+      return newAllMenus;
+    });
+  }
+
+  clearDynamicSubMenus() {
+    const activeProfileIndex = this.activeProfileIndex();
+    if (activeProfileIndex === null) return;
+
+    this.dynamicSubMenus.update(allMenus => {
+      const newAllMenus = [...allMenus];
+      newAllMenus[activeProfileIndex] = {};
+      return newAllMenus;
+    });
+  }
+}
