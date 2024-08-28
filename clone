@@ -1,3 +1,91 @@
+
+@Injectable({ providedIn: 'root' })
+export class WidgetStateService {
+  // ... other properties and methods ...
+
+  updateWidgetState(widgetName: string, update: Partial<WidgetState>, profileIndex?: number) {
+    const index = profileIndex ?? this.activeProfileIndex();
+    if (index === null) return;
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      const profileStates = { ...newAllStates[index] };
+      if (profileStates[widgetName]) {
+        profileStates[widgetName] = { ...profileStates[widgetName], ...update };
+        this.updateParentStates(widgetName, profileStates, index);
+      }
+      newAllStates[index] = profileStates;
+      return newAllStates;
+    });
+  }
+
+  private updateParentStates(widgetName: string, profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const updateRecursively = (items: (WidgetConfig | SubMenuItem)[]): boolean => {
+      for (const item of items) {
+        if (item.name === widgetName) {
+          return true;
+        }
+        
+        const subItems = this.getSubMenuItems(item);
+        if (subItems.some(subItem => subItem.name === widgetName || updateRecursively([subItem]))) {
+          this.updateParentState(item.name, subItems.map(subItem => profileStates[subItem.name]), profileStates, profileIndex);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    updateRecursively(WIDGET_CONFIG);
+  }
+
+  private updateParentState(parentName: string, childStates: WidgetState[], profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const allChildrenCompleted = childStates.every(state => state?.status === 'completed');
+    const anyChildError = childStates.some(state => state?.hasError);
+    const allChildrenAcknowledged = childStates.every(state => state?.acknowledged);
+    const anyChildVisited = childStates.some(state => state?.visited);
+
+    let newStatus: WidgetState['status'] = 'pending';
+    if (allChildrenCompleted) newStatus = 'completed';
+    else if (anyChildError) newStatus = 'error';
+    else if (childStates.some(state => state?.status === 'in-progress')) newStatus = 'in-progress';
+
+    const parentUpdate: Partial<WidgetState> = {
+      status: newStatus,
+      acknowledged: allChildrenAcknowledged,
+      visited: anyChildVisited || profileStates[parentName]?.visited || false,
+      hasError: anyChildError
+    };
+
+    this.profileWidgetStates.update(allStates => {
+      const newAllStates = [...allStates];
+      const profileStates = { ...newAllStates[profileIndex] };
+      profileStates[parentName] = { ...profileStates[parentName], ...parentUpdate };
+      newAllStates[profileIndex] = profileStates;
+      return newAllStates;
+    });
+  }
+
+  private getSubMenuItems(item: WidgetConfig | SubMenuItem): (WidgetConfig | SubMenuItem)[] {
+    if (Array.isArray(item.subMenu)) {
+      return item.subMenu;
+    } else if (item.subMenu === 'dynamic' || item.subMenu === 'api') {
+      // Assuming you have a method to get dynamic sub-menu items
+      return this.getDynamicSubMenuItems(item.name);
+    }
+    return [];
+  }
+
+  private getDynamicSubMenuItems(widgetName: string): (WidgetConfig | SubMenuItem)[] {
+    // Implement this method to return dynamic sub-menu items
+    // This could involve fetching from another service or stored data
+    // For now, we'll return an empty array as a placeholder
+    return [];
+  }
+
+  // ... other methods ...
+}
+
+---------
 import { Injectable, signal, computed, WritableSignal } from '@angular/core';
 import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
 
