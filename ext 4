@@ -1,3 +1,67 @@
+
+import { AbstractControl, FormGroup } from '@angular/forms';
+import { FieldItem, UIReadViewOptions, FormLayout } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods remain the same
+
+  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}, formLayouts?: WeakMap<FormGroup, FormLayout>): FieldItem[] {
+    let readView: FieldItem[];
+
+    if (control instanceof FormGroup && formLayouts && formLayouts.has(control)) {
+      const layout = formLayouts.get(control)!;
+      readView = this.applyLayoutToFormGroup(control, layout);
+    } else {
+      readView = this.getBasicReadViewForControl(control);
+    }
+
+    return this.filterAndFormatReadView(readView, options);
+  }
+
+  private filterAndFormatReadView(items: FieldItem[], options: UIReadViewOptions): FieldItem[] {
+    return items.map(item => this.filterAndFormatItem(item, options)).filter(Boolean) as FieldItem[];
+  }
+
+  private filterAndFormatItem(item: FieldItem, options: UIReadViewOptions): FieldItem | null {
+    if (!this.shouldIncludeItem(item, options)) return null;
+
+    const formattedItem: FieldItem = { ...item };
+
+    if (!options.includeOldValues) {
+      delete formattedItem.oldValue;
+    }
+
+    if (!options.includeErrors) {
+      delete formattedItem.errors;
+    }
+
+    if (formattedItem.fields) {
+      formattedItem.fields = this.filterAndFormatReadView(formattedItem.fields, options);
+    }
+
+    return formattedItem;
+  }
+
+  private shouldIncludeItem(item: FieldItem, options: UIReadViewOptions): boolean {
+    if (options.includeSections && item.sectionName) {
+      return options.includeSections.includes(item.sectionName);
+    }
+    if (options.excludeSections && item.sectionName) {
+      return !options.excludeSections.includes(item.sectionName);
+    }
+    if (options.includeFields && item.fldName) {
+      return options.includeFields.includes(item.fldName);
+    }
+    if (options.excludeFields && item.fldName) {
+      return !options.excludeFields.includes(item.fldName);
+    }
+    return true;
+  }
+
+  // ... other methods remain the same
+}
+
+---------------
 import { Injectable } from '@angular/core';
 import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
 import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
