@@ -1,0 +1,122 @@
+import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn } from '@angular/forms';
+import { ExtendedControlOptions, ExtendedAbstractControl, FieldItem, LayoutField, FormLayout, UIReadViewOptions } from './form-extension.types';
+import { FormExtensionHelpers } from './form-extension.helpers';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionService {
+  private updateTrigger = signal(0);
+  private readViewCache = new WeakMap<AbstractControl, Signal<FieldItem[]>>();
+  private formLayouts = new WeakMap<FormGroup, FormLayout>();
+  private extendedPropertiesCache = new WeakMap<AbstractControl, ExtendedControlOptions>();
+  private customValidatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
+
+  constructor(
+    private fb: FormBuilder,
+    private helpers: FormExtensionHelpers
+  ) {
+    effect(() => {
+      this.updateTrigger();
+      this.clearCaches();
+    });
+  }
+
+  extendControl(control: AbstractControl, options: ExtendedControlOptions): void {
+    const extendedControl = control as ExtendedAbstractControl;
+    let changed = this.helpers.updateControlProperties(extendedControl, options);
+
+    if (changed) {
+      if (control instanceof FormGroup || control instanceof FormArray) {
+        this.helpers.extendNestedControls(control, this);
+      }
+      this.helpers.updateValidators(control, this.customValidatorsCache);
+      this.triggerUpdate();
+    }
+  }
+
+  updateControlProperty<K extends keyof ExtendedControlOptions>(
+    control: AbstractControl,
+    property: K,
+    value: ExtendedControlOptions[K]
+  ): void {
+    const extendedControl = control as ExtendedAbstractControl;
+    if (this.helpers.shouldUpdateProperty(extendedControl, property, value)) {
+      (extendedControl as any)[property] = value;
+      if (property === 'required' || property === 'regex') {
+        this.helpers.updateValidators(control, this.customValidatorsCache);
+      }
+      this.triggerUpdate();
+    }
+  }
+
+  setFormGroupLayout(formGroup: FormGroup, layout: FormLayout): void {
+    const sortedLayout = this.helpers.sortFormLayout(layout);
+    this.formLayouts.set(formGroup, sortedLayout);
+    this.triggerUpdate();
+  }
+
+  getExtendedReadView(control: AbstractControl): Signal<FieldItem[]> {
+    if (!this.readViewCache.has(control)) {
+      const readViewSignal = computed(() => {
+        this.updateTrigger();
+        return untracked(() => this.helpers.getExtendedReadViewForControl(control, this.formLayouts));
+      });
+      this.readViewCache.set(control, readViewSignal);
+    }
+    return this.readViewCache.get(control)!;
+  }
+
+  registerCustomComputation(control: AbstractControl, computation: (control: AbstractControl, form: FormGroup) => any): void {
+    (control as ExtendedAbstractControl)._customComputation = computation;
+    this.triggerUpdate();
+  }
+
+  applyDefaultValues(control: AbstractControl, storeOldValue: boolean = false): void {
+    this.helpers.applyDefaultValuesRecursive(control, storeOldValue);
+    this.triggerUpdate();
+  }
+
+  getOldValue(control: AbstractControl): any | undefined {
+    return (control as ExtendedAbstractControl)._oldValue;
+  }
+
+  getExtendedProperties(control: AbstractControl): Partial<ExtendedControlOptions> {
+    if (!this.extendedPropertiesCache.has(control)) {
+      const properties = this.helpers.getExtendedProperties(control as ExtendedAbstractControl);
+      this.extendedPropertiesCache.set(control, properties);
+    }
+    return this.extendedPropertiesCache.get(control)!;
+  }
+
+  addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
+    this.helpers.addCustomValidator(control, validator, this.customValidatorsCache);
+    this.helpers.updateValidators(control, this.customValidatorsCache);
+    this.triggerUpdate();
+  }
+
+  removeCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
+    this.helpers.removeCustomValidator(control, validator, this.customValidatorsCache);
+    this.helpers.updateValidators(control, this.customValidatorsCache);
+    this.triggerUpdate();
+  }
+
+  handleArrayOperation(formArray: FormArray, operation: 'add' | 'remove', index?: number): void {
+    this.helpers.handleArrayOperation(formArray, operation, index);
+    this.triggerUpdate();
+  }
+
+  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}): FieldItem[] {
+    return this.helpers.getUIReadView(control, options);
+  }
+
+  private triggerUpdate(): void {
+    this.updateTrigger.update(v => v + 1);
+  }
+
+  private clearCaches(): void {
+    this.readViewCache = new WeakMap();
+    this.extendedPropertiesCache = new WeakMap();
+  }
+}
