@@ -1,3 +1,88 @@
+private createFieldItem(field: LayoutField, formGroup: FormGroup): FieldItem | null {
+    const control = formGroup.get(field.fldName!);
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    let baseItem: FieldItem = {
+      ...field,
+      value: null,
+      type: field.type || 'field'
+    };
+
+    switch (field.type) {
+      case 'subHeader':
+        return { ...baseItem, isSubHeader: true };
+      case 'reqDivider':
+        return { ...baseItem, isReqDivider: true };
+      case 'divider':
+        return { ...baseItem, isDivider: true, dividerClass: field.dividerClass };
+      case 'staticComponent':
+        return { 
+          ...baseItem, 
+          isStaticComponent: true, 
+          staticComponentName: field.staticComponent 
+        };
+      case 'injectedComponent':
+        return this.createInjectedComponentItem(field, formGroup);
+      case 'arraySimple':
+      case 'arrayGroup':
+        return this.createArrayFieldItem(field, formGroup);
+      default:
+        return this.createDefaultFieldItem(field, control, formGroup);
+    }
+  }
+
+  private createInjectedComponentItem(field: LayoutField, formGroup: FormGroup): FieldItem {
+    const controlValues = field.injectedComponentInputs?.map(input => 
+      formGroup.get(input)?.value
+    ) || [];
+
+    return {
+      ...field,
+      type: 'injectedComponent',
+      value: controlValues,
+      isInjectedComponent: true,
+      injectedComponentName: field.injectedComponent,
+      injectedComponentInputs: controlValues,
+      injectedComponentOutputs: field.injectedComponentOutputs
+    };
+  }
+
+  private createArrayFieldItem(field: LayoutField, formGroup: FormGroup): FieldItem {
+    const control = formGroup.get(field.fldName!) as FormArray;
+    return {
+      ...field,
+      type: field.type as 'arraySimple' | 'arrayGroup',
+      value: control.value,
+      isArray: true,
+      fields: control.controls.map((ctrl, index) => 
+        this.createFieldItem({ ...field, fldName: `${field.fldName}.${index}` }, formGroup)
+      ).filter(Boolean) as FieldItem[]
+    };
+  }
+
+  private createDefaultFieldItem(field: LayoutField, control: AbstractControl, formGroup: FormGroup): FieldItem {
+    const extendedControl = control as ExtendedAbstractControl;
+    const rawValue = control.value;
+    const transformedValue = this.transformValue(rawValue, extendedControl);
+
+    return {
+      ...field,
+      type: 'field',
+      value: transformedValue,
+      computedValue: extendedControl._customComputation ? extendedControl._customComputation(control, formGroup) : transformedValue,
+      oldValue: extendedControl._oldValue,
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+  }
+
+
+
 Form Extension Types
 -------------------------
 import { AbstractControl, FormGroup, ValidationErrors } from '@angular/forms';
@@ -41,6 +126,14 @@ export type ExtendedControlProperties = {
 
 export type ExtendedAbstractControl = AbstractControl & ExtendedControlProperties;
 
+export interface LayoutField extends ExtendedControlOptions {
+  seq: number;
+  side: 'left' | 'right' | 'full';
+  type?: 'field' | 'subHeader' | 'divider' | 'reqDivider' | 'injectedComponent' | 'staticComponent' | 'arraySimple' | 'arrayGroup';
+  fields?: LayoutField[];
+  dividerClass?: string;
+}
+
 export interface FieldItem extends ExtendedControlOptions {
   value: any;
   computedValue?: any;
@@ -61,13 +154,6 @@ export interface FieldItem extends ExtendedControlOptions {
   isDivider?: boolean;
   dividerClass?: string;
   type?: 'field' | 'subHeader' | 'divider' | 'reqDivider' | 'injectedComponent' | 'staticComponent' | 'arraySimple' | 'arrayGroup' | string;
-}
-
-export interface LayoutField extends ExtendedControlOptions {
-  seq: number;
-  side: 'left' | 'right' | 'full';
-  type?: 'field' | 'subHeader' | 'divider' | 'reqDivider' | 'injectedComponent' | 'staticComponent' | 'arraySimple' | 'arrayGroup';
-  fields?: LayoutField[];
 }
 
 export interface LayoutSection {
