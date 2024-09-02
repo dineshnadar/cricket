@@ -1,3 +1,51 @@
+private getFieldsReadViewItems(control: FormGroup | FormArray): FieldItem[] {
+  if (control instanceof FormGroup) {
+    return Object.entries(control.controls).map(([key, childControl]) => 
+      this.createFieldItem({ 
+        fldName: key, 
+        side: 'full', 
+        seq: 0,
+        type: this.getFieldType(childControl)
+      }, control)
+    ).filter((item): item is FieldItem => item !== null);
+  } else if (control instanceof FormArray) {
+    return control.controls.map((childControl, index) => 
+      this.createFieldItem({ 
+        fldName: index.toString(), 
+        side: 'full', 
+        seq: index,
+        type: this.getFieldType(childControl)
+      }, control.parent || control, index)
+    ).filter((item): item is FieldItem => item !== null);
+  }
+  return [];
+}
+
+private getFieldType(control: AbstractControl): string {
+  if (control instanceof FormGroup) {
+    return 'arrayGroup';
+  } else if (control instanceof FormArray) {
+    return 'arraySimple';
+  } else {
+    return 'field';
+  }
+}
+
+private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+  let control: AbstractControl | null;
+  
+  if (parentControl instanceof FormArray) {
+    control = parentControl.at(arrayIndex!);
+  } else {
+    control = parentControl.get(field.fldName!);
+  }
+
+  if (!control) return null;
+
+  // ... rest of the createFieldItem method
+}
+------------
+
 private createFieldItem(field: LayoutField, formGroup: FormGroup): FieldItem | null {
     const control = formGroup.get(field.fldName!);
     if (!control) return null;
