@@ -723,3 +723,54 @@ export class FormExtensionService {
     this.extendedPropertiesCache = new WeakMap();
   }
 }
+
+------------
+function parseDateAndFormat(input: string): string | null {
+  // Regular expression to match YYYY-MM-DD format
+  const dateRegex = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const match = input.match(dateRegex);
+
+  if (match) {
+    const [, year, month, day] = match;
+    
+    // Validate month and day
+    const monthNum = parseInt(month, 10);
+    const dayNum = parseInt(day, 10);
+    
+    if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) {
+      return null; // Invalid month or day
+    }
+    
+    // Create a Date object to validate the date (e.g., catch invalid dates like 2023-02-31)
+    const date = new Date(parseInt(year, 10), monthNum - 1, dayNum);
+    if (
+      date.getFullYear() !== parseInt(year, 10) ||
+      date.getMonth() !== monthNum - 1 ||
+      date.getDate() !== dayNum
+    ) {
+      return null; // Invalid date
+    }
+    
+    // Format as MM/DD/YYYY
+    return `${monthNum.toString().padStart(2, '0')}/${dayNum.toString().padStart(2, '0')}/${year}`;
+  }
+
+  return null; // No match found
+}
+
+// Usage example
+function processDateString(input: string): void {
+  const formattedDate = parseDateAndFormat(input);
+  if (formattedDate) {
+    console.log(`Formatted date: ${formattedDate}`);
+  } else {
+    console.log('Invalid date format or date');
+  }
+}
+
+// Test cases
+processDateString('2023-03-14'); // Should output: Formatted date: 03/14/2023
+processDateString('2023-02-28'); // Should output: Formatted date: 02/28/2023
+processDateString('2023-02-31'); // Should output: Invalid date format or date
+processDateString('2023-13-01'); // Should output: Invalid date format or date
+processDateString('not a date'); // Should output: Invalid date format or date
