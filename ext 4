@@ -1,3 +1,542 @@
+import { Injectable } from '@angular/core';
+import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
+import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionHelpers {
+  constructor(private fb: FormBuilder) {}
+
+  updateControlProperties(control: ExtendedAbstractControl, options: ExtendedControlOptions): boolean {
+    let changed = false;
+    Object.entries(options).forEach(([key, value]) => {
+      if (key in control) {
+        if (key === 'regex') {
+          if (!this.areRegexArraysEqual(control[key] as string[], value as string[])) {
+            (control as any)[key] = value;
+            changed = true;
+          }
+        } else if (control[key as keyof ExtendedAbstractControl] !== value) {
+          (control as any)[key] = value;
+          changed = true;
+        }
+      }
+    });
+    return changed;
+  }
+
+  areRegexArraysEqual(arr1?: string[], arr2?: string[]): boolean {
+    if (!arr1 && !arr2) return true;
+    if (!arr1 || !arr2) return false;
+    if (arr1.length !== arr2.length) return false;
+    return arr1.every((regex, index) => regex === arr2[index]);
+  }
+
+  extendNestedControls(control: FormGroup | FormArray, service: any): void {
+    if (control instanceof FormGroup) {
+      Object.values(control.controls).forEach(childControl => {
+        this.extendSingleControl(childControl, service);
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(childControl => {
+        this.extendSingleControl(childControl, service);
+      });
+    }
+  }
+
+  private extendSingleControl(control: AbstractControl, service: any): void {
+    if (!this.hasExtendedProperties(control)) {
+      service.extendControl(control, {});
+    }
+    if (control instanceof FormGroup || control instanceof FormArray) {
+      this.extendNestedControls(control, service);
+    }
+  }
+
+  hasExtendedProperties(control: AbstractControl): boolean {
+    return 'label' in control || 'fldName' in control;
+  }
+
+  updateValidators(control: AbstractControl, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
+    const extendedControl = control as ExtendedAbstractControl;
+    const validators: ValidatorFn[] = [];
+
+    if (extendedControl.required) {
+      validators.push(Validators.required);
+    }
+
+    if (extendedControl.regex && extendedControl.regex.length > 0) {
+      validators.push(Validators.pattern(extendedControl.regex.join('|')));
+    }
+
+    if (extendedControl.fldMax !== undefined) {
+      validators.push(Validators.max(extendedControl.fldMax));
+    }
+
+    const customValidators = customValidatorsCache.get(control) || [];
+    validators.push(...customValidators);
+
+    control.setValidators(validators);
+    control.updateValueAndValidity();
+  }
+
+  shouldUpdateProperty<K extends keyof ExtendedControlOptions>(
+    control: ExtendedAbstractControl,
+    property: K,
+    value: ExtendedControlOptions[K]
+  ): boolean {
+    if (property === 'regex') {
+      return !this.areRegexArraysEqual(control[property] as string[], value as string[]);
+    }
+    return control[property] !== value;
+  }
+
+  sortFormLayout(layout: FormLayout): FormLayout {
+    return {
+      ...layout,
+      sections: layout.sections.map(section => ({
+        ...section,
+        fields: [...section.fields].sort((a, b) => a.seq - b.seq)
+      }))
+    };
+  }
+
+  getExtendedReadViewForControl(control: AbstractControl, formLayouts: WeakMap<FormGroup, FormLayout>): FieldItem[] {
+    if (control instanceof FormGroup) {
+      const layout = formLayouts.get(control);
+      if (layout) {
+        return this.applyLayoutToFormGroup(control, layout);
+      }
+    }
+    return this.getBasicReadViewForControl(control);
+  }
+
+  private applyLayoutToFormGroup(formGroup: FormGroup, layout: FormLayout): FieldItem[] {
+    return layout.sections.flatMap(section => this.createSectionItems(section, formGroup));
+  }
+
+  private createSectionItems(section: LayoutSection, formGroup: FormGroup): FieldItem[] {
+    if (section.type === 'divider') {
+      return [{
+        label: '',
+        fldName: `divider_${Date.now()}`,
+        type: 'divider',
+        editable: false,
+        visible: true,
+        expand: false,
+        value: null,
+        isDivider: true,
+        dividerClass: section.dividerClass
+      }];
+    }
+
+    const sectionItem: FieldItem = {
+      label: this.getSectionLabel(section),
+      fldName: `section_${section.type}`,
+      type: section.type,
+      editable: false,
+      visible: true,
+      expand: true,
+      value: null,
+      fields: [],
+      labelWidth: section.labelWidth
+    };
+
+    sectionItem.fields = section.fields.map(field => this.createFieldItem(field, formGroup)).filter(Boolean) as FieldItem[];
+    return [sectionItem];
+  }
+
+  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+    let control: AbstractControl | null;
+    
+    if (parentControl instanceof FormArray) {
+      control = parentControl.at(arrayIndex!);
+    } else {
+      control = parentControl.get(field.fldName!);
+    }
+
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    let baseItem: FieldItem = {
+      ...field,
+      value: control.value,
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+
+    switch (field.type) {
+      case 'subHeader':
+        return { ...baseItem, isSubHeader: true };
+      case 'reqDivider':
+        return { ...baseItem, isReqDivider: true };
+      case 'divider':
+        return { ...baseItem, isDivider: true };
+      case 'staticComponent':
+        return { 
+          ...baseItem, 
+          isStaticComponent: true, 
+          staticComponentName: field.staticComponent 
+        };
+      case 'injectedComponent':
+        return this.createInjectedComponentItem(baseItem, parentControl);
+      case 'arraySimple':
+      case 'arrayGroup':
+        return this.createArrayFieldItem(baseItem, parentControl);
+      default:
+        return this.createDefaultFieldItem(baseItem, control, parentControl);
+    }
+  }
+
+  private createInjectedComponentItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
+    const controlValues = baseItem.injectedComponentInputs?.map(input => 
+      parentControl instanceof FormGroup ? parentControl.get(input)?.value : null
+    ) || [];
+
+    return {
+      ...baseItem,
+      type: 'injectedComponent',
+      value: controlValues,
+      isInjectedComponent: true,
+      injectedComponentName: baseItem.injectedComponent,
+      injectedComponentInputs: controlValues,
+      injectedComponentOutputs: baseItem.injectedComponentOutputs
+    };
+  }
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
+
+    return {
+      ...baseItem,
+      type: baseItem.type as 'arraySimple' | 'arrayGroup',
+      value: control.value,
+      isArray: true,
+      fields: control.controls.map((ctrl, index) => {
+        const childLayoutField: LayoutField = {
+          fldName: `${baseItem.fldName}.${index}`,
+          seq: index,
+          side: 'full',
+          type: this.getFieldType(ctrl)
+        };
+        return this.createFieldItem(childLayoutField, control, index);
+      }).filter(Boolean) as FieldItem[]
+    };
+  }
+
+  private createDefaultFieldItem(baseItem: FieldItem, control: AbstractControl, parentControl: FormGroup | FormArray): FieldItem {
+    const extendedControl = control as ExtendedAbstractControl;
+    const rawValue = control.value;
+    const transformedValue = this.transformValue(rawValue, extendedControl);
+
+    return {
+      ...baseItem,
+      type: 'field',
+      value: transformedValue,
+      computedValue: extendedControl._customComputation ? extendedControl._customComputation(control, parentControl) : transformedValue,
+      oldValue: extendedControl._oldValue
+    };
+  }
+
+  private getFieldType(control: AbstractControl): LayoutField['type'] {
+    if (control instanceof FormGroup) {
+      return 'arrayGroup';
+    } else if (control instanceof FormArray) {
+      return 'arraySimple';
+    } else {
+      return 'field';
+    }
+  }
+
+  private getSectionLabel(section: LayoutSection): string {
+    switch (section.type) {
+      case 'leftHeader':
+      case 'leftRightHeader':
+        return section.leftHeader || '';
+      case 'commonHeader':
+        return section.commonHeader || '';
+      case 'accordion':
+      case 'accordionHeader':
+        return section.accordionHeader || '';
+      default:
+        return '';
+    }
+  }
+
+  private transformValue(value: any, control: ExtendedAbstractControl): any {
+    if (value === 'Y') return 'Yes';
+    if (value === 'N') return 'No';
+
+    if (control.lookupData && Array.isArray(control.lookupData)) {
+      const matchingLookup = control.lookupData.find(item => item.value === value);
+      if (matchingLookup) return matchingLookup.label;
+    }
+
+    return value;
+  }
+
+  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}): FieldItem[] {
+    console.log('Getting UI Read View for control:', control);
+    const readView = this.getExtendedReadViewForControl(control, new WeakMap());
+    console.log('Initial read view:', readView);
+    const filteredView = this.filterAndFormatReadView(readView, options);
+    console.log('Filtered and formatted view:', filteredView);
+    return filteredView;
+  }
+
+  private filterAndFormatReadView(items: FieldItem[], options: UIReadViewOptions): FieldItem[] {
+    return items.filter(item => this.shouldIncludeItem(item, options))
+      .map(item => this.formatItem(item, options));
+  }
+
+  private shouldIncludeItem(item: FieldItem, options: UIReadViewOptions): boolean {
+    if (options.includeSections && item.sectionName) {
+      return options.includeSections.includes(item.sectionName);
+    }
+    if (options.excludeSections && item.sectionName) {
+      return !options.excludeSections.includes(item.sectionName);
+    }
+    if (options.includeFields && item.fldName) {
+      return options.includeFields.includes(item.fldName);
+    }
+    if (options.excludeFields && item.fldName) {
+      return !options.excludeFields.includes(item.fldName);
+    }
+    return true;
+  }
+
+  private formatItem(item: FieldItem, options: UIReadViewOptions): FieldItem {
+    const formattedItem: FieldItem = { ...item };
+
+    if (!options.includeOldValues) {
+      delete formattedItem.oldValue;
+    }
+
+    if (!options.includeErrors) {
+      delete formattedItem.errors;
+    }
+
+    if (formattedItem.fields) {
+      formattedItem.fields = this.filterAndFormatReadView(formattedItem.fields, options);
+    }
+
+    return formattedItem;
+  }
+
+  applyDefaultValuesRecursive(control: AbstractControl, storeOldValue: boolean): void {
+    const extendedControl = control as ExtendedAbstractControl;
+    
+    if (control instanceof FormGroup) {
+      if (extendedControl.dfltVal !== undefined && this.isFormGroupEmpty(control)) {
+        if (storeOldValue) {
+          extendedControl._oldValue = this.getFormGroupValue(control);
+        }
+        this.setFormGroupValue(control, extendedControl.dfltVal);
+      } else {
+        Object.values(control.controls).forEach(childControl => {
+          this.applyDefaultValuesRecursive(childControl, storeOldValue);
+        });
+      }
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(ctrl => {
+        this.applyDefaultValuesRecursive(ctrl, storeOldValue);
+      });
+    } else {
+      if (extendedControl.dfltVal !== undefined && control.value === null) {
+        if (storeOldValue) {
+          extendedControl._oldValue = control.value;
+        }
+        control.setValue(extendedControl.dfltVal);
+      }
+    }
+  }
+
+  private isFormGroupEmpty(group: FormGroup): boolean {
+    return Object.values(group.controls).every(control =>
+      control.value === null || control.value === '' || 
+      (control instanceof FormGroup && this.isFormGroupEmpty(control)) ||
+      (control instanceof FormArray && control.length === 0)
+    );
+  }
+
+  private getFormGroupValue(group: FormGroup): any {
+    const value: any = {};
+    Object.entries(group.controls).forEach(([key, control]) => {
+      if (control instanceof FormGroup) {
+        value[key] = this.getFormGroupValue(control);
+      } else if (control instanceof FormArray) {
+        value[key] = control.controls.map(ctrl => 
+          ctrl instanceof FormGroup ? this.getFormGroupValue(ctrl) : ctrl.value
+        );
+      } else {
+        value[key] = control.value;
+      }
+    });
+    return value;
+  }
+
+  private setFormGroupValue(group: FormGroup, value: any): void {
+    if (typeof value === 'object' && value !== null) {
+      Object.entries(value).forEach(([key, val]) => {
+        const control = group.get(key);
+        if (control) {
+          if (control instanceof FormGroup && typeof val === 'object') {
+            this.setFormGroupValue(control, val);
+          } else if (control instanceof FormArray && Array.isArray(val)) {
+            this.setFormArrayValue(control, val);
+          } else {
+            control.setValue(val);
+          }
+        }
+      });
+    }
+  }
+
+  private setFormArrayValue(array: FormArray, values: any[]): void {
+    while (array.length) {
+      array.removeAt(0);
+    }
+
+    values.forEach(value => {
+      if (typeof value === 'object' && value !== null) {
+        const group = this.fb.group({});
+        this.setFormGroupValue(group, value);
+        array.push(group);
+      } else {
+        array.push(this.fb.control(value));
+      }
+    });
+  }
+
+  getExtendedProperties(control: ExtendedAbstractControl): Partial<ExtendedControlOptions> {
+    return {
+      label: control.label,
+      fldName: control.fldName,
+      visible: control.visible,
+      editable: control.editable,
+      lookup: control.lookup,
+      lookupData: control.lookupData,
+      regex: control.regex,
+      fldMax: control.fldMax,
+      fieldType: control.fieldType,
+      dfltVal: control.dfltVal,
+      required: control.required,
+      oldValue: control._oldValue,
+      expand: control.expand,
+      sectionName: control.sectionName,
+      subSectionName: control.subSectionName,
+      reqBorder: control.reqBorder,
+      subName: control.subName,
+      align: control.align,
+      isArray: control.isArray,
+      combineFields: control.combineFields,
+      combineSeparator: control.combineSeparator,
+      customCombine: control.customCombine,
+      injectedComponent: control.injectedComponent,
+      injectedComponentInputs: control.injectedComponentInputs,
+      injectedComponentOutputs: control.injectedComponentOutputs,
+      staticComponent: control.staticComponent
+    };
+  }
+
+  addCustomValidator(control: AbstractControl, validator: ValidatorFn, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
+    const currentValidators = customValidatorsCache.get(control) || [];
+    currentValidators.push(validator);
+    customValidatorsCache.set(control, currentValidators);
+  }
+
+  removeCustomValidator(control: AbstractControl, validator: ValidatorFn, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
+    const currentValidators = customValidatorsCache.get(control) || [];
+    const index = currentValidators.indexOf(validator);
+    if (index > -1) {
+      currentValidators.splice(index, 1);
+      customValidatorsCache.set(control, currentValidators);
+    }
+  }
+
+  handleArrayOperation(formArray: FormArray, operation: 'add' | 'remove', index?: number): void {
+    const arrayExtendedControl = formArray as ExtendedAbstractControl;
+    
+    if (operation === 'add') {
+      if (arrayExtendedControl.fieldType === 'arrayGroup') {
+        const newGroup = this.createNewArrayGroupItem(formArray);
+        formArray.push(newGroup);
+      } else if (arrayExtendedControl.fieldType === 'arraySimple') {
+        formArray.push(this.fb.control(null));
+      }
+    } else if (operation === 'remove' && index !== undefined) {
+      formArray.removeAt(index);
+    }
+  }
+
+  private createNewArrayGroupItem(formArray: FormArray): FormGroup {
+    const template = (formArray.at(0) as FormGroup).controls;
+    const newGroup = this.fb.group({});
+    Object.entries(template).forEach(([key, control]) => {
+      newGroup.addControl(key, this.fb.control(null, control.validator));
+      // Extend the new control with the same properties as the template
+      const templateExtendedControl = control as ExtendedAbstractControl;
+      const newExtendedControl = newGroup.get(key) as ExtendedAbstractControl;
+      Object.assign(newExtendedControl, this.getExtendedProperties(templateExtendedControl));
+    });
+    return newGroup;
+  }
+
+  getBasicReadViewForControl(control: AbstractControl): FieldItem[] {
+    if (control instanceof FormGroup || control instanceof FormArray) {
+      return this.getFieldsReadViewItems(control);
+    } else {
+      const extendedControl = control as ExtendedAbstractControl;
+      return [{
+        fldName: extendedControl.fldName || '',
+        label: extendedControl.label || '',
+        value: control.value,
+        type: 'field',
+        isValid: control.valid,
+        errors: control.errors,
+        status: control.status,
+        touched: control.touched,
+        dirty: control.dirty
+      }];
+    }
+  }
+
+  private getFieldsReadViewItems(control: FormGroup | FormArray): FieldItem[] {
+    if (control instanceof FormGroup) {
+      return Object.entries(control.controls).map(([key, childControl]) => 
+        this.createFieldItem({
+          fldName: key,
+          side: 'full',
+          seq: 0,
+          type: this.getFieldType(childControl)
+        }, control)
+      ).filter((item): item is FieldItem => item !== null);
+    } else if (control instanceof FormArray) {
+      return control.controls.map((childControl, index) => 
+        this.createFieldItem({
+          fldName: index.toString(),
+          side: 'full',
+          seq: index,
+          type: this.getFieldType(childControl)
+        }, control, index)
+      ).filter((item): item is FieldItem => item !== null);
+    }
+    return [];
+  }
+}
+
+
+
+
+
+---------------------------------------
 import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
 import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn } from '@angular/forms';
 import { ExtendedControlOptions, ExtendedAbstractControl, FieldItem, LayoutField, FormLayout, UIReadViewOptions } from './form-extension.types';
