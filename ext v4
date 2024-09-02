@@ -1,3 +1,135 @@
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { LayoutField, FieldItem, ExtendedAbstractControl } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods
+
+  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+    let control: AbstractControl | null;
+    
+    if (parentControl instanceof FormArray) {
+      control = parentControl.at(arrayIndex!);
+    } else {
+      control = parentControl.get(field.fldName!);
+    }
+
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    let baseItem: FieldItem = {
+      ...field,
+      value: control.value,
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+
+    switch (field.type) {
+      case 'subHeader':
+        return { ...baseItem, isSubHeader: true };
+
+      case 'reqDivider':
+        return { ...baseItem, isReqDivider: true };
+
+      case 'divider':
+        return { ...baseItem, isDivider: true };
+
+      case 'staticComponent':
+        return { 
+          ...baseItem, 
+          isStaticComponent: true, 
+          staticComponentName: field.staticComponent 
+        };
+
+      case 'injectedComponent':
+        return this.createInjectedComponentItem(baseItem, parentControl);
+
+      case 'arraySimple':
+      case 'arrayGroup':
+        return this.createArrayFieldItem(baseItem, parentControl);
+
+      default:
+        return this.createDefaultFieldItem(baseItem, control, parentControl);
+    }
+  }
+
+  private createInjectedComponentItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
+    const controlValues = baseItem.injectedComponentInputs?.map(input => 
+      parentControl instanceof FormGroup ? parentControl.get(input)?.value : null
+    ) || [];
+
+    return {
+      ...baseItem,
+      type: 'injectedComponent',
+      value: controlValues,
+      isInjectedComponent: true,
+      injectedComponentName: baseItem.injectedComponent,
+      injectedComponentInputs: controlValues,
+      injectedComponentOutputs: baseItem.injectedComponentOutputs
+    };
+  }
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray
+      : parentControl;
+
+    if (!(control instanceof FormArray)) {
+      console.error('Expected FormArray for array field', baseItem.fldName);
+      return baseItem;
+    }
+
+    return {
+      ...baseItem,
+      type: baseItem.type as 'arraySimple' | 'arrayGroup',
+      value: control.value,
+      isArray: true,
+      fields: control.controls.map((ctrl, index) => 
+        this.createFieldItem({ 
+          ...baseItem, 
+          fldName: `${baseItem.fldName}.${index}`,
+          seq: index,
+          type: ctrl instanceof FormGroup ? 'arrayGroup' : 'arraySimple'
+        }, control, index)
+      ).filter(Boolean) as FieldItem[]
+    };
+  }
+
+  private createDefaultFieldItem(baseItem: FieldItem, control: AbstractControl, parentControl: FormGroup | FormArray): FieldItem {
+    const extendedControl = control as ExtendedAbstractControl;
+    const rawValue = control.value;
+    const transformedValue = this.transformValue(rawValue, extendedControl);
+
+    return {
+      ...baseItem,
+      type: 'field',
+      value: transformedValue,
+      computedValue: extendedControl._customComputation 
+        ? extendedControl._customComputation(control, parentControl as FormGroup)
+        : transformedValue,
+      oldValue: extendedControl._oldValue
+    };
+  }
+
+  private transformValue(value: any, control: ExtendedAbstractControl): any {
+    if (value === 'Y') return 'Yes';
+    if (value === 'N') return 'No';
+
+    if (control.lookupData && Array.isArray(control.lookupData)) {
+      const matchingLookup = control.lookupData.find(item => item.value === value);
+      if (matchingLookup) return matchingLookup.label;
+    }
+
+    return value;
+  }
+
+  // ... other methods
+}
+
+-------
 private getFieldsReadViewItems(control: FormGroup | FormArray): FieldItem[] {
   if (control instanceof FormGroup) {
     return Object.entries(control.controls).map(([key, childControl]) => 
