@@ -1,0 +1,93 @@
+import { AbstractControl, FormGroup, ValidationErrors } from '@angular/forms';
+
+export interface ExtendedControlOptions {
+  label?: string;
+  fldName?: string;
+  visible?: boolean;
+  editable?: boolean;
+  lookup?: string;
+  lookupData?: Array<{ label: string; value: any }>;
+  regex?: string[];
+  fldMax?: number;
+  fieldType?: string;
+  dfltVal?: any;
+  required?: boolean;
+  oldValue?: any;
+  expand?: boolean;
+  sectionName?: string;
+  subSectionName?: string;
+  reqBorder?: boolean;
+  subName?: string;
+  align?: string;
+  isArray?: boolean;
+  combineFields?: string[];
+  combineSeparator?: string;
+  customCombine?: boolean;
+  injectedComponent?: string;
+  injectedComponentInputs?: string[];
+  injectedComponentOutputs?: { [key: string]: string[] };
+  staticComponent?: string;
+}
+
+export type ExtendedControlProperties = {
+  [K in keyof ExtendedControlOptions]: NonNullable<ExtendedControlOptions[K]>;
+} & {
+  _oldValue?: any;
+  _customComputation?: (control: AbstractControl, form: FormGroup) => any;
+};
+
+export type ExtendedAbstractControl = AbstractControl & ExtendedControlProperties;
+
+export interface FieldItem extends ExtendedControlOptions {
+  value: any;
+  computedValue?: any;
+  isValid?: boolean;
+  errors?: ValidationErrors | null;
+  status?: string;
+  touched?: boolean;
+  dirty?: boolean;
+  isCombined?: boolean;
+  useHtml?: boolean;
+  isInjectedComponent?: boolean;
+  injectedComponentName?: string;
+  isStaticComponent?: boolean;
+  staticComponentName?: string;
+  children?: FieldItem[];
+  isSubHeader?: boolean;
+  isReqDivider?: boolean;
+  isDivider?: boolean;
+  dividerClass?: string;
+  type?: 'field' | 'subHeader' | 'divider' | 'reqDivider' | 'injectedComponent' | 'staticComponent' | 'arraySimple' | 'arrayGroup' | string;
+}
+
+export interface LayoutField extends ExtendedControlOptions {
+  seq: number;
+  side: 'left' | 'right' | 'full';
+  type?: 'field' | 'subHeader' | 'divider' | 'reqDivider' | 'injectedComponent' | 'staticComponent' | 'arraySimple' | 'arrayGroup';
+  children?: LayoutField[];
+}
+
+export interface LayoutSection {
+  type: 'leftHeader' | 'leftRightHeader' | 'commonHeader' | 'accordion' | 'accordionHeader' | 'divider';
+  leftHeader?: string;
+  rightHeader?: string;
+  commonHeader?: string;
+  accordionHeader?: string;
+  labelWidth?: string;
+  fields: LayoutField[];
+  dividerClass?: string;
+}
+
+export interface FormLayout {
+  type: 'standard' | 'noRightHeader' | 'multipleSection';
+  sections: LayoutSection[];
+}
+
+export interface UIReadViewOptions {
+  includeSections?: string[];
+  excludeSections?: string[];
+  includeFields?: string[];
+  excludeFields?: string[];
+  includeOldValues?: boolean;
+  includeErrors?: boolean;
+}
