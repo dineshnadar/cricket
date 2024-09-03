@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { forkJoin } from 'rxjs';
+import { forkJoin, firstValueFrom } from 'rxjs';
+import { catchError } from 'rxjs/operators';
 
 @Injectable({
   providedIn: 'root'
@@ -23,20 +24,24 @@ export class AccountService {
     
     try {
       const requests = accountNumbers.map(accountNumber => this.getAccountStatus(accountNumber));
-      const results = await forkJoin(requests).toPromise();
-      this.loading.set(false);
+      const results = await firstValueFrom(forkJoin(requests).pipe(
+        catchError(err => {
+          this.error.set('An error occurred while fetching account statuses.');
+          return [];
+        })
+      ));
       return results;
-    } catch (err) {
+    } finally {
       this.loading.set(false);
-      this.error.set('An error occurred while fetching account statuses.');
-      return [];
     }
   }
 }
 
 ----------------
 
-import { Component, OnInit, signal, computed } from '@angular/core';
+-----------
+
+import { Component, effect, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AccountService } from './account.service';
 
@@ -102,14 +107,18 @@ import { AccountService } from './account.service';
     }
   `]
 })
-export class AccountStatusComponent implements OnInit {
+export class AccountStatusComponent {
   private accountStatuses = signal<any[]>([]);
   fieldStatuses = computed(() => this.processAccountStatuses(this.accountStatuses()));
   fieldNames = computed(() => Object.keys(this.fieldStatuses() || {}));
 
-  constructor(public accountService: AccountService) {}
+  constructor(public accountService: AccountService) {
+    effect(() => {
+      this.loadAccountStatuses();
+    });
+  }
 
-  async ngOnInit() {
+  private async loadAccountStatuses() {
     const accountNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Example account numbers
     const statuses = await this.accountService.getMultipleAccountStatuses(accountNumbers);
     this.accountStatuses.set(statuses);
