@@ -1,5 +1,65 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { from, firstValueFrom, of } from 'rxjs';
+import { concatMap, catchError, toArray, delay, mergeMap } from 'rxjs/operators';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AccountService {
+  private apiUrl = 'https://api.example.com/account-status/';
+  private debounceTime = 300; // milliseconds between requests for debounced mode
+  
+  loading = signal(false);
+  error = signal<string | null>(null);
+
+  constructor(private http: HttpClient) {}
+
+  getAccountStatus(accountNumber: number) {
+    return this.http.get(`${this.apiUrl}${accountNumber}`);
+  }
+
+  async getMultipleAccountStatuses(accountNumbers: number[], mode: 'sequential' | 'debounced' = 'sequential') {
+    this.loading.set(true);
+    this.error.set(null);
+    
+    try {
+      let requests;
+      if (mode === 'sequential') {
+        requests = from(accountNumbers).pipe(
+          concatMap(accountNumber => this.getAccountStatus(accountNumber))
+        );
+      } else { // debounced mode
+        requests = from(accountNumbers).pipe(
+          mergeMap((accountNumber, index) => 
+            of(accountNumber).pipe(
+              delay(index * this.debounceTime),
+              mergeMap(num => this.getAccountStatus(num))
+            )
+          )
+        );
+      }
+
+      const results = await firstValueFrom(requests.pipe(
+        catchError(err => {
+          this.error.set('An error occurred while fetching account statuses.');
+          throw err; // Re-throw the error to stop the sequence
+        }),
+        toArray()
+      ));
+
+      return results;
+    } catch (error) {
+      console.error('Error fetching account statuses:', error);
+      return []; // Return an empty array in case of error
+    } finally {
+      this.loading.set(false);
+    }
+  }
+}
+----------------------
+import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { forkJoin, firstValueFrom } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 
