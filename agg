@@ -1,5 +1,136 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { Observable, from, of } from 'rxjs';
+import { concatMap, mergeMap, delay, catchError, toArray } from 'rxjs/operators';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AccountService {
+  private apiUrl = 'https://api.example.com/account-status/';
+  private debounceTime = 300; // milliseconds between requests for debounced mode
+  
+  loading = signal(false);
+  error = signal<string | null>(null);
+
+  constructor(private http: HttpClient) {}
+
+  private postAccountStatus(input: any): Observable<any> {
+    return this.http.post(this.apiUrl, input).pipe(
+      catchError(error => {
+        console.error(`Error posting account status for ${input.bn}:`, error);
+        return of({ error: error.message || 'An error occurred', input });
+      })
+    );
+  }
+
+  getMultipleAccountStatuses(inputs: any[], mode: 'sequential' | 'debounced' = 'sequential'): Observable<any[]> {
+    this.loading.set(true);
+    this.error.set(null);
+
+    let requests: Observable<any>;
+
+    if (mode === 'sequential') {
+      requests = from(inputs).pipe(
+        concatMap(input => this.postAccountStatus(input))
+      );
+    } else { // debounced mode
+      requests = from(inputs).pipe(
+        mergeMap((input, index) => 
+          of(input).pipe(
+            delay(index * this.debounceTime),
+            mergeMap(inp => this.postAccountStatus(inp))
+          )
+        )
+      );
+    }
+
+    return requests.pipe(
+      toArray(),
+      catchError(error => {
+        console.error('Unexpected error in getMultipleAccountStatuses:', error);
+        this.error.set('An unexpected error occurred while fetching account statuses.');
+        return of([]);
+      }),
+      mergeMap(results => {
+        this.loading.set(false);
+        return of(results);
+      })
+    );
+  }
+}
+
+------------
+
+
+import { Component, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { AccountService } from './account.service';
+
+@Component({
+  selector: 'app-account-status',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <button (click)="loadAccountStatuses('sequential')">Load Sequential</button>
+    <button (click)="loadAccountStatuses('debounced')">Load Debounced</button>
+    
+    <div *ngIf="accountService.loading()">Loading...</div>
+    <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
+    
+    <ul *ngIf="accountStatuses().length">
+      <li *ngFor="let status of accountStatuses()">
+        <ng-container *ngIf="!status.error">
+          BN: {{ status.bn }}, Address: {{ status.add }}
+          Status: {{ status | json }}
+        </ng-container>
+        <ng-container *ngIf="status.error">
+          Error for BN: {{ status.input.bn }}, Address: {{ status.input.add }}
+          Error: {{ status.error }}
+        </ng-container>
+      </li>
+    </ul>
+    
+    <div *ngIf="!accountService.loading() && !accountStatuses().length">No results to display.</div>
+  `
+})
+export class AccountStatusComponent {
+  accountStatuses = signal<any[]>([]);
+
+  constructor(public accountService: AccountService) {}
+
+  loadAccountStatuses(mode: 'sequential' | 'debounced') {
+    const inputs = [
+      { bn: "123", add: "456 Main St" },
+      { bn: "456", add: "789 Oak Rd" },
+      { bn: "789", add: "321 Pine Ave" }
+    ];
+
+    this.accountService.getMultipleAccountStatuses(inputs, mode).subscribe({
+      next: (statuses) => {
+        this.accountStatuses.set(statuses);
+      },
+      error: (error) => {
+        console.error('Error in component:', error);
+        this.accountStatuses.set([]); // Clear previous results on error
+      }
+    });
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+-------------
+import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { catchError, map } from 'rxjs/operators';
 import { Observable, of } from 'rxjs';
 
