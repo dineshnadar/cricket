@@ -1,0 +1,142 @@
+import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { forkJoin } from 'rxjs';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AccountService {
+  private apiUrl = 'https://api.example.com/account-status/'; // Replace with your actual API URL
+  
+  loading = signal(false);
+  error = signal<string | null>(null);
+
+  constructor(private http: HttpClient) {}
+
+  getAccountStatus(accountNumber: number) {
+    return this.http.get(`${this.apiUrl}${accountNumber}`);
+  }
+
+  async getMultipleAccountStatuses(accountNumbers: number[]) {
+    this.loading.set(true);
+    this.error.set(null);
+    
+    try {
+      const requests = accountNumbers.map(accountNumber => this.getAccountStatus(accountNumber));
+      const results = await forkJoin(requests).toPromise();
+      this.loading.set(false);
+      return results;
+    } catch (err) {
+      this.loading.set(false);
+      this.error.set('An error occurred while fetching account statuses.');
+      return [];
+    }
+  }
+}
+
+----------------
+
+import { Component, OnInit, signal, computed } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { AccountService } from './account.service';
+
+@Component({
+  selector: 'app-account-status',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    @if (accountService.loading()) {
+      <div class="loader">Loading...</div>
+    }
+    @if (accountService.error()) {
+      <div class="error">{{ accountService.error() }}</div>
+    }
+    @if (fieldStatuses() && !accountService.loading()) {
+      <table class="min-w-full bg-white border border-gray-300">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="py-2 px-4 border-b">Field</th>
+            <th class="py-2 px-4 border-b">Yes Accounts</th>
+            <th class="py-2 px-4 border-b">No Accounts</th>
+            <th class="py-2 px-4 border-b">Empty Accounts</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (field of fieldNames(); track field) {
+            <tr class="hover:bg-gray-50">
+              <td class="py-2 px-4 border-b font-medium">{{ field }}</td>
+              <td class="py-2 px-4 border-b bg-green-100">{{ fieldStatuses()[field].Yes.join(', ') }}</td>
+              <td class="py-2 px-4 border-b bg-red-100">{{ fieldStatuses()[field].No.join(', ') }}</td>
+              <td class="py-2 px-4 border-b bg-gray-100">{{ fieldStatuses()[field].Empty.join(', ') }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  `,
+  styles: [`
+    :host {
+      display: block;
+      padding: 1rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 1rem;
+      border: 1px solid #e5e7eb;
+    }
+    .loader {
+      text-align: center;
+      padding: 2rem;
+      font-size: 1.2rem;
+    }
+    .error {
+      color: red;
+      text-align: center;
+      padding: 1rem;
+    }
+  `]
+})
+export class AccountStatusComponent implements OnInit {
+  private accountStatuses = signal<any[]>([]);
+  fieldStatuses = computed(() => this.processAccountStatuses(this.accountStatuses()));
+  fieldNames = computed(() => Object.keys(this.fieldStatuses() || {}));
+
+  constructor(public accountService: AccountService) {}
+
+  async ngOnInit() {
+    const accountNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Example account numbers
+    const statuses = await this.accountService.getMultipleAccountStatuses(accountNumbers);
+    this.accountStatuses.set(statuses);
+  }
+
+  private processAccountStatuses(statuses: any[]) {
+    if (!statuses.length) return null;
+
+    const fieldStatuses: any = {};
+
+    statuses.forEach(status => {
+      Object.entries(status).forEach(([field, value]) => {
+        if (field !== 'accountNumber') {
+          if (!fieldStatuses[field]) {
+            fieldStatuses[field] = { Yes: [], No: [], Empty: [] };
+          }
+          if (value === 'Yes') {
+            fieldStatuses[field].Yes.push(status.accountNumber);
+          } else if (value === 'No') {
+            fieldStatuses[field].No.push(status.accountNumber);
+          } else {
+            fieldStatuses[field].Empty.push(status.accountNumber);
+          }
+        }
+      });
+    });
+
+    return fieldStatuses;
+  }
+}
