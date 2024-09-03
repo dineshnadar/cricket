@@ -1,4 +1,103 @@
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
 
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
+
+    if (!(control instanceof FormArray)) {
+      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+      return baseItem;
+    }
+
+    const arrayItem: FieldItem = {
+      ...baseItem,
+      type: 'arrayGroup',
+      isArray: true,
+      value: control.value,
+      fields: control.controls.map((ctrl, index) => {
+        if (ctrl instanceof FormGroup) {
+          // Handle nested FormGroup within the array
+          return {
+            fldName: `${baseItem.fldName}.${index}`,
+            type: 'formGroup',
+            fields: Object.keys(ctrl.controls).map(key => 
+              this.createFieldItem({
+                fldName: key,
+                type: 'field',
+                side: 'full',
+                seq: 0
+              } as LayoutField, ctrl)
+            ).filter(Boolean) as FieldItem[]
+          };
+        } else {
+          // Handle simple FormControl within the array
+          return this.createFieldItem({
+            fldName: `${baseItem.fldName}.${index}`,
+            type: 'field',
+            side: 'full',
+            seq: index
+          } as LayoutField, control, index);
+        }
+      }).filter(Boolean) as FieldItem[]
+    };
+
+    return arrayItem;
+  }
+
+  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+    let control: AbstractControl | null;
+    
+    if (parentControl instanceof FormArray) {
+      control = parentControl.at(arrayIndex!);
+    } else {
+      control = parentControl.get(field.fldName!);
+    }
+
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    let baseItem: FieldItem = {
+      ...field,
+      value: control.value,
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+
+    switch (field.type) {
+      case 'subHeader':
+        return { ...baseItem, isSubHeader: true };
+      case 'reqDivider':
+        return { ...baseItem, isReqDivider: true };
+      case 'divider':
+        return { ...baseItem, isDivider: true };
+      case 'staticComponent':
+        return { 
+          ...baseItem, 
+          isStaticComponent: true, 
+          staticComponentName: field.staticComponent 
+        };
+      case 'injectedComponent':
+        return this.createInjectedComponentItem(baseItem, parentControl);
+      case 'arraySimple':
+      case 'arrayGroup':
+        return this.createArrayFieldItem(baseItem, parentControl);
+      default:
+        return this.createDefaultFieldItem(baseItem, control, parentControl);
+    }
+  }
+
+  // ... other methods ...
+}
+-----------------------
 import { AbstractControl, FormGroup } from '@angular/forms';
 import { FieldItem, UIReadViewOptions, FormLayout } from './form-extension.types';
 
