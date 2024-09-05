@@ -13,14 +13,13 @@ interface StructuredData {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <button (click)="loadAccountStatuses('sequential')">Load Sequential</button>
-    <button (click)="loadAccountStatuses('debounced')">Load Debounced</button>
-    <button (click)="loadFiveAccounts()">Load 5 Accounts</button>
+    <button (click)="loadAccountStatuses()">Load Account Statuses</button>
+    <button (click)="loadMoreAccounts()">Load More Accounts</button>
     
     <div *ngIf="accountService.loading()">Loading...</div>
     <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
     
-    <table *ngIf="tableData().labels.length" border="1">
+    <table *ngIf="tableData().accounts.length" border="1">
       <thead>
         <tr>
           <th>Label</th>
@@ -37,80 +36,61 @@ interface StructuredData {
       </tbody>
     </table>
     
-    <div *ngIf="!accountService.loading() && !tableData().labels.length">No results to display.</div>
+    <div *ngIf="!accountService.loading() && !tableData().accounts.length">No results to display.</div>
   `
 })
 export class AccountStatusComponent {
-  accountStatuses = signal<StructuredData[]>([]);
-  private currentIndex = 0;
+  accountStatuses = signal<StructuredData>({});
 
   tableData = computed(() => this.generateTableData(this.accountStatuses()));
 
   constructor(public accountService: AccountService) {}
 
-  loadAccountStatuses(mode: 'sequential' | 'debounced') {
-    const inputs = this.generateInputs(10); // Generate 10 sample inputs
-    this.currentIndex = 0; // Reset index when loading all accounts
-
-    this.accountService.getMultipleAccountStatuses(inputs, mode).subscribe({
+  loadAccountStatuses() {
+    this.accountService.getAccountStatuses().subscribe({
       next: (statuses) => {
         this.accountStatuses.set(statuses);
       },
       error: (error) => {
         console.error('Error in component:', error);
-        this.accountStatuses.set([]); // Clear previous results on error
+        this.accountStatuses.set({}); // Clear previous results on error
       }
     });
   }
 
-  loadFiveAccounts() {
-    const allInputs = this.generateInputs(20); // Generate 20 sample inputs
-    const fiveInputs = allInputs.slice(this.currentIndex, this.currentIndex + 5);
-    this.currentIndex += 5;
-
-    if (fiveInputs.length === 0) {
-      console.log('No more accounts to load');
-      return;
-    }
-
-    this.accountService.getMultipleAccountStatuses(fiveInputs, 'sequential').subscribe({
+  loadMoreAccounts() {
+    this.accountService.getMoreAccountStatuses().subscribe({
       next: (newStatuses) => {
         const currentStatuses = this.accountStatuses();
-        this.accountStatuses.set([...currentStatuses, ...newStatuses]);
+        const updatedStatuses = { ...currentStatuses };
+        
+        Object.keys(newStatuses).forEach(label => {
+          if (updatedStatuses[label]) {
+            updatedStatuses[label] = { ...updatedStatuses[label], ...newStatuses[label] };
+          } else {
+            updatedStatuses[label] = newStatuses[label];
+          }
+        });
+        
+        this.accountStatuses.set(updatedStatuses);
       },
       error: (error) => {
-        console.error('Error loading 5 accounts:', error);
+        console.error('Error loading more accounts:', error);
       }
     });
   }
 
-  private generateInputs(count: number): any[] {
-    return Array.from({ length: count }, (_, i) => ({
-      bn: `101-${1000 + i}`,
-      add: `${1000 + i} Sample St`
-    }));
-  }
-
-  private generateTableData(statuses: StructuredData[]) {
-    const data: StructuredData = {};
+  private generateTableData(statuses: StructuredData) {
+    const labels = Object.keys(statuses);
     const accountSet = new Set<string>();
-    const labelSet = new Set<string>();
 
-    statuses.forEach(status => {
-      Object.entries(status).forEach(([label, accounts]) => {
-        labelSet.add(label);
-        if (!data[label]) data[label] = {};
-        
-        Object.entries(accounts).forEach(([account, value]) => {
-          accountSet.add(account);
-          data[label][account] = value;
-        });
-      });
+    labels.forEach(label => {
+      Object.keys(statuses[label]).forEach(account => accountSet.add(account));
     });
 
     return {
-      data,
-      labels: Array.from(labelSet),
+      data: statuses,
+      labels: labels,
       accounts: Array.from(accountSet).sort()
     };
   }
