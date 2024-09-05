@@ -1,0 +1,116 @@
+import { Component, signal, computed } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { AccountService } from './account.service';
+
+@Component({
+  selector: 'app-account-status',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <button (click)="loadAccountStatuses('sequential')">Load Sequential</button>
+    <button (click)="loadAccountStatuses('debounced')">Load Debounced</button>
+    <button (click)="loadFiveAccounts()">Load 5 Accounts</button>
+    
+    <div *ngIf="accountService.loading()">Loading...</div>
+    <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
+    
+    <table *ngIf="tableData().length" border="1">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th *ngFor="let account of tableData()[0].accounts; let i = index">Account {{ i + 1 }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let row of tableData()">
+          <td>{{ row.field }}</td>
+          <td *ngFor="let account of row.accounts">
+            {{ account.value }}
+            <span *ngIf="account.error" style="color: red;"> (Error: {{ account.error }})</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <div *ngIf="!accountService.loading() && !accountStatuses().length">No results to display.</div>
+  `
+})
+export class AccountStatusComponent {
+  accountStatuses = signal<any[]>([]);
+  private currentIndex = 0;
+
+  tableData = computed(() => this.generateTableData(this.accountStatuses()));
+
+  constructor(public accountService: AccountService) {}
+
+  loadAccountStatuses(mode: 'sequential' | 'debounced') {
+    const inputs = this.generateInputs(10); // Generate 10 sample inputs
+    this.currentIndex = 0; // Reset index when loading all accounts
+
+    this.accountService.getMultipleAccountStatuses(inputs, mode).subscribe({
+      next: (statuses) => {
+        this.accountStatuses.set(statuses);
+      },
+      error: (error) => {
+        console.error('Error in component:', error);
+        this.accountStatuses.set([]); // Clear previous results on error
+      }
+    });
+  }
+
+  loadFiveAccounts() {
+    const allInputs = this.generateInputs(20); // Generate 20 sample inputs
+    const fiveInputs = allInputs.slice(this.currentIndex, this.currentIndex + 5);
+    this.currentIndex += 5;
+
+    if (fiveInputs.length === 0) {
+      console.log('No more accounts to load');
+      return;
+    }
+
+    this.accountService.getMultipleAccountStatuses(fiveInputs, 'sequential').subscribe({
+      next: (newStatuses) => {
+        const currentStatuses = this.accountStatuses();
+        this.accountStatuses.set([...currentStatuses, ...newStatuses]);
+      },
+      error: (error) => {
+        console.error('Error loading 5 accounts:', error);
+      }
+    });
+  }
+
+  private generateInputs(count: number): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      bn: `BN${1000 + i}`,
+      add: `${1000 + i} Sample St`
+    }));
+  }
+
+  private generateTableData(statuses: any[]): any[] {
+    if (statuses.length === 0) return [];
+
+    // Dynamically generate fields based on the first non-error response
+    const firstValidStatus = statuses.find(status => !status.error);
+    if (!firstValidStatus) return [];
+
+    const fields = [
+      ...Object.keys(firstValidStatus.input),
+      ...Object.keys(firstValidStatus.response || {})
+    ];
+
+    return fields.map(field => ({
+      field,
+      accounts: statuses.map(status => ({
+        value: this.getFieldValue(status, field),
+        error: status.error
+      }))
+    }));
+  }
+
+  private getFieldValue(status: any, field: string): string {
+    if (status.error) return 'N/A';
+    if (status.input && field in status.input) return status.input[field];
+    if (status.response && field in status.response) return status.response[field];
+    return 'N/A';
+  }
+}
