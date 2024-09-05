@@ -1,97 +1,28 @@
-import { Component, signal, computed } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { AccountService } from './account.service';
+private generateTableData(statuses: {[label: string]: {[accountNumber: string]: string}}) {
+  const labels = Object.keys(statuses);
+  const accountSet = new Set<string>();
 
-interface StructuredData {
-  [label: string]: {
-    [accountNumber: string]: string;
+  labels.forEach(label => {
+    Object.keys(statuses[label]).forEach(account => accountSet.add(account));
+  });
+
+  const accounts = Array.from(accountSet).sort();
+
+  const result = {
+    data: statuses,
+    labels: labels,
+    accounts: accounts
   };
+
+  console.log('Generated Table Data:', JSON.stringify(result, null, 2));
+
+  return result;
 }
 
-@Component({
-  selector: 'app-account-status',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    <button (click)="loadAccountStatuses()">Load Account Statuses</button>
-    <button (click)="loadMoreAccounts()">Load More Accounts</button>
-    
-    <div *ngIf="accountService.loading()">Loading...</div>
-    <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
-    
-    <table *ngIf="tableData().accounts.length" border="1">
-      <thead>
-        <tr>
-          <th>Label</th>
-          <th *ngFor="let account of tableData().accounts">{{ account }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let label of tableData().labels">
-          <td>{{ label }}</td>
-          <td *ngFor="let account of tableData().accounts">
-            {{ tableData().data[label][account] || 'N/A' }}
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    
-    <div *ngIf="!accountService.loading() && !tableData().accounts.length">No results to display.</div>
-  `
-})
-export class AccountStatusComponent {
-  accountStatuses = signal<StructuredData>({});
+// Example usage:
+const exampleData = {
+  "label1": {"101-232323": "N", "101-323": "Y"},
+  "label2": {"101-232323": "N", "101-323": "Y"}
+};
 
-  tableData = computed(() => this.generateTableData(this.accountStatuses()));
-
-  constructor(public accountService: AccountService) {}
-
-  loadAccountStatuses() {
-    this.accountService.getAccountStatuses().subscribe({
-      next: (statuses) => {
-        this.accountStatuses.set(statuses);
-      },
-      error: (error) => {
-        console.error('Error in component:', error);
-        this.accountStatuses.set({}); // Clear previous results on error
-      }
-    });
-  }
-
-  loadMoreAccounts() {
-    this.accountService.getMoreAccountStatuses().subscribe({
-      next: (newStatuses) => {
-        const currentStatuses = this.accountStatuses();
-        const updatedStatuses = { ...currentStatuses };
-        
-        Object.keys(newStatuses).forEach(label => {
-          if (updatedStatuses[label]) {
-            updatedStatuses[label] = { ...updatedStatuses[label], ...newStatuses[label] };
-          } else {
-            updatedStatuses[label] = newStatuses[label];
-          }
-        });
-        
-        this.accountStatuses.set(updatedStatuses);
-      },
-      error: (error) => {
-        console.error('Error loading more accounts:', error);
-      }
-    });
-  }
-
-  private generateTableData(statuses: StructuredData) {
-    const labels = Object.keys(statuses);
-    const accountSet = new Set<string>();
-
-    labels.forEach(label => {
-      Object.keys(statuses[label]).forEach(account => accountSet.add(account));
-    });
-
-    return {
-      data: statuses,
-      labels: labels,
-      accounts: Array.from(accountSet).sort()
-    };
-  }
-}
+this.generateTableData(exampleData);
