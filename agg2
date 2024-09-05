@@ -2,6 +2,12 @@ import { Component, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AccountService } from './account.service';
 
+interface StructuredData {
+  [label: string]: {
+    [accountNumber: string]: string;
+  };
+}
+
 @Component({
   selector: 'app-account-status',
   standalone: true,
@@ -14,29 +20,28 @@ import { AccountService } from './account.service';
     <div *ngIf="accountService.loading()">Loading...</div>
     <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
     
-    <table *ngIf="tableData().length" border="1">
+    <table *ngIf="tableData().labels.length" border="1">
       <thead>
         <tr>
-          <th>Field</th>
-          <th *ngFor="let account of tableData()[0].accounts; let i = index">Account {{ i + 1 }}</th>
+          <th>Label</th>
+          <th *ngFor="let account of tableData().accounts">{{ account }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr *ngFor="let row of tableData()">
-          <td>{{ row.field }}</td>
-          <td *ngFor="let account of row.accounts">
-            {{ account.value }}
-            <span *ngIf="account.error" style="color: red;"> (Error: {{ account.error }})</span>
+        <tr *ngFor="let label of tableData().labels">
+          <td>{{ label }}</td>
+          <td *ngFor="let account of tableData().accounts">
+            {{ tableData().data[label][account] || 'N/A' }}
           </td>
         </tr>
       </tbody>
     </table>
     
-    <div *ngIf="!accountService.loading() && !accountStatuses().length">No results to display.</div>
+    <div *ngIf="!accountService.loading() && !tableData().labels.length">No results to display.</div>
   `
 })
 export class AccountStatusComponent {
-  accountStatuses = signal<any[]>([]);
+  accountStatuses = signal<StructuredData[]>([]);
   private currentIndex = 0;
 
   tableData = computed(() => this.generateTableData(this.accountStatuses()));
@@ -81,36 +86,32 @@ export class AccountStatusComponent {
 
   private generateInputs(count: number): any[] {
     return Array.from({ length: count }, (_, i) => ({
-      bn: `BN${1000 + i}`,
+      bn: `101-${1000 + i}`,
       add: `${1000 + i} Sample St`
     }));
   }
 
-  private generateTableData(statuses: any[]): any[] {
-    if (statuses.length === 0) return [];
+  private generateTableData(statuses: StructuredData[]) {
+    const data: StructuredData = {};
+    const accountSet = new Set<string>();
+    const labelSet = new Set<string>();
 
-    // Dynamically generate fields based on the first non-error response
-    const firstValidStatus = statuses.find(status => !status.error);
-    if (!firstValidStatus) return [];
+    statuses.forEach(status => {
+      Object.entries(status).forEach(([label, accounts]) => {
+        labelSet.add(label);
+        if (!data[label]) data[label] = {};
+        
+        Object.entries(accounts).forEach(([account, value]) => {
+          accountSet.add(account);
+          data[label][account] = value;
+        });
+      });
+    });
 
-    const fields = [
-      ...Object.keys(firstValidStatus.input),
-      ...Object.keys(firstValidStatus.response || {})
-    ];
-
-    return fields.map(field => ({
-      field,
-      accounts: statuses.map(status => ({
-        value: this.getFieldValue(status, field),
-        error: status.error
-      }))
-    }));
-  }
-
-  private getFieldValue(status: any, field: string): string {
-    if (status.error) return 'N/A';
-    if (status.input && field in status.input) return status.input[field];
-    if (status.response && field in status.response) return status.response[field];
-    return 'N/A';
+    return {
+      data,
+      labels: Array.from(labelSet),
+      accounts: Array.from(accountSet).sort()
+    };
   }
 }
