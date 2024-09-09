@@ -1,10 +1,17 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 interface StructuredData {
   [label: string]: {
-    [accountNumber: string]: string;
+    [accountNumber: string]: string | string[] | null;
   };
+}
+
+interface DisplayData {
+  label: string;
+  displayValue: string[];
+  displayYes: boolean;
+  accounts: { number: string; value: string | string[] | null }[];
 }
 
 @Component({
@@ -17,43 +24,44 @@ interface StructuredData {
         Load Data
       </button>
 
-      @if (filteredData().length) {
-        <table class="min-w-full bg-white border border-gray-300">
-          <thead>
-            <tr class="bg-gray-100">
-              <th class="py-2 px-4 border-b">Label</th>
-              <th class="py-2 px-4 border-b">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (item of filteredData(); track item.label) {
-              <tr class="hover:bg-gray-50">
-                <td class="py-2 px-4 border-b font-medium">{{ item.label }}</td>
-                <td class="py-2 px-4 border-b text-center relative">
+      @if (displayColumns().length) {
+        <div class="flex">
+          @for (column of displayColumns(); track $index) {
+            <ul class="w-1/2 list-none p-0 pr-2">
+              @for (item of column; track item.label) {
+                <li class="mb-2 p-2 border border-gray-300 rounded">
+                  <span class="font-medium">{{ item.label }}:</span>
                   <span 
-                    class="cursor-pointer"
+                    class="ml-2 cursor-pointer"
                     (mouseenter)="showAccounts(item.label)" 
                     (mouseleave)="hideAccounts()"
                   >
-                    Y
+                    {{ item.displayYes ? 'Y' : 'N' }}
                   </span>
                   @if (hoveredLabel() === item.label) {
-                    <div class="absolute z-10 bg-white border border-gray-300 p-2 rounded shadow-lg">
+                    <div class="mt-2 bg-gray-100 p-2 rounded">
                       Accounts:
-                      <ul>
-                        @for (account of item.accounts; track account) {
-                          <li>{{ account }}</li>
+                      <ul class="list-disc pl-5">
+                        @for (account of item.accounts; track account.number) {
+                          <li>
+                            {{ account.number }}: 
+                            @if (Array.isArray(account.value)) {
+                              {{ account.value.join(', ') }}
+                            } @else {
+                              {{ account.value ?? 'N/A' }}
+                            }
+                          </li>
                         }
                       </ul>
                     </div>
                   }
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
+                </li>
+              }
+            </ul>
+          }
+        </div>
       } @else {
-        <p>No data to display. Click 'Load Data' to populate the table.</p>
+        <p>No data to display. Click 'Load Data' to populate the list.</p>
       }
     </div>
   `,
@@ -68,31 +76,71 @@ export class AccountStatusComponent {
   private accountStatuses = signal<StructuredData>({});
   hoveredLabel = signal<string | null>(null);
 
-  filteredData = signal<Array<{label: string, accounts: string[]}>>([]);
+  displayData = computed(() => this.prepareDisplayData(this.accountStatuses()));
+  displayColumns = computed(() => this.splitIntoColumns(this.displayData()));
 
   loadData() {
-    // Simulating data load
+    // Simulating data load with various value types
     const data: StructuredData = {
       "label1": {"101-232323": "N", "101-323": "Y", "101-444": "Y"},
-      "label2": {"101-232323": "N", "101-323": "N", "101-555": "Y"},
-      "label3": {"101-232323": "N", "101-323": "N", "101-666": "N"}
+      "label2": {"101-232323": "N", "101-323": "N", "101-555": ["A", "B", "C"]},
+      "label3": {"101-232323": "N", "101-323": "N", "101-666": null},
+      "label4": {"101-232323": "Y", "101-323": "Y", "101-777": "A|B|C"},
+      "label5": {"101-232323": "N", "101-323": "Yes", "101-888": ""},
+      "label6": {"101-232323": "No", "101-323": "YES", "101-999": "N"}
     };
     this.accountStatuses.set(data);
-    this.updateFilteredData();
   }
 
-  private updateFilteredData() {
-    const statuses = this.accountStatuses();
-    const filtered = Object.entries(statuses)
-      .filter(([_, accounts]) => Object.values(accounts).includes("Y"))
-      .map(([label, accounts]) => ({
-        label,
-        accounts: Object.entries(accounts)
-          .filter(([_, value]) => value === "Y")
-          .map(([account, _]) => account)
-      }));
-    
-    this.filteredData.set(filtered);
+  private prepareDisplayData(statuses: StructuredData): DisplayData[] {
+    return Object.entries(statuses)
+      .map(([label, accounts]) => {
+        const processedAccounts = Object.entries(accounts).map(([number, value]) => ({
+          number,
+          value: this.processValue(value)
+        }));
+
+        const displayValue = processedAccounts
+          .flatMap(account => Array.isArray(account.value) ? account.value : [account.value])
+          .filter((value): value is string => value !== null && value !== '')
+          .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+
+        const displayYes = processedAccounts.some(account => 
+          this.isYesValue(account.value)
+        );
+
+        return {
+          label,
+          displayValue,
+          displayYes,
+          accounts: processedAccounts
+        };
+      })
+      .filter(item => item.displayValue.length > 0);
+  }
+
+  private processValue(value: string | string[] | null): string | string[] | null {
+    if (typeof value === 'string' && value.includes('|')) {
+      return value.split('|');
+    }
+    return value;
+  }
+
+  private isYesValue(value: string | string[] | null): boolean {
+    if (Array.isArray(value)) {
+      return value.some(v => this.isYesString(v));
+    }
+    return this.isYesString(value);
+  }
+
+  private isYesString(value: string | null): boolean {
+    if (typeof value !== 'string') return false;
+    return ['Y', 'Yes', 'YES', 'yes'].includes(value.trim());
+  }
+
+  private splitIntoColumns(data: DisplayData[]): DisplayData[][] {
+    const midpoint = Math.ceil(data.length / 2);
+    return [data.slice(0, midpoint), data.slice(midpoint)];
   }
 
   showAccounts(label: string) {
