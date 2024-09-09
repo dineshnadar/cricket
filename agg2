@@ -1,28 +1,105 @@
-private generateTableData(statuses: {[label: string]: {[accountNumber: string]: string}}) {
-  const labels = Object.keys(statuses);
-  const accountSet = new Set<string>();
+import { Component, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
 
-  labels.forEach(label => {
-    Object.keys(statuses[label]).forEach(account => accountSet.add(account));
-  });
-
-  const accounts = Array.from(accountSet).sort();
-
-  const result = {
-    data: statuses,
-    labels: labels,
-    accounts: accounts
+interface StructuredData {
+  [label: string]: {
+    [accountNumber: string]: string;
   };
-
-  console.log('Generated Table Data:', JSON.stringify(result, null, 2));
-
-  return result;
 }
 
-// Example usage:
-const exampleData = {
-  "label1": {"101-232323": "N", "101-323": "Y"},
-  "label2": {"101-232323": "N", "101-323": "Y"}
-};
+@Component({
+  selector: 'app-account-status',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <div class="p-4">
+      <button (click)="loadData()" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 mb-4">
+        Load Data
+      </button>
 
-this.generateTableData(exampleData);
+      @if (filteredData().length) {
+        <table class="min-w-full bg-white border border-gray-300">
+          <thead>
+            <tr class="bg-gray-100">
+              <th class="py-2 px-4 border-b">Label</th>
+              <th class="py-2 px-4 border-b">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of filteredData(); track item.label) {
+              <tr class="hover:bg-gray-50">
+                <td class="py-2 px-4 border-b font-medium">{{ item.label }}</td>
+                <td class="py-2 px-4 border-b text-center relative">
+                  <span 
+                    class="cursor-pointer"
+                    (mouseenter)="showAccounts(item.label)" 
+                    (mouseleave)="hideAccounts()"
+                  >
+                    Y
+                  </span>
+                  @if (hoveredLabel() === item.label) {
+                    <div class="absolute z-10 bg-white border border-gray-300 p-2 rounded shadow-lg">
+                      Accounts:
+                      <ul>
+                        @for (account of item.accounts; track account) {
+                          <li>{{ account }}</li>
+                        }
+                      </ul>
+                    </div>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <p>No data to display. Click 'Load Data' to populate the table.</p>
+      }
+    </div>
+  `,
+  styles: [`
+    :host {
+      display: block;
+      font-family: Arial, sans-serif;
+    }
+  `]
+})
+export class AccountStatusComponent {
+  private accountStatuses = signal<StructuredData>({});
+  hoveredLabel = signal<string | null>(null);
+
+  filteredData = signal<Array<{label: string, accounts: string[]}>>([]);
+
+  loadData() {
+    // Simulating data load
+    const data: StructuredData = {
+      "label1": {"101-232323": "N", "101-323": "Y", "101-444": "Y"},
+      "label2": {"101-232323": "N", "101-323": "N", "101-555": "Y"},
+      "label3": {"101-232323": "N", "101-323": "N", "101-666": "N"}
+    };
+    this.accountStatuses.set(data);
+    this.updateFilteredData();
+  }
+
+  private updateFilteredData() {
+    const statuses = this.accountStatuses();
+    const filtered = Object.entries(statuses)
+      .filter(([_, accounts]) => Object.values(accounts).includes("Y"))
+      .map(([label, accounts]) => ({
+        label,
+        accounts: Object.entries(accounts)
+          .filter(([_, value]) => value === "Y")
+          .map(([account, _]) => account)
+      }));
+    
+    this.filteredData.set(filtered);
+  }
+
+  showAccounts(label: string) {
+    this.hoveredLabel.set(label);
+  }
+
+  hideAccounts() {
+    this.hoveredLabel.set(null);
+  }
+}
