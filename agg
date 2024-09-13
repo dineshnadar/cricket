@@ -1,438 +1,156 @@
-import { Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, from, of } from 'rxjs';
-import { concatMap, mergeMap, delay, catchError, toArray } from 'rxjs/operators';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AccountService {
-  private apiUrl = 'https://api.example.com/account-status/';
-  private debounceTime = 300; // milliseconds between requests for debounced mode
-  
-  loading = signal(false);
-  error = signal<string | null>(null);
-
-  constructor(private http: HttpClient) {}
-
-  private postAccountStatus(input: any): Observable<any> {
-    return this.http.post(this.apiUrl, input).pipe(
-      catchError(error => {
-        console.error(`Error posting account status for ${input.bn}:`, error);
-        return of({ error: error.message || 'An error occurred', input });
-      })
-    );
-  }
-
-  getMultipleAccountStatuses(inputs: any[], mode: 'sequential' | 'debounced' = 'sequential'): Observable<any[]> {
-    this.loading.set(true);
-    this.error.set(null);
-
-    let requests: Observable<any>;
-
-    if (mode === 'sequential') {
-      requests = from(inputs).pipe(
-        concatMap(input => this.postAccountStatus(input))
-      );
-    } else { // debounced mode
-      requests = from(inputs).pipe(
-        mergeMap((input, index) => 
-          of(input).pipe(
-            delay(index * this.debounceTime),
-            mergeMap(inp => this.postAccountStatus(inp))
-          )
-        )
-      );
-    }
-
-    return requests.pipe(
-      toArray(),
-      catchError(error => {
-        console.error('Unexpected error in getMultipleAccountStatuses:', error);
-        this.error.set('An unexpected error occurred while fetching account statuses.');
-        return of([]);
-      }),
-      mergeMap(results => {
-        this.loading.set(false);
-        return of(results);
-      })
-    );
-  }
-}
-
-------------
-
-
-import { Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { AccountService } from './account.service';
+import { Component, ViewChild, ViewContainerRef, inject, effect, OnInit, computed } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { ProfileBuilderService } from './profile-builder.service';
+import { LeftMenuComponent } from './left-menu.component';
 
 @Component({
-  selector: 'app-account-status',
+  selector: 'app-party-builder',
   standalone: true,
-  imports: [CommonModule],
+  imports: [AsyncPipe, LeftMenuComponent],
   template: `
-    <button (click)="loadAccountStatuses('sequential')">Load Sequential</button>
-    <button (click)="loadAccountStatuses('debounced')">Load Debounced</button>
-    
-    <div *ngIf="accountService.loading()">Loading...</div>
-    <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
-    
-    <ul *ngIf="accountStatuses().length">
-      <li *ngFor="let status of accountStatuses()">
-        <ng-container *ngIf="!status.error">
-          BN: {{ status.bn }}, Address: {{ status.add }}
-          Status: {{ status | json }}
-        </ng-container>
-        <ng-container *ngIf="status.error">
-          Error for BN: {{ status.input.bn }}, Address: {{ status.input.add }}
-          Error: {{ status.error }}
-        </ng-container>
-      </li>
-    </ul>
-    
-    <div *ngIf="!accountService.loading() && !accountStatuses().length">No results to display.</div>
-  `
-})
-export class AccountStatusComponent {
-  accountStatuses = signal<any[]>([]);
-
-  constructor(public accountService: AccountService) {}
-
-  loadAccountStatuses(mode: 'sequential' | 'debounced') {
-    const inputs = [
-      { bn: "123", add: "456 Main St" },
-      { bn: "456", add: "789 Oak Rd" },
-      { bn: "789", add: "321 Pine Ave" }
-    ];
-
-    this.accountService.getMultipleAccountStatuses(inputs, mode).subscribe({
-      next: (statuses) => {
-        this.accountStatuses.set(statuses);
-      },
-      error: (error) => {
-        console.error('Error in component:', error);
-        this.accountStatuses.set([]); // Clear previous results on error
-      }
-    });
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
--------------
-import { Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { catchError, map } from 'rxjs/operators';
-import { Observable, of } from 'rxjs';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AccountService {
-  private apiUrl = 'https://api.example.com/account-status/';
-  
-  loading = signal(false);
-  error = signal<string | null>(null);
-
-  constructor(private http: HttpClient) {}
-
-  getMultipleAccountStatuses(accountNumbers: number[]): Observable<any[]> {
-    this.loading.set(true);
-    this.error.set(null);
-
-    return this.http.post<any[]>(this.apiUrl, { accountNumbers }).pipe(
-      map(response => {
-        // Assuming the response is an array of status objects
-        return response.map((status, index) => ({
-          accountNumber: accountNumbers[index],
-          ...status
-        }));
-      }),
-      catchError(error => {
-        console.error('Error fetching account statuses:', error);
-        this.error.set('An error occurred while fetching account statuses.');
-        return of([]); // Return an empty array in case of error
-      }),
-      map(results => {
-        this.loading.set(false);
-        return results;
-      })
-    );
-  }
-}
-
------------
-
-import { Component, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { AccountService } from './account.service';
-
-@Component({
-  selector: 'app-account-status',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    <button (click)="loadAccountStatuses()">Load Account Statuses</button>
-    
-    <div *ngIf="accountService.loading()">Loading...</div>
-    <div *ngIf="accountService.error()" style="color: red;">{{ accountService.error() }}</div>
-    
-    <ul *ngIf="accountStatuses().length">
-      <li *ngFor="let status of accountStatuses()">
-        Account: {{ status.accountNumber }}
-        Status: {{ status | json }}
-      </li>
-    </ul>
-    
-    <div *ngIf="!accountService.loading() && !accountStatuses().length">No results to display.</div>
-  `
-})
-export class AccountStatusComponent {
-  accountStatuses = signal<any[]>([]);
-
-  constructor(public accountService: AccountService) {}
-
-  loadAccountStatuses() {
-    const accountNumbers = [1001, 1002, 1003]; // Example account numbers
-    this.accountService.getMultipleAccountStatuses(accountNumbers).subscribe({
-      next: (statuses) => {
-        this.accountStatuses.set(statuses);
-      },
-      error: (error) => {
-        console.error('Error in component:', error);
-        this.accountStatuses.set([]); // Clear previous results on error
-      }
-    });
-  }
-}
-
-
-
-
-
-
-
-
-
-
----------------------
-import { Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { from, firstValueFrom, of } from 'rxjs';
-import { concatMap, catchError, toArray, delay, mergeMap } from 'rxjs/operators';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AccountService {
-  private apiUrl = 'https://api.example.com/account-status/';
-  private debounceTime = 300; // milliseconds between requests for debounced mode
-  
-  loading = signal(false);
-  error = signal<string | null>(null);
-
-  constructor(private http: HttpClient) {}
-
-  getAccountStatus(accountNumber: number) {
-    return this.http.get(`${this.apiUrl}${accountNumber}`);
-  }
-
-  async getMultipleAccountStatuses(accountNumbers: number[], mode: 'sequential' | 'debounced' = 'sequential') {
-    this.loading.set(true);
-    this.error.set(null);
-    
-    try {
-      let requests;
-      if (mode === 'sequential') {
-        requests = from(accountNumbers).pipe(
-          concatMap(accountNumber => this.getAccountStatus(accountNumber))
-        );
-      } else { // debounced mode
-        requests = from(accountNumbers).pipe(
-          mergeMap((accountNumber, index) => 
-            of(accountNumber).pipe(
-              delay(index * this.debounceTime),
-              mergeMap(num => this.getAccountStatus(num))
-            )
-          )
-        );
-      }
-
-      const results = await firstValueFrom(requests.pipe(
-        catchError(err => {
-          this.error.set('An error occurred while fetching account statuses.');
-          throw err; // Re-throw the error to stop the sequence
-        }),
-        toArray()
-      ));
-
-      return results;
-    } catch (error) {
-      console.error('Error fetching account statuses:', error);
-      return []; // Return an empty array in case of error
-    } finally {
-      this.loading.set(false);
+    <!-- ... other template parts ... -->
+    @if (activeProfile()) {
+      <div class="party-builder">
+        <app-left-menu />
+        <div #widgetContainer></div>
+        <div class="widget-navigation">
+          <button (click)="loadPreviousWidget()" [disabled]="isNavigating || !hasPreviousWidget()">Previous</button>
+          <button (click)="loadNextWidget()" [disabled]="isNavigating || !hasNextWidget()">Next</button>
+        </div>
+      </div>
     }
-  }
-}
-----------------------
-import { Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { forkJoin, firstValueFrom } from 'rxjs';
-import { catchError } from 'rxjs/operators';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AccountService {
-  private apiUrl = 'https://api.example.com/account-status/'; // Replace with your actual API URL
-  
-  loading = signal(false);
-  error = signal<string | null>(null);
-
-  constructor(private http: HttpClient) {}
-
-  getAccountStatus(accountNumber: number) {
-    return this.http.get(`${this.apiUrl}${accountNumber}`);
-  }
-
-  async getMultipleAccountStatuses(accountNumbers: number[]) {
-    this.loading.set(true);
-    this.error.set(null);
-    
-    try {
-      const requests = accountNumbers.map(accountNumber => this.getAccountStatus(accountNumber));
-      const results = await firstValueFrom(forkJoin(requests).pipe(
-        catchError(err => {
-          this.error.set('An error occurred while fetching account statuses.');
-          return [];
-        })
-      ));
-      return results;
-    } finally {
-      this.loading.set(false);
-    }
-  }
-}
-
-----------------
-
------------
-
-import { Component, effect, signal, computed } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { AccountService } from './account.service';
-
-@Component({
-  selector: 'app-account-status',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    @if (accountService.loading()) {
-      <div class="loader">Loading...</div>
-    }
-    @if (accountService.error()) {
-      <div class="error">{{ accountService.error() }}</div>
-    }
-    @if (fieldStatuses() && !accountService.loading()) {
-      <table class="min-w-full bg-white border border-gray-300">
-        <thead>
-          <tr class="bg-gray-100">
-            <th class="py-2 px-4 border-b">Field</th>
-            <th class="py-2 px-4 border-b">Yes Accounts</th>
-            <th class="py-2 px-4 border-b">No Accounts</th>
-            <th class="py-2 px-4 border-b">Empty Accounts</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (field of fieldNames(); track field) {
-            <tr class="hover:bg-gray-50">
-              <td class="py-2 px-4 border-b font-medium">{{ field }}</td>
-              <td class="py-2 px-4 border-b bg-green-100">{{ fieldStatuses()[field].Yes.join(', ') }}</td>
-              <td class="py-2 px-4 border-b bg-red-100">{{ fieldStatuses()[field].No.join(', ') }}</td>
-              <td class="py-2 px-4 border-b bg-gray-100">{{ fieldStatuses()[field].Empty.join(', ') }}</td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    }
+    <!-- ... other template parts ... -->
   `,
-  styles: [`
-    :host {
-      display: block;
-      padding: 1rem;
-      max-width: 1000px;
-      margin: 0 auto;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    th, td {
-      text-align: left;
-      padding: 0.5rem 1rem;
-      border: 1px solid #e5e7eb;
-    }
-    .loader {
-      text-align: center;
-      padding: 2rem;
-      font-size: 1.2rem;
-    }
-    .error {
-      color: red;
-      text-align: center;
-      padding: 1rem;
-    }
-  `]
+  styles: [/* ... */]
 })
-export class AccountStatusComponent {
-  private accountStatuses = signal<any[]>([]);
-  fieldStatuses = computed(() => this.processAccountStatuses(this.accountStatuses()));
-  fieldNames = computed(() => Object.keys(this.fieldStatuses() || {}));
+export class PartyBuilderComponent implements OnInit {
+  @ViewChild('widgetContainer', { read: ViewContainerRef, static: false })
+  widgetContainer!: ViewContainerRef;
 
-  constructor(public accountService: AccountService) {
-    effect(() => {
-      this.loadAccountStatuses();
-    });
+  private profileBuilder = inject(ProfileBuilderService);
+
+  isNavigating = false;
+
+  // ... other properties ...
+
+  async loadPreviousWidget() {
+    if (this.isNavigating) return;
+    this.isNavigating = true;
+    const currentWidget = this.profileBuilder.getActiveWidget();
+    if (currentWidget) {
+      const previousWidget = await this.profileBuilder.getPreviousWidget(currentWidget);
+      if (previousWidget) {
+        this.profileBuilder.setActiveWidget(previousWidget.widgetName, previousWidget.subItemName);
+      }
+    }
+    this.isNavigating = false;
   }
 
-  private async loadAccountStatuses() {
-    const accountNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Example account numbers
-    const statuses = await this.accountService.getMultipleAccountStatuses(accountNumbers);
-    this.accountStatuses.set(statuses);
+  async loadNextWidget() {
+    if (this.isNavigating) return;
+    this.isNavigating = true;
+    const currentWidget = this.profileBuilder.getActiveWidget();
+    if (currentWidget) {
+      const nextWidget = await this.profileBuilder.getNextWidget(currentWidget);
+      if (nextWidget) {
+        this.profileBuilder.setActiveWidget(nextWidget.widgetName, nextWidget.subItemName);
+      }
+    }
+    this.isNavigating = false;
   }
 
-  private processAccountStatuses(statuses: any[]) {
-    if (!statuses.length) return null;
+  // ... other methods ...
+}
 
-    const fieldStatuses: any = {};
+-----
 
-    statuses.forEach(status => {
-      Object.entries(status).forEach(([field, value]) => {
-        if (field !== 'accountNumber') {
-          if (!fieldStatuses[field]) {
-            fieldStatuses[field] = { Yes: [], No: [], Empty: [] };
-          }
-          if (value === 'Yes') {
-            fieldStatuses[field].Yes.push(status.accountNumber);
-          } else if (value === 'No') {
-            fieldStatuses[field].No.push(status.accountNumber);
-          } else {
-            fieldStatuses[field].Empty.push(status.accountNumber);
-          }
-        }
-      });
-    });
+import { Injectable, inject } from '@angular/core';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
+import { WidgetStateService } from './widget-state.service';
+import { DynamicMenuService } from './dynamic-menu.service';
 
-    return fieldStatuses;
+interface ActiveWidget {
+  widgetName: string;
+  subItemName?: string;
+}
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private widgetStateService = inject(WidgetStateService);
+  private dynamicMenuService = inject(DynamicMenuService);
+
+  // ... other properties and methods
+
+  async getNextWidget(currentWidget: ActiveWidget): Promise<ActiveWidget | null> {
+    const visibleWidgets = this.getVisibleWidgets()();
+    const currentWidgetIndex = visibleWidgets.findIndex(w => w.name === currentWidget.widgetName);
+    
+    if (currentWidgetIndex === -1) return null;
+
+    const currentWidgetConfig = visibleWidgets[currentWidgetIndex];
+    
+    // Handle current widget's sub-menu
+    if (currentWidget.subItemName) {
+      const subItems = await this.getSubMenuItems(currentWidgetConfig);
+      const currentSubItemIndex = subItems.findIndex(item => item.name === currentWidget.subItemName);
+      if (currentSubItemIndex < subItems.length - 1) {
+        return { widgetName: currentWidget.widgetName, subItemName: subItems[currentSubItemIndex + 1].name };
+      }
+    }
+
+    // Move to the next widget
+    if (currentWidgetIndex < visibleWidgets.length - 1) {
+      const nextWidget = visibleWidgets[currentWidgetIndex + 1];
+      const nextSubItems = await this.getSubMenuItems(nextWidget);
+      if (nextSubItems.length > 0) {
+        return { widgetName: nextWidget.name, subItemName: nextSubItems[0].name };
+      }
+      return { widgetName: nextWidget.name };
+    }
+
+    return null;
   }
+
+  async getPreviousWidget(currentWidget: ActiveWidget): Promise<ActiveWidget | null> {
+    const visibleWidgets = this.getVisibleWidgets()();
+    const currentWidgetIndex = visibleWidgets.findIndex(w => w.name === currentWidget.widgetName);
+    
+    if (currentWidgetIndex === -1) return null;
+
+    const currentWidgetConfig = visibleWidgets[currentWidgetIndex];
+
+    // Handle current widget's sub-menu
+    if (currentWidget.subItemName) {
+      const subItems = await this.getSubMenuItems(currentWidgetConfig);
+      const currentSubItemIndex = subItems.findIndex(item => item.name === currentWidget.subItemName);
+      if (currentSubItemIndex > 0) {
+        return { widgetName: currentWidget.widgetName, subItemName: subItems[currentSubItemIndex - 1].name };
+      }
+    }
+
+    // Move to the previous widget
+    if (currentWidgetIndex > 0) {
+      const previousWidget = visibleWidgets[currentWidgetIndex - 1];
+      const previousSubItems = await this.getSubMenuItems(previousWidget);
+      if (previousSubItems.length > 0) {
+        return { widgetName: previousWidget.name, subItemName: previousSubItems[previousSubItems.length - 1].name };
+      }
+      return { widgetName: previousWidget.name };
+    }
+
+    return null;
+  }
+
+  private async getSubMenuItems(widget: WidgetConfig): Promise<SubMenuItem[]> {
+    if (Array.isArray(widget.subMenu)) {
+      return widget.subMenu;
+    } else if (widget.subMenu === 'dynamic' || widget.subMenu === 'api') {
+      return await this.dynamicMenuService.loadDynamicSubMenu(widget.name);
+    } else if (typeof widget.subMenu === 'function') {
+      return await widget.subMenu();
+    }
+    return [];
+  }
+
+  // ... other methods
 }
