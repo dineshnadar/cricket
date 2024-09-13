@@ -1,35 +1,234 @@
-import { Component, ViewChild, ViewContainerRef, inject, effect, signal, computed } from '@angular/core';
-import { NgFor, NgIf } from '@angular/common';
+import { Injectable, inject, signal, computed, WritableSignal } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { WIDGET_CONFIG, WidgetConfig } from './widget-config';
+import { WidgetStateService, WidgetState } from './widget-state.service';
+import { DynamicMenuService } from './dynamic-menu.service';
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private fb = inject(FormBuilder);
+  private widgetStateService = inject(WidgetStateService);
+  private dynamicMenuService = inject(DynamicMenuService);
+
+  private profiles: WritableSignal<any[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+  private activeWidgetName: WritableSignal<string | null> = signal(null);
+
+  getProfiles = computed(() => this.profiles());
+  getActiveProfile = computed(() => {
+    const index = this.activeProfileIndex();
+    return index !== null ? this.profiles()[index] : null;
+  });
+  getActiveWidgetName = computed(() => this.activeWidgetName());
+
+  getCompletionPercentage = computed(() => {
+    const activeProfile = this.getActiveProfile();
+    if (!activeProfile) return 0;
+
+    const widgets = this.getVisibleWidgets()();
+    const completedWidgets = widgets.filter(widget => 
+      this.widgetStateService.getWidgetState(widget.name)?.status === 'completed'
+    );
+
+    return (completedWidgets.length / widgets.length) * 100;
+  });
+
+  constructor() {
+    this.addNewProfile();
+  }
+
+  addNewProfile() {
+    const newProfile = {
+      id: Date.now().toString(),
+      type: 'personal',
+      name: `Profile ${this.profiles().length + 1}`,
+    };
+    this.profiles.update(profiles => [...profiles, newProfile]);
+    this.setActiveProfileById(newProfile.id);
+  }
+
+  setActiveProfileById(profileId: string) {
+    const index = this.profiles().findIndex(profile => profile.id === profileId);
+    if (index !== -1) {
+      this.activeProfileIndex.set(index);
+      this.widgetStateService.setActiveProfile(index);
+      this.dynamicMenuService.setActiveProfile(index);
+      this.loadInitialWidget();
+    }
+  }
+
+  loadAllWidgetsBasedOnRules() {
+    const visibleWidgets = this.getVisibleWidgets()();
+    visibleWidgets.forEach(widget => {
+      if (this.shouldLoadWidget(widget)) {
+        this.loadWidget(widget.name);
+      }
+    });
+  }
+
+  private shouldLoadWidget(widget: WidgetConfig): boolean {
+    const widgetState = this.widgetStateService.getWidgetState(widget.name);
+    return widgetState?.status !== 'completed' && widgetState?.visible;
+  }
+
+  private loadWidget(widgetName: string) {
+    this.widgetStateService.updateWidgetState(widgetName, { 
+      visited: true, 
+      status: 'in-progress',
+      active: true
+    });
+  }
+
+  loadWidgetsBasedOnRules() {
+    const activeProfile = this.getActiveProfile();
+    if (!activeProfile) return;
+
+    if (this.shouldLoadAllWidgets(activeProfile)) {
+      this.loadAllWidgetsBasedOnRules();
+    } else {
+      const widgetsToLoad = this.determineWidgetsToLoad();
+      widgetsToLoad.forEach(widget => this.loadWidget(widget.name));
+    }
+  }
+
+  private shouldLoadAllWidgets(profile: any): boolean {
+    return profile.type === 'business' || profile.name.includes('Complete');
+  }
+
+  private determineWidgetsToLoad(): WidgetConfig[] {
+    const visibleWidgets = this.getVisibleWidgets()();
+    return visibleWidgets.filter(widget => {
+      const widgetState = this.widgetStateService.getWidgetState(widget.name);
+      return widgetState?.status === 'pending' || widgetState?.status === 'in-progress';
+    });
+  }
+
+  getVisibleWidgets = computed(() => {
+    return WIDGET_CONFIG.filter(widget => 
+      this.widgetStateService.isWidgetVisible(widget.name)
+    );
+  });
+
+  validateAllWidgets(): boolean {
+    let isValid = true;
+    this.getVisibleWidgets()().forEach(widget => {
+      const widgetValid = this.validateWidget(widget.name);
+      isValid = isValid && widgetValid;
+    });
+    return isValid;
+  }
+
+  private validateWidget(widgetName: string): boolean {
+    const isValid = Math.random() > 0.2; // Placeholder for actual validation logic
+    this.widgetStateService.setWidgetError(widgetName, !isValid, isValid ? '' : 'Validation failed');
+    this.widgetStateService.setWidgetStatus(widgetName, isValid ? 'completed' : 'error');
+    return isValid;
+  }
+
+  getNextIncompleteWidget(): string | null {
+    const visibleWidgets = this.getVisibleWidgets()();
+    for (const widget of visibleWidgets) {
+      const widgetState = this.widgetStateService.getWidgetState(widget.name);
+      if (widgetState?.status !== 'completed') {
+        return widget.name;
+      }
+    }
+    return null;
+  }
+
+  setActiveWidget(widgetName: string) {
+    this.activeWidgetName.set(widgetName);
+    this.widgetStateService.setWidgetActive(widgetName, true);
+    this.widgetStateService.setWidgetVisited(widgetName, true);
+    this.widgetStateService.setWidgetStatus(widgetName, 'in-progress');
+  }
+
+  findWidgetByName(name: string): WidgetConfig | undefined {
+    return WIDGET_CONFIG.find(widget => widget.name === name);
+  }
+
+  getWidgetFormGroup(widgetName: string): FormGroup | null {
+    return this.fb.group({}); // Placeholder for actual form group creation logic
+  }
+
+  private loadInitialWidget() {
+    const visibleWidgets = this.getVisibleWidgets()();
+    if (visibleWidgets.length > 0) {
+      this.setActiveWidget(visibleWidgets[0].name);
+    }
+  }
+
+  getNextWidget(currentWidgetName: string): string | null {
+    const visibleWidgets = this.getVisibleWidgets()();
+    const currentIndex = visibleWidgets.findIndex(widget => widget.name === currentWidgetName);
+    if (currentIndex < visibleWidgets.length - 1) {
+      return visibleWidgets[currentIndex + 1].name;
+    }
+    return null;
+  }
+
+  getPreviousWidget(currentWidgetName: string): string | null {
+    const visibleWidgets = this.getVisibleWidgets()();
+    const currentIndex = visibleWidgets.findIndex(widget => widget.name === currentWidgetName);
+    if (currentIndex > 0) {
+      return visibleWidgets[currentIndex - 1].name;
+    }
+    return null;
+  }
+}
+
+------
+
+import { Component, ViewChild, ViewContainerRef, inject, effect, OnInit, computed } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
 import { ProfileBuilderService } from './profile-builder.service';
 import { LeftMenuComponent } from './left-menu.component';
 
 @Component({
   selector: 'app-party-builder',
   standalone: true,
-  imports: [NgFor, NgIf, LeftMenuComponent],
+  imports: [AsyncPipe, LeftMenuComponent],
   template: `
     <div class="profile-selector">
-      <button *ngFor="let profile of profiles; let i = index"
-              (click)="setActiveProfile(i)"
-              [class.active]="i === activeProfileIndex()">
-        Profile {{ i + 1 }}
-      </button>
+      @for (profile of profileViewModels(); track profile.id) {
+        <button 
+          (click)="setActiveProfile(profile.id)" 
+          [class.active]="profile.id === activeProfileId()"
+        >
+          {{ profile.displayName }}
+        </button>
+      }
       <button (click)="addNewProfile()">Add New Profile</button>
     </div>
-    <div class="party-builder" *ngIf="activeProfile()">
-      <app-left-menu></app-left-menu>
-      <div #widgetContainer></div>
-      <div class="navigation-buttons">
-        <button (click)="loadPreviousWidget()" [disabled]="!canNavigatePrevious()">Previous</button>
-        <button (click)="loadNextWidget()" [disabled]="!canNavigateNext()">Next</button>
+    @if (activeProfile()) {
+      <div class="party-builder">
+        <app-left-menu />
+        <div #widgetContainer></div>
+        <div class="widget-navigation">
+          <button (click)="loadPreviousWidget()" [disabled]="!hasPreviousWidget()">Previous</button>
+          <button (click)="loadNextWidget()" [disabled]="!hasNextWidget()">Next</button>
+        </div>
       </div>
+    }
+    <div class="action-buttons">
+      <button (click)="validateAll()">Validate All</button>
+      <button (click)="loadAllWidgets()">Load All Widgets</button>
+      <button (click)="refreshWidgets()">Refresh Widgets</button>
+      <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
     </div>
-    <button (click)="validateAll()">Validate All</button>
-    <button (click)="loadAllWidgets()">Load All Widgets</button>
-    <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
-  `
+    <div class="completion-status">
+      Completion: {{ completionPercentage() | number:'1.0-0' }}%
+    </div>
+  `,
+  styles: [`
+    .profile-selector { /* Add styles for profile selector */ }
+    .party-builder { /* Add styles for party builder layout */ }
+    .widget-navigation { /* Add styles for widget navigation buttons */ }
+    .action-buttons { /* Add styles for action buttons */ }
+    .completion-status { /* Add styles for completion status */ }
+  `]
 })
-export class PartyBuilderComponent {
+export class PartyBuilderComponent implements OnInit {
   @ViewChild('widgetContainer', { read: ViewContainerRef, static: false })
   widgetContainer!: ViewContainerRef;
 
@@ -37,15 +236,26 @@ export class PartyBuilderComponent {
 
   profiles = this.profileBuilder.getProfiles;
   activeProfile = this.profileBuilder.getActiveProfile;
-  activeProfileIndex = this.profileBuilder.activeProfileIndex;
-  visibleWidgets = this.profileBuilder.getVisibleWidgets;
+  completionPercentage = this.profileBuilder.getCompletionPercentage;
 
-  private currentWidgetIndex = signal(-1);
+  profileViewModels = computed(() => 
+    this.profiles().map(profile => ({
+      ...profile,
+      displayName: this.getProfileDisplayName(profile)
+    }))
+  );
 
-  canNavigatePrevious = computed(() => this.currentWidgetIndex() > 0);
-  canNavigateNext = computed(() => {
-    const visibleWidgets = this.visibleWidgets();
-    return this.currentWidgetIndex() < visibleWidgets.length - 1;
+  activeProfileId = computed(() => this.activeProfile()?.id ?? null);
+  activeWidgetName = this.profileBuilder.getActiveWidgetName;
+
+  hasPreviousWidget = computed(() => {
+    const currentWidget = this.activeWidgetName();
+    return currentWidget ? !!this.profileBuilder.getPreviousWidget(currentWidget) : false;
+  });
+
+  hasNextWidget = computed(() => {
+    const currentWidget = this.activeWidgetName();
+    return currentWidget ? !!this.profileBuilder.getNextWidget(currentWidget) : false;
   });
 
   constructor() {
@@ -53,14 +263,77 @@ export class PartyBuilderComponent {
       const activeWidgetName = this.profileBuilder.getActiveWidgetName();
       if (activeWidgetName) {
         this.loadComponent(activeWidgetName);
-        this.updateCurrentWidgetIndex(activeWidgetName);
       }
     });
   }
 
-  private updateCurrentWidgetIndex(widgetName: string) {
-    const visibleWidgets = this.visibleWidgets();
-    this.currentWidgetIndex.set(visibleWidgets.findIndex(w => w.name === widgetName));
+  ngOnInit() {
+    if (this.activeProfileId() !== null) {
+      this.profileBuilder.loadWidgetsBasedOnRules();
+    }
+  }
+
+  private getProfileDisplayName(profile: any): string {
+    switch (profile.type) {
+      case 'personal':
+        return `Personal: ${profile.name}`;
+      case 'business':
+        return `Business: ${profile.name}`;
+      case 'family':
+        return `Family: ${profile.name}`;
+      default:
+        return `Profile: ${profile.name}`;
+    }
+  }
+
+  setActiveProfile(profileId: string) {
+    this.profileBuilder.setActiveProfileById(profileId);
+  }
+
+  addNewProfile() {
+    this.profileBuilder.addNewProfile();
+  }
+
+  validateAll() {
+    const isValid = this.profileBuilder.validateAllWidgets();
+    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
+  }
+
+  loadAllWidgets() {
+    this.profileBuilder.loadAllWidgetsBasedOnRules();
+  }
+
+  refreshWidgets() {
+    this.profileBuilder.loadWidgetsBasedOnRules();
+  }
+
+  loadNextIncompleteWidget() {
+    const nextWidgetName = this.profileBuilder.getNextIncompleteWidget();
+    if (nextWidgetName) {
+      this.profileBuilder.setActiveWidget(nextWidgetName);
+    } else {
+      console.log('All widgets are complete!');
+    }
+  }
+
+  loadPreviousWidget() {
+    const currentWidget = this.activeWidgetName();
+    if (currentWidget) {
+      const previousWidgetName = this.profileBuilder.getPreviousWidget(currentWidget);
+      if (previousWidgetName) {
+        this.profileBuilder.setActiveWidget(previousWidgetName);
+      }
+    }
+  }
+
+  loadNextWidget() {
+    const currentWidget = this.activeWidgetName();
+    if (currentWidget) {
+      const nextWidgetName = this.profileBuilder.getNextWidget(currentWidget);
+      if (nextWidgetName) {
+        this.profileBuilder.setActiveWidget(nextWidgetName);
+      }
+    }
   }
 
   async loadComponent(widgetName: string) {
@@ -75,47 +348,6 @@ export class PartyBuilderComponent {
           componentRef.instance.setFormGroup(formGroup);
         }
       }
-    }
-  }
-
-  setActiveProfile(index: number) {
-    this.profileBuilder.setActiveProfile(index);
-  }
-
-  addNewProfile() {
-    this.profileBuilder.addNewProfile();
-  }
-
-  validateAll() {
-    const isValid = this.profileBuilder.validateAllWidgets();
-    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
-    console.log('Completion percentage:', this.profileBuilder.getCompletionPercentage());
-  }
-
-  loadAllWidgets() {
-    this.profileBuilder.loadAllWidgets();
-  }
-
-  loadNextIncompleteWidget() {
-    const nextWidgetName = this.profileBuilder.getNextIncompleteWidget();
-    if (nextWidgetName) {
-      this.profileBuilder.setActiveWidget(nextWidgetName);
-    } else {
-      console.log('All widgets are complete!');
-    }
-  }
-
-  loadPreviousWidget() {
-    if (this.canNavigatePrevious()) {
-      const previousWidget = this.visibleWidgets()[this.currentWidgetIndex() - 1];
-      this.profileBuilder.setActiveWidget(previousWidget.name);
-    }
-  }
-
-  loadNextWidget() {
-    if (this.canNavigateNext()) {
-      const nextWidget = this.visibleWidgets()[this.currentWidgetIndex() + 1];
-      this.profileBuilder.setActiveWidget(nextWidget.name);
     }
   }
 }
