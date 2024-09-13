@@ -1,4 +1,42 @@
+import { Injectable, signal, computed, type WritableSignal, type Signal } from '@angular/core';
+import { WidgetConfig } from './widget-config';
 
+interface ActiveWidget {
+  widgetName: string;
+  subItemName?: string;
+}
+
+@Injectable({ providedIn: 'root' })
+export class ProfileBuilderService {
+  private activeWidgetSignal: WritableSignal<ActiveWidget | null> = signal(null);
+
+  getActiveWidget: Signal<ActiveWidget | null> = computed(() => {
+    const activeWidget = this.activeWidgetSignal();
+    if (!activeWidget) return null;
+
+    // Optionally, you can add more logic here to enrich the active widget information
+    // For example, fetching the full WidgetConfig based on the active widget name
+    const widgetConfig = this.findWidgetByName(activeWidget.widgetName);
+    
+    return {
+      ...activeWidget,
+      displayName: widgetConfig?.displayName || activeWidget.widgetName,
+      // Add any other relevant metadata from widgetConfig
+    };
+  });
+
+  setActiveWidget(widgetName: string, subItemName?: string) {
+    this.activeWidgetSignal.set({ widgetName, subItemName });
+    // Other logic for setting the active widget (e.g., updating widget states)
+  }
+
+  private findWidgetByName(name: string): WidgetConfig | undefined {
+    // Implementation to find a widget config by name
+    // This would typically search through your WIDGET_CONFIG array
+  }
+
+  // Other methods in your service...
+}
 --------
 import { Component, ViewChild, ViewContainerRef, inject, effect, OnInit, computed } from '@angular/core';
 import { AsyncPipe } from '@angular/common';
