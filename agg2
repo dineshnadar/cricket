@@ -1,153 +1,121 @@
-import { Component, signal, computed } from '@angular/core';
-import { CommonModule } from '@angular/common';
-
-interface StructuredData {
-  [label: string]: {
-    [accountNumber: string]: string | string[] | null;
-  };
-}
-
-interface DisplayData {
-  label: string;
-  displayValue: string[];
-  displayYes: boolean;
-  accounts: { number: string; value: string | string[] | null }[];
-}
+import { Component, ViewChild, ViewContainerRef, inject, effect, signal, computed } from '@angular/core';
+import { NgFor, NgIf } from '@angular/common';
+import { ProfileBuilderService } from './profile-builder.service';
+import { LeftMenuComponent } from './left-menu.component';
 
 @Component({
-  selector: 'app-account-status',
+  selector: 'app-party-builder',
   standalone: true,
-  imports: [CommonModule],
+  imports: [NgFor, NgIf, LeftMenuComponent],
   template: `
-    <div class="p-4">
-      <button (click)="loadData()" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 mb-4">
-        Load Data
+    <div class="profile-selector">
+      <button *ngFor="let profile of profiles; let i = index"
+              (click)="setActiveProfile(i)"
+              [class.active]="i === activeProfileIndex()">
+        Profile {{ i + 1 }}
       </button>
-
-      @if (displayColumns().length) {
-        <div class="flex">
-          @for (column of displayColumns(); track $index) {
-            <ul class="w-1/2 list-none p-0 pr-2">
-              @for (item of column; track item.label) {
-                <li class="mb-2 p-2 border border-gray-300 rounded">
-                  <span class="font-medium">{{ item.label }}:</span>
-                  <span 
-                    class="ml-2 cursor-pointer"
-                    (mouseenter)="showAccounts(item.label)" 
-                    (mouseleave)="hideAccounts()"
-                  >
-                    {{ item.displayYes ? 'Y' : 'N' }}
-                  </span>
-                  @if (hoveredLabel() === item.label) {
-                    <div class="mt-2 bg-gray-100 p-2 rounded">
-                      Accounts:
-                      <ul class="list-disc pl-5">
-                        @for (account of item.accounts; track account.number) {
-                          <li>
-                            {{ account.number }}: 
-                            @if (Array.isArray(account.value)) {
-                              {{ account.value.join(', ') }}
-                            } @else {
-                              {{ account.value ?? 'N/A' }}
-                            }
-                          </li>
-                        }
-                      </ul>
-                    </div>
-                  }
-                </li>
-              }
-            </ul>
-          }
-        </div>
-      } @else {
-        <p>No data to display. Click 'Load Data' to populate the list.</p>
-      }
+      <button (click)="addNewProfile()">Add New Profile</button>
     </div>
-  `,
-  styles: [`
-    :host {
-      display: block;
-      font-family: Arial, sans-serif;
-    }
-  `]
+    <div class="party-builder" *ngIf="activeProfile()">
+      <app-left-menu></app-left-menu>
+      <div #widgetContainer></div>
+      <div class="navigation-buttons">
+        <button (click)="loadPreviousWidget()" [disabled]="!canNavigatePrevious()">Previous</button>
+        <button (click)="loadNextWidget()" [disabled]="!canNavigateNext()">Next</button>
+      </div>
+    </div>
+    <button (click)="validateAll()">Validate All</button>
+    <button (click)="loadAllWidgets()">Load All Widgets</button>
+    <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
+  `
 })
-export class AccountStatusComponent {
-  private accountStatuses = signal<StructuredData>({});
-  hoveredLabel = signal<string | null>(null);
+export class PartyBuilderComponent {
+  @ViewChild('widgetContainer', { read: ViewContainerRef, static: false })
+  widgetContainer!: ViewContainerRef;
 
-  displayData = computed(() => this.prepareDisplayData(this.accountStatuses()));
-  displayColumns = computed(() => this.splitIntoColumns(this.displayData()));
+  private profileBuilder = inject(ProfileBuilderService);
 
-  loadData() {
-    // Simulating data load with various value types
-    const data: StructuredData = {
-      "label1": {"101-232323": "N", "101-323": "Y", "101-444": "Y"},
-      "label2": {"101-232323": "N", "101-323": "N", "101-555": ["A", "B", "C"]},
-      "label3": {"101-232323": "N", "101-323": "N", "101-666": null},
-      "label4": {"101-232323": "Y", "101-323": "Y", "101-777": "A|B|C"},
-      "label5": {"101-232323": "N", "101-323": "Yes", "101-888": ""},
-      "label6": {"101-232323": "No", "101-323": "YES", "101-999": "N"}
-    };
-    this.accountStatuses.set(data);
+  profiles = this.profileBuilder.getProfiles;
+  activeProfile = this.profileBuilder.getActiveProfile;
+  activeProfileIndex = this.profileBuilder.activeProfileIndex;
+  visibleWidgets = this.profileBuilder.getVisibleWidgets;
+
+  private currentWidgetIndex = signal(-1);
+
+  canNavigatePrevious = computed(() => this.currentWidgetIndex() > 0);
+  canNavigateNext = computed(() => {
+    const visibleWidgets = this.visibleWidgets();
+    return this.currentWidgetIndex() < visibleWidgets.length - 1;
+  });
+
+  constructor() {
+    effect(() => {
+      const activeWidgetName = this.profileBuilder.getActiveWidgetName();
+      if (activeWidgetName) {
+        this.loadComponent(activeWidgetName);
+        this.updateCurrentWidgetIndex(activeWidgetName);
+      }
+    });
   }
 
-  private prepareDisplayData(statuses: StructuredData): DisplayData[] {
-    return Object.entries(statuses)
-      .map(([label, accounts]) => {
-        const processedAccounts = Object.entries(accounts).map(([number, value]) => ({
-          number,
-          value: this.processValue(value)
-        }));
-
-        const displayValue = processedAccounts
-          .flatMap(account => Array.isArray(account.value) ? account.value : [account.value])
-          .filter((value): value is string => value !== null && value !== '')
-          .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
-
-        const displayYes = processedAccounts.some(account => 
-          this.isYesValue(account.value)
-        );
-
-        return {
-          label,
-          displayValue,
-          displayYes,
-          accounts: processedAccounts
-        };
-      })
-      .filter(item => item.displayValue.length > 0);
+  private updateCurrentWidgetIndex(widgetName: string) {
+    const visibleWidgets = this.visibleWidgets();
+    this.currentWidgetIndex.set(visibleWidgets.findIndex(w => w.name === widgetName));
   }
 
-  private processValue(value: string | string[] | null): string | string[] | null {
-    if (typeof value === 'string' && value.includes('|')) {
-      return value.split('|');
+  async loadComponent(widgetName: string) {
+    this.widgetContainer.clear();
+    const widgetConfig = this.profileBuilder.findWidgetByName(widgetName);
+    if (widgetConfig && widgetConfig.component) {
+      const component = await widgetConfig.component();
+      const componentRef = this.widgetContainer.createComponent(component);
+      if (componentRef.instance.setFormGroup) {
+        const formGroup = this.profileBuilder.getWidgetFormGroup(widgetName);
+        if (formGroup) {
+          componentRef.instance.setFormGroup(formGroup);
+        }
+      }
     }
-    return value;
   }
 
-  private isYesValue(value: string | string[] | null): boolean {
-    if (Array.isArray(value)) {
-      return value.some(v => this.isYesString(v));
+  setActiveProfile(index: number) {
+    this.profileBuilder.setActiveProfile(index);
+  }
+
+  addNewProfile() {
+    this.profileBuilder.addNewProfile();
+  }
+
+  validateAll() {
+    const isValid = this.profileBuilder.validateAllWidgets();
+    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
+    console.log('Completion percentage:', this.profileBuilder.getCompletionPercentage());
+  }
+
+  loadAllWidgets() {
+    this.profileBuilder.loadAllWidgets();
+  }
+
+  loadNextIncompleteWidget() {
+    const nextWidgetName = this.profileBuilder.getNextIncompleteWidget();
+    if (nextWidgetName) {
+      this.profileBuilder.setActiveWidget(nextWidgetName);
+    } else {
+      console.log('All widgets are complete!');
     }
-    return this.isYesString(value);
   }
 
-  private isYesString(value: string | null): boolean {
-    if (typeof value !== 'string') return false;
-    return ['Y', 'Yes', 'YES', 'yes'].includes(value.trim());
+  loadPreviousWidget() {
+    if (this.canNavigatePrevious()) {
+      const previousWidget = this.visibleWidgets()[this.currentWidgetIndex() - 1];
+      this.profileBuilder.setActiveWidget(previousWidget.name);
+    }
   }
 
-  private splitIntoColumns(data: DisplayData[]): DisplayData[][] {
-    const midpoint = Math.ceil(data.length / 2);
-    return [data.slice(0, midpoint), data.slice(midpoint)];
-  }
-
-  showAccounts(label: string) {
-    this.hoveredLabel.set(label);
-  }
-
-  hideAccounts() {
-    this.hoveredLabel.set(null);
+  loadNextWidget() {
+    if (this.canNavigateNext()) {
+      const nextWidget = this.visibleWidgets()[this.currentWidgetIndex() + 1];
+      this.profileBuilder.setActiveWidget(nextWidget.name);
+    }
   }
 }
