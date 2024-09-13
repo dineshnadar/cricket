@@ -1,8 +1,7 @@
 import { Component, inject, effect, OnInit, computed, signal } from '@angular/core';
 import { AsyncPipe } from '@angular/common';
-import { ProfileBuilderService } from './profile-builder.service';
+import { ProfileBuilderService, ActiveWidget } from './profile-builder.service';
 import { LeftMenuComponent } from './left-menu.component';
-import { WidgetConfig, ActiveWidget } from './widget-config';
 
 @Component({
   selector: 'app-party-builder',
@@ -19,10 +18,10 @@ import { WidgetConfig, ActiveWidget } from './widget-config';
                   [disabled]="isNavigating() || isFirstWidget()">
             Previous
           </button>
-          <button (click)="loadNextWidget()" 
-                  [disabled]="isNavigating() || isLastWidget()">
-            Next
-          </button>
+         <button (click)="loadNextWidget()" 
+        [disabled]="isNavigating() || (isLastWidget() | async)">
+  Next
+</button>
         </div>
         <div class="navigation-mode">
           <label>
@@ -59,48 +58,22 @@ export class PartyBuilderComponent implements OnInit {
     }
   });
 
-  isLastWidget = computed(() => {
+  isLastWidget = computed(async () => {
     const currentWidget = this.activeWidget();
-    const widgets = this.visibleWidgets();
-    if (!currentWidget || widgets.length === 0) return true;
+    if (!currentWidget) return true;
 
-    const lastWidget = widgets[widgets.length - 1];
     if (this.includeSubItems()) {
-      if (lastWidget.name !== currentWidget.widgetName) return false;
-      if (Array.isArray(lastWidget.subMenu) && lastWidget.subMenu.length > 0) {
-        return currentWidget.subItemName === lastWidget.subMenu[lastWidget.subMenu.length - 1].name;
-      }
-      return !currentWidget.subItemName;
+      return await this.profileBuilder.isLastItem(currentWidget);
     } else {
-      return lastWidget.name === currentWidget.widgetName;
+      const widgets = this.visibleWidgets();
+      return widgets[widgets.length - 1].name === currentWidget.widgetName;
     }
   });
 
-  async loadPreviousWidget() {
-    if (this.isNavigating() || this.isFirstWidget()) return;
-    
-    this.isNavigating.set(true);
-    try {
-      const currentWidget = this.activeWidget();
-      if (currentWidget) {
-        const previousWidget = this.includeSubItems()
-          ? await this.profileBuilder.getPreviousWidget(currentWidget)
-          : this.getPreviousTopLevelWidget(currentWidget.widgetName);
-        
-        if (previousWidget) {
-          this.profileBuilder.setActiveWidget(
-            previousWidget.widgetName, 
-            this.includeSubItems() ? previousWidget.subItemName : undefined
-          );
-        }
-      }
-    } finally {
-      this.isNavigating.set(false);
-    }
-  }
+  // ... existing methods ...
 
   async loadNextWidget() {
-    if (this.isNavigating() || this.isLastWidget()) return;
+    if (this.isNavigating() || await this.isLastWidget()) return;
     
     this.isNavigating.set(true);
     try {
@@ -122,27 +95,11 @@ export class PartyBuilderComponent implements OnInit {
     }
   }
 
-  private getPreviousTopLevelWidget(currentWidgetName: string): ActiveWidget | null {
-    const widgets = this.visibleWidgets();
-    const currentIndex = widgets.findIndex(w => w.name === currentWidgetName);
-    return currentIndex > 0 ? { widgetName: widgets[currentIndex - 1].name } : null;
-  }
-
-  private getNextTopLevelWidget(currentWidgetName: string): ActiveWidget | null {
-    const widgets = this.visibleWidgets();
-    const currentIndex = widgets.findIndex(w => w.name === currentWidgetName);
-    return currentIndex < widgets.length - 1 ? { widgetName: widgets[currentIndex + 1].name } : null;
-  }
-
-  toggleNavigationMode() {
-    this.includeSubItems.update(value => !value);
-  }
-
   // ... other methods ...
 }
 
 
----------
+--------
 
 import { Injectable, inject, signal, computed, type WritableSignal, type Signal } from '@angular/core';
 import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
@@ -156,106 +113,25 @@ export interface ActiveWidget {
 
 @Injectable({ providedIn: 'root' })
 export class ProfileBuilderService {
-  private widgetStateService = inject(WidgetStateService);
-  private dynamicMenuService = inject(DynamicMenuService);
+  // ... existing code ...
 
-  private activeWidgetSignal: WritableSignal<ActiveWidget | null> = signal(null);
-
-  getActiveWidget: Signal<ActiveWidget | null> = computed(() => this.activeWidgetSignal());
-
-  getVisibleWidgets = computed(() => {
-    return WIDGET_CONFIG.filter(widget => 
-      this.widgetStateService.isWidgetVisible(widget.name)
-    );
-  });
-
-  setActiveWidget(widgetName: string, subItemName?: string) {
-    this.activeWidgetSignal.set({ widgetName, subItemName });
-    this.widgetStateService.setWidgetActive(widgetName, true);
-    this.widgetStateService.setWidgetVisited(widgetName, true);
-    this.widgetStateService.setWidgetStatus(widgetName, 'in-progress');
-  }
-
-  async getNextWidget(currentWidget: ActiveWidget): Promise<ActiveWidget | null> {
+  async isLastItem(currentWidget: ActiveWidget): Promise<boolean> {
     const visibleWidgets = this.getVisibleWidgets()();
     const currentWidgetIndex = visibleWidgets.findIndex(w => w.name === currentWidget.widgetName);
     
-    if (currentWidgetIndex === -1) return null;
-
-    const currentWidgetConfig = visibleWidgets[currentWidgetIndex];
-    
-    // Handle sub-items if present
-    if (currentWidget.subItemName) {
-      const subItems = await this.getSubMenuItems(currentWidgetConfig);
-      const currentSubItemIndex = subItems.findIndex(item => item.name === currentWidget.subItemName);
-      if (currentSubItemIndex < subItems.length - 1) {
-        return { widgetName: currentWidget.widgetName, subItemName: subItems[currentSubItemIndex + 1].name };
-      }
-    } else {
-      // If current widget has sub-items and we're not on a sub-item, go to the first sub-item
-      const subItems = await this.getSubMenuItems(currentWidgetConfig);
-      if (subItems.length > 0) {
-        return { widgetName: currentWidget.widgetName, subItemName: subItems[0].name };
-      }
+    if (currentWidgetIndex === -1 || currentWidgetIndex < visibleWidgets.length - 1) {
+      return false;
     }
 
-    // Move to the next widget
-    if (currentWidgetIndex < visibleWidgets.length - 1) {
-      const nextWidget = visibleWidgets[currentWidgetIndex + 1];
-      const nextSubItems = await this.getSubMenuItems(nextWidget);
-      if (nextSubItems.length > 0) {
-        return { widgetName: nextWidget.name, subItemName: nextSubItems[0].name };
-      }
-      return { widgetName: nextWidget.name };
+    const lastWidget = visibleWidgets[visibleWidgets.length - 1];
+    const subItems = await this.getSubMenuItems(lastWidget);
+
+    if (subItems.length === 0) {
+      return !currentWidget.subItemName;
     }
 
-    return null;
+    return currentWidget.subItemName === subItems[subItems.length - 1].name;
   }
 
-  async getPreviousWidget(currentWidget: ActiveWidget): Promise<ActiveWidget | null> {
-    const visibleWidgets = this.getVisibleWidgets()();
-    const currentWidgetIndex = visibleWidgets.findIndex(w => w.name === currentWidget.widgetName);
-    
-    if (currentWidgetIndex === -1) return null;
-
-    const currentWidgetConfig = visibleWidgets[currentWidgetIndex];
-
-    // Handle sub-items if present
-    if (currentWidget.subItemName) {
-      const subItems = await this.getSubMenuItems(currentWidgetConfig);
-      const currentSubItemIndex = subItems.findIndex(item => item.name === currentWidget.subItemName);
-      if (currentSubItemIndex > 0) {
-        return { widgetName: currentWidget.widgetName, subItemName: subItems[currentSubItemIndex - 1].name };
-      }
-    }
-
-    // Move to the previous widget
-    if (currentWidgetIndex > 0) {
-      const previousWidget = visibleWidgets[currentWidgetIndex - 1];
-      const previousSubItems = await this.getSubMenuItems(previousWidget);
-      if (previousSubItems.length > 0) {
-        return { widgetName: previousWidget.name, subItemName: previousSubItems[previousSubItems.length - 1].name };
-      }
-      return { widgetName: previousWidget.name };
-    }
-
-    return null;
-  }
-
-  private async getSubMenuItems(widget: WidgetConfig): Promise<SubMenuItem[]> {
-    if (Array.isArray(widget.subMenu)) {
-      return widget.subMenu;
-    } else if (widget.subMenu === 'dynamic' || widget.subMenu === 'api') {
-      return await this.dynamicMenuService.loadDynamicSubMenu(widget.name);
-    } else if (typeof widget.subMenu === 'function') {
-      return await widget.subMenu();
-    }
-    return [];
-  }
-
-  findWidgetByName(name: string): WidgetConfig | undefined {
-    return WIDGET_CONFIG.find(widget => widget.name === name);
-  }
-
-  // ... other methods ...
+  // ... existing methods ...
 }
