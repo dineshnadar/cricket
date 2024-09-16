@@ -1,24 +1,26 @@
 // libs/shared/confirmation/src/lib/confirmation.service.spec.ts
 import { TestBed } from '@angular/core/testing';
 import { ConfirmationService } from './confirmation.service';
-import { DomSanitizer } from '@angular/platform-browser';
+import { DomSanitizer, SecurityContext } from '@angular/platform-browser';
+
+jest.mock('@angular/platform-browser');
 
 describe('ConfirmationService', () => {
   let service: ConfirmationService;
-  let sanitizer: jasmine.SpyObj<DomSanitizer>;
+  let sanitizer: jest.Mocked<DomSanitizer>;
 
   beforeEach(() => {
-    const sanitizerSpy = jasmine.createSpyObj('DomSanitizer', ['sanitize']);
-    
     TestBed.configureTestingModule({
       providers: [
         ConfirmationService,
-        { provide: DomSanitizer, useValue: sanitizerSpy }
+        { provide: DomSanitizer, useValue: {
+          sanitize: jest.fn().mockReturnValue('Sanitized Content')
+        } }
       ]
     });
     
     service = TestBed.inject(ConfirmationService);
-    sanitizer = TestBed.inject(DomSanitizer) as jasmine.SpyObj<DomSanitizer>;
+    sanitizer = TestBed.inject(DomSanitizer) as jest.Mocked<DomSanitizer>;
   });
 
   it('should be created', () => {
@@ -26,8 +28,6 @@ describe('ConfirmationService', () => {
   });
 
   it('should add a confirmation', () => {
-    sanitizer.sanitize.and.returnValue('Sanitized Content');
-    
     const id = service.confirm({
       id: 'test-id',
       header: 'Test Header',
@@ -72,7 +72,7 @@ describe('ConfirmationService', () => {
 
   it('should handle HTML content', () => {
     const htmlContent = '<p>Test <strong>HTML</strong></p>';
-    sanitizer.sanitize.and.returnValue(htmlContent);
+    sanitizer.sanitize.mockReturnValue(htmlContent);
 
     service.confirm({
       id: 'html-test',
@@ -84,7 +84,7 @@ describe('ConfirmationService', () => {
     const confirmation = service.getConfirmationById('html-test')();
 
     expect(confirmation?.content).toBe(htmlContent);
-    expect(sanitizer.sanitize).toHaveBeenCalledWith(jasmine.any(Number), htmlContent);
+    expect(sanitizer.sanitize).toHaveBeenCalledWith(SecurityContext.HTML, htmlContent);
   });
 });
 
@@ -95,24 +95,22 @@ import { ConfirmationService } from '../confirmation.service';
 import { By } from '@angular/platform-browser';
 import { ChangeDetectionStrategy } from '@angular/core';
 
+jest.mock('../confirmation.service');
+
 describe('ConfirmationDialogComponent', () => {
   let component: ConfirmationDialogComponent;
   let fixture: ComponentFixture<ConfirmationDialogComponent>;
-  let confirmationService: jasmine.SpyObj<ConfirmationService>;
+  let confirmationService: jest.Mocked<ConfirmationService>;
 
   beforeEach(async () => {
-    const confirmationServiceSpy = jasmine.createSpyObj('ConfirmationService', ['getConfirmationById', 'close']);
-    
     await TestBed.configureTestingModule({
       imports: [ConfirmationDialogComponent],
-      providers: [
-        { provide: ConfirmationService, useValue: confirmationServiceSpy }
-      ]
+      providers: [ConfirmationService]
     }).overrideComponent(ConfirmationDialogComponent, {
       set: { changeDetection: ChangeDetectionStrategy.Default }
     }).compileComponents();
 
-    confirmationService = TestBed.inject(ConfirmationService) as jasmine.SpyObj<ConfirmationService>;
+    confirmationService = TestBed.inject(ConfirmationService) as jest.Mocked<ConfirmationService>;
   });
 
   beforeEach(() => {
@@ -133,7 +131,7 @@ describe('ConfirmationDialogComponent', () => {
       buttons: [{ label: 'OK', action: jest.fn() }]
     };
 
-    confirmationService.getConfirmationById.and.returnValue(() => mockConfirmation);
+    confirmationService.getConfirmationById.mockReturnValue(() => mockConfirmation);
 
     fixture.detectChanges();
 
@@ -147,7 +145,7 @@ describe('ConfirmationDialogComponent', () => {
   });
 
   it('should not display anything when no confirmation is available', () => {
-    confirmationService.getConfirmationById.and.returnValue(() => undefined);
+    confirmationService.getConfirmationById.mockReturnValue(() => undefined);
 
     fixture.detectChanges();
 
@@ -164,7 +162,7 @@ describe('ConfirmationDialogComponent', () => {
       buttons: [{ label: 'OK', action: mockAction }]
     };
 
-    confirmationService.getConfirmationById.and.returnValue(() => mockConfirmation);
+    confirmationService.getConfirmationById.mockReturnValue(() => mockConfirmation);
 
     fixture.detectChanges();
 
@@ -175,3 +173,25 @@ describe('ConfirmationDialogComponent', () => {
     expect(confirmationService.close).toHaveBeenCalledWith('test-id');
   });
 });
+
+-------
+
+export default {
+  displayName: 'shared-confirmation',
+  preset: '../../../jest.preset.js',
+  setupFilesAfterEnv: ['<rootDir>/src/test-setup.ts'],
+  globals: {},
+  coverageDirectory: '../../../coverage/libs/shared/confirmation',
+  transform: {
+    '^.+\\.(ts|mjs|js|html)$': ['jest-preset-angular', {
+      tsconfig: '<rootDir>/tsconfig.spec.json',
+      stringifyContentPathRegex: '\\.(html|svg)$',
+    }],
+  },
+  transformIgnorePatterns: ['node_modules/(?!.*\\.mjs$)'],
+  snapshotSerializers: [
+    'jest-preset-angular/build/serializers/no-ng-attributes',
+    'jest-preset-angular/build/serializers/ng-snapshot',
+    'jest-preset-angular/build/serializers/html-comment',
+  ],
+};
