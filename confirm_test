@@ -1,99 +1,9 @@
-// libs/shared/confirmation/src/lib/confirmation.service.spec.ts
-import { TestBed } from '@angular/core/testing';
-import { ConfirmationService } from './confirmation.service';
-import { DomSanitizer, SecurityContext } from '@angular/platform-browser';
-
-jest.mock('@angular/platform-browser');
-
-describe('ConfirmationService', () => {
-  let service: ConfirmationService;
-  let sanitizer: jest.Mocked<DomSanitizer>;
-
-  beforeEach(() => {
-    TestBed.configureTestingModule({
-      providers: [
-        ConfirmationService,
-        { provide: DomSanitizer, useValue: {
-          sanitize: jest.fn().mockReturnValue('Sanitized Content')
-        } }
-      ]
-    });
-    
-    service = TestBed.inject(ConfirmationService);
-    sanitizer = TestBed.inject(DomSanitizer) as jest.Mocked<DomSanitizer>;
-  });
-
-  it('should be created', () => {
-    expect(service).toBeTruthy();
-  });
-
-  it('should add a confirmation', () => {
-    const id = service.confirm({
-      id: 'test-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      accept: { action: jest.fn() }
-    });
-
-    expect(id).toBe('test-id');
-    expect(service.activeConfirmations().length).toBe(1);
-    expect(service.activeConfirmations()[0].header).toBe('Test Header');
-    expect(service.activeConfirmations()[0].content).toBe('Sanitized Content');
-  });
-
-  it('should close a confirmation', () => {
-    service.confirm({
-      id: 'test-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      accept: { action: jest.fn() }
-    });
-
-    expect(service.activeConfirmations().length).toBe(1);
-
-    service.close('test-id');
-
-    expect(service.activeConfirmations().length).toBe(0);
-  });
-
-  it('should get confirmation by id', () => {
-    service.confirm({
-      id: 'test-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      accept: { action: jest.fn() }
-    });
-
-    const confirmation = service.getConfirmationById('test-id')();
-
-    expect(confirmation).toBeTruthy();
-    expect(confirmation?.header).toBe('Test Header');
-  });
-
-  it('should handle HTML content', () => {
-    const htmlContent = '<p>Test <strong>HTML</strong></p>';
-    sanitizer.sanitize.mockReturnValue(htmlContent);
-
-    service.confirm({
-      id: 'html-test',
-      header: 'HTML Test',
-      content: htmlContent,
-      ok: { action: jest.fn() }
-    });
-
-    const confirmation = service.getConfirmationById('html-test')();
-
-    expect(confirmation?.content).toBe(htmlContent);
-    expect(sanitizer.sanitize).toHaveBeenCalledWith(SecurityContext.HTML, htmlContent);
-  });
-});
-
 // libs/shared/confirmation/src/lib/confirmation-dialog/confirmation-dialog.component.spec.ts
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ConfirmationDialogComponent } from './confirmation-dialog.component';
 import { ConfirmationService } from '../confirmation.service';
 import { By } from '@angular/platform-browser';
-import { ChangeDetectionStrategy } from '@angular/core';
+import { ChangeDetectionStrategy, computed } from '@angular/core';
 
 jest.mock('../confirmation.service');
 
@@ -111,6 +21,21 @@ describe('ConfirmationDialogComponent', () => {
     }).compileComponents();
 
     confirmationService = TestBed.inject(ConfirmationService) as jest.Mocked<ConfirmationService>;
+    
+    // Mock getConfirmationById to return a computed signal
+    confirmationService.getConfirmationById.mockImplementation((id: string) => 
+      computed(() => {
+        if (id === 'test-id') {
+          return {
+            id: 'test-id',
+            header: 'Test Header',
+            content: 'Test Content',
+            buttons: [{ label: 'OK', action: jest.fn() }]
+          };
+        }
+        return undefined;
+      })
+    );
   });
 
   beforeEach(() => {
@@ -124,15 +49,6 @@ describe('ConfirmationDialogComponent', () => {
   });
 
   it('should display confirmation content when available', () => {
-    const mockConfirmation = {
-      id: 'test-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      buttons: [{ label: 'OK', action: jest.fn() }]
-    };
-
-    confirmationService.getConfirmationById.mockReturnValue(() => mockConfirmation);
-
     fixture.detectChanges();
 
     const headerElement = fixture.debugElement.query(By.css('h2'));
@@ -145,8 +61,7 @@ describe('ConfirmationDialogComponent', () => {
   });
 
   it('should not display anything when no confirmation is available', () => {
-    confirmationService.getConfirmationById.mockReturnValue(() => undefined);
-
+    component.id = 'non-existent-id';
     fixture.detectChanges();
 
     const modalElement = fixture.debugElement.query(By.css('.modal'));
@@ -155,14 +70,14 @@ describe('ConfirmationDialogComponent', () => {
 
   it('should call action and close when button is clicked', () => {
     const mockAction = jest.fn();
-    const mockConfirmation = {
-      id: 'test-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      buttons: [{ label: 'OK', action: mockAction }]
-    };
-
-    confirmationService.getConfirmationById.mockReturnValue(() => mockConfirmation);
+    confirmationService.getConfirmationById.mockImplementation(() => 
+      computed(() => ({
+        id: 'test-id',
+        header: 'Test Header',
+        content: 'Test Content',
+        buttons: [{ label: 'OK', action: mockAction }]
+      }))
+    );
 
     fixture.detectChanges();
 
@@ -171,176 +86,5 @@ describe('ConfirmationDialogComponent', () => {
 
     expect(mockAction).toHaveBeenCalled();
     expect(confirmationService.close).toHaveBeenCalledWith('test-id');
-  });
-});
-
--------
-
-export default {
-  displayName: 'shared-confirmation',
-  preset: '../../../jest.preset.js',
-  setupFilesAfterEnv: ['<rootDir>/src/test-setup.ts'],
-  globals: {},
-  coverageDirectory: '../../../coverage/libs/shared/confirmation',
-  transform: {
-    '^.+\\.(ts|mjs|js|html)$': ['jest-preset-angular', {
-      tsconfig: '<rootDir>/tsconfig.spec.json',
-      stringifyContentPathRegex: '\\.(html|svg)$',
-    }],
-  },
-  transformIgnorePatterns: ['node_modules/(?!.*\\.mjs$)'],
-  snapshotSerializers: [
-    'jest-preset-angular/build/serializers/no-ng-attributes',
-    'jest-preset-angular/build/serializers/ng-snapshot',
-    'jest-preset-angular/build/serializers/html-comment',
-  ],
-};
-
----------
-
-
-// libs/shared/confirmation/src/lib/confirmation.service.ts
-import { Injectable, signal, computed, SecurityContext } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-
-// ... (previous interfaces remain the same)
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ConfirmationService {
-  private confirmationsSignal = signal<ConfirmationOptions[]>([]);
-  private idCounter = 0;
-
-  constructor(private sanitizer: DomSanitizer) {}
-
-  activeConfirmations = computed(() => this.confirmationsSignal());
-
-  confirm(options: {
-    id?: string;  // Now optional
-    header: string;
-    content: string | SafeHtml;
-    accept?: { label?: string; action: () => void };
-    reject?: { label?: string; action: () => void };
-    ok?: { label?: string; action: () => void };
-    cancel?: { label?: string; action: () => void };
-  }) {
-    const buttons: ConfirmationButton[] = [];
-
-    if (options.accept) {
-      buttons.push({ label: options.accept.label || 'Accept', action: options.accept.action });
-    }
-    if (options.reject) {
-      buttons.push({ label: options.reject.label || 'Reject', action: options.reject.action });
-    }
-    if (options.ok) {
-      buttons.push({ label: options.ok.label || 'OK', action: options.ok.action });
-    }
-    if (options.cancel) {
-      buttons.push({ label: options.cancel.label || 'Cancel', action: options.cancel.action });
-    }
-
-    const safeContent = typeof options.content === 'string' 
-      ? this.sanitizer.sanitize(SecurityContext.HTML, options.content) || ''
-      : options.content;
-
-    const id = options.id || this.generateUniqueId();
-
-    const confirmation: ConfirmationOptions = {
-      id,
-      header: options.header,
-      content: safeContent,
-      buttons
-    };
-    
-    this.confirmationsSignal.update(confirmations => [...confirmations, confirmation]);
-
-    return id;
-  }
-
-  // ... (other methods remain the same)
-
-  private generateUniqueId(): string {
-    return `confirmation-${Date.now()}-${this.idCounter++}`;
-  }
-}
-
-// libs/shared/confirmation/src/lib/confirmation.service.spec.ts
-import { TestBed } from '@angular/core/testing';
-import { ConfirmationService } from './confirmation.service';
-import { DomSanitizer, SecurityContext } from '@angular/platform-browser';
-
-jest.mock('@angular/platform-browser');
-
-describe('ConfirmationService', () => {
-  let service: ConfirmationService;
-  let sanitizer: jest.Mocked<DomSanitizer>;
-
-  beforeEach(() => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date(2023, 3, 1));  // Set a fixed date for testing
-
-    TestBed.configureTestingModule({
-      providers: [
-        ConfirmationService,
-        { provide: DomSanitizer, useValue: {
-          sanitize: jest.fn().mockReturnValue('Sanitized Content')
-        } }
-      ]
-    });
-    
-    service = TestBed.inject(ConfirmationService);
-    sanitizer = TestBed.inject(DomSanitizer) as jest.Mocked<DomSanitizer>;
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
-  // ... (previous tests remain the same)
-
-  it('should generate a unique id when not provided', () => {
-    const id = service.confirm({
-      header: 'Test Header',
-      content: 'Test Content',
-      accept: { action: jest.fn() }
-    });
-
-    expect(id).toBe('confirmation-1680307200000-0');  // Based on the fixed date we set
-    expect(service.activeConfirmations().length).toBe(1);
-    expect(service.activeConfirmations()[0].id).toBe('confirmation-1680307200000-0');
-  });
-
-  it('should generate unique ids for multiple confirmations', () => {
-    const id1 = service.confirm({
-      header: 'Test Header 1',
-      content: 'Test Content 1',
-      accept: { action: jest.fn() }
-    });
-
-    const id2 = service.confirm({
-      header: 'Test Header 2',
-      content: 'Test Content 2',
-      accept: { action: jest.fn() }
-    });
-
-    expect(id1).toBe('confirmation-1680307200000-0');
-    expect(id2).toBe('confirmation-1680307200000-1');
-    expect(service.activeConfirmations().length).toBe(2);
-    expect(service.activeConfirmations()[0].id).toBe('confirmation-1680307200000-0');
-    expect(service.activeConfirmations()[1].id).toBe('confirmation-1680307200000-1');
-  });
-
-  it('should use provided id when available', () => {
-    const id = service.confirm({
-      id: 'custom-id',
-      header: 'Test Header',
-      content: 'Test Content',
-      accept: { action: jest.fn() }
-    });
-
-    expect(id).toBe('custom-id');
-    expect(service.activeConfirmations().length).toBe(1);
-    expect(service.activeConfirmations()[0].id).toBe('custom-id');
   });
 });
