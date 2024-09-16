@@ -1,75 +1,74 @@
-import { Component, inject, OnInit, computed, signal } from '@angular/core';
-import { AsyncPipe } from '@angular/common';
-import { ProfileBuilderService, ActiveWidget } from './profile-builder.service';
-import { LeftMenuComponent } from './left-menu.component';
+import { Injectable, signal, computed, WritableSignal } from '@angular/core';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
 
-@Component({
-  selector: 'app-party-builder',
-  standalone: true,
-  imports: [AsyncPipe, LeftMenuComponent],
-  template: `
-    <!-- ... other template parts ... -->
-    @if (activeProfile()) {
-      <div class="party-builder">
-        <app-left-menu />
-        <div #widgetContainer></div>
-        <div class="widget-controls">
-          <div class="acknowledgment">
-            <label>
-              <input type="checkbox" 
-                     [checked]="isActiveWidgetAcknowledged()"
-                     (change)="toggleActiveWidgetAcknowledgment()">
-              Acknowledge this widget
-            </label>
-          </div>
-          <div class="widget-navigation">
-            <button (click)="loadPreviousWidget()" 
-                    [disabled]="isNavigating() || isFirstWidget()">
-              Previous
-            </button>
-            <button (click)="loadNextWidget()" 
-                    [disabled]="isNavigating() || (isLastWidget() | async)">
-              Next
-            </button>
-          </div>
-          <div class="navigation-mode">
-            <label>
-              <input type="checkbox" [checked]="includeSubItems()" (change)="toggleNavigationMode()">
-              Include sub-items in navigation
-            </label>
-          </div>
-        </div>
-      </div>
-    }
-    <!-- ... other template parts ... -->
-  `,
-  styles: [/* ... */]
-})
-export class PartyBuilderComponent implements OnInit {
-  private profileBuilder = inject(ProfileBuilderService);
+export interface WidgetState {
+  visible: boolean;
+  hasError: boolean;
+  errorMessage: string;
+  visited: boolean;
+  acknowledged: boolean;
+  active: boolean;
+  status: 'pending' | 'in-progress' | 'completed' | 'error';
+}
 
-  isNavigating = signal(false);
-  includeSubItems = signal(false);
+@Injectable({ providedIn: 'root' })
+export class WidgetStateService {
+  private profileWidgetStates: WritableSignal<Record<string, WidgetState>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
 
-  activeWidget = this.profileBuilder.getActiveWidget;
-  visibleWidgets = this.profileBuilder.getVisibleWidgets;
+  // ... other methods ...
 
-  isActiveWidgetAcknowledged = computed(() => {
-    const currentWidget = this.activeWidget();
-    return currentWidget 
-      ? this.profileBuilder.isWidgetAcknowledged(currentWidget.widgetName)
-      : false;
-  });
+  private updateParentStates(widgetName: string, profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const updateRecursively = (items: (WidgetConfig | SubMenuItem)[], parent: WidgetConfig | SubMenuItem | null = null): boolean => {
+      for (const item of items) {
+        if (item.name === widgetName) {
+          if (parent) {
+            const childStates = this.getChildStates(parent, profileStates);
+            this.updateParentState(parent.name, childStates, profileStates, profileIndex);
+          }
+          return true;
+        }
+        
+        const subItems = Array.isArray(item.subMenu) ? item.subMenu : [];
+        if (updateRecursively(subItems, item)) {
+          if (parent) {
+            const childStates = this.getChildStates(parent, profileStates);
+            this.updateParentState(parent.name, childStates, profileStates, profileIndex);
+          }
+          return true;
+        }
+      }
+      return false;
+    };
 
-  // ... existing properties and methods ...
-
-  toggleActiveWidgetAcknowledgment() {
-    const currentWidget = this.activeWidget();
-    if (!currentWidget) return;
-
-    const newAckState = !this.isActiveWidgetAcknowledged();
-    this.profileBuilder.setWidgetAcknowledgment(currentWidget.widgetName, newAckState);
+    updateRecursively(WIDGET_CONFIG);
   }
 
-  // ... other existing methods ...
+  private getChildStates(parent: WidgetConfig | SubMenuItem, profileStates: Record<string, WidgetState>): WidgetState[] {
+    if (Array.isArray(parent.subMenu)) {
+      return parent.subMenu.map(subItem => profileStates[subItem.name]).filter(Boolean);
+    }
+    return [];
+  }
+
+  private updateParentState(parentName: string, childStates: WidgetState[], profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const allChildrenCompleted = childStates.every(state => state.status === 'completed');
+    const anyChildError = childStates.some(state => state.status === 'error');
+    const allChildrenAcknowledged = childStates.every(state => state.acknowledged);
+    const anyChildVisited = childStates.some(state => state.visited);
+
+    let newStatus: WidgetState['status'] = 'pending';
+    if (allChildrenCompleted) newStatus = 'completed';
+    else if (anyChildError) newStatus = 'error';
+    else if (childStates.some(state => state.status === 'in-progress')) newStatus = 'in-progress';
+
+    this.updateWidgetState(parentName, {
+      status: newStatus,
+      acknowledged: allChildrenAcknowledged,
+      visited: anyChildVisited || profileStates[parentName].visited,
+      hasError: anyChildError
+    }, profileIndex);
+  }
+
+  // ... other methods ...
 }
