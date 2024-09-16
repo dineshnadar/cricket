@@ -1,4 +1,4 @@
-import { Component, inject, effect, OnInit, computed, signal } from '@angular/core';
+import { Component, inject, OnInit, computed, signal } from '@angular/core';
 import { AsyncPipe } from '@angular/common';
 import { ProfileBuilderService, ActiveWidget } from './profile-builder.service';
 import { LeftMenuComponent } from './left-menu.component';
@@ -50,24 +50,16 @@ export class PartyBuilderComponent implements OnInit {
 
   isNavigating = signal(false);
   includeSubItems = signal(false);
-  isActiveWidgetAcknowledged = signal(false);
 
   activeWidget = this.profileBuilder.getActiveWidget;
   visibleWidgets = this.profileBuilder.getVisibleWidgets;
 
-  constructor() {
-    effect(() => {
-      // Update acknowledgment state when active widget changes
-      const currentWidget = this.activeWidget();
-      if (currentWidget) {
-        this.isActiveWidgetAcknowledged.set(
-          this.profileBuilder.isWidgetAcknowledged(currentWidget.widgetName)
-        );
-      } else {
-        this.isActiveWidgetAcknowledged.set(false);
-      }
-    });
-  }
+  isActiveWidgetAcknowledged = computed(() => {
+    const currentWidget = this.activeWidget();
+    return currentWidget 
+      ? this.profileBuilder.isWidgetAcknowledged(currentWidget.widgetName)
+      : false;
+  });
 
   // ... existing properties and methods ...
 
@@ -77,7 +69,6 @@ export class PartyBuilderComponent implements OnInit {
 
     const newAckState = !this.isActiveWidgetAcknowledged();
     this.profileBuilder.setWidgetAcknowledgment(currentWidget.widgetName, newAckState);
-    this.isActiveWidgetAcknowledged.set(newAckState);
   }
 
   // ... other existing methods ...
