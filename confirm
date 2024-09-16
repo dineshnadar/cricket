@@ -18,6 +18,62 @@ export class WidgetStateService {
 
   // ... other methods ...
 
+  private updateParentState(parentName: string, childStates: WidgetState[], profileStates: Record<string, WidgetState>, profileIndex: number) {
+    const allChildrenCompleted = childStates.every(state => state.status === 'completed');
+    const anyChildError = childStates.some(state => state.status === 'error');
+    const allChildrenAcknowledged = childStates.every(state => state.acknowledged);
+    const anyChildVisited = childStates.some(state => state.visited);
+
+    let newStatus: WidgetState['status'] = 'pending';
+    if (allChildrenCompleted) newStatus = 'completed';
+    else if (anyChildError) newStatus = 'error';
+    else if (childStates.some(state => state.status === 'in-progress')) newStatus = 'in-progress';
+
+    const currentParentState = profileStates[parentName];
+    const newParentState: Partial<WidgetState> = {
+      status: newStatus,
+      acknowledged: allChildrenAcknowledged && currentParentState.acknowledged,
+      visited: anyChildVisited || currentParentState.visited,
+      hasError: anyChildError
+    };
+
+    // Only update if there's a change
+    if (this.hasStateChanged(currentParentState, newParentState)) {
+      this.updateWidgetState(parentName, newParentState, profileIndex);
+      
+      // Trigger update for the parent's parent
+      this.updateParentStates(parentName, profileStates, profileIndex);
+    }
+  }
+
+  private hasStateChanged(currentState: WidgetState, newState: Partial<WidgetState>): boolean {
+    return Object.keys(newState).some(key => currentState[key as keyof WidgetState] !== newState[key as keyof WidgetState]);
+  }
+
+  // ... other methods ...
+}
+
+-------
+import { Injectable, signal, computed, WritableSignal } from '@angular/core';
+import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
+
+export interface WidgetState {
+  visible: boolean;
+  hasError: boolean;
+  errorMessage: string;
+  visited: boolean;
+  acknowledged: boolean;
+  active: boolean;
+  status: 'pending' | 'in-progress' | 'completed' | 'error';
+}
+
+@Injectable({ providedIn: 'root' })
+export class WidgetStateService {
+  private profileWidgetStates: WritableSignal<Record<string, WidgetState>[]> = signal([]);
+  private activeProfileIndex: WritableSignal<number | null> = signal(null);
+
+  // ... other methods ...
+
   private updateParentStates(widgetName: string, profileStates: Record<string, WidgetState>, profileIndex: number) {
     const updateRecursively = (items: (WidgetConfig | SubMenuItem)[], parent: WidgetConfig | SubMenuItem | null = null): boolean => {
       for (const item of items) {
