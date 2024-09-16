@@ -1,215 +1,177 @@
-// libs/shared/confirmation/src/lib/confirmation.service.ts
-import { Injectable, signal, computed, SecurityContext } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+// libs/shared/confirmation/src/lib/confirmation.service.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { ConfirmationService } from './confirmation.service';
+import { DomSanitizer } from '@angular/platform-browser';
 
-export interface ConfirmationButton {
-  label: string;
-  action: () => void;
-}
+describe('ConfirmationService', () => {
+  let service: ConfirmationService;
+  let sanitizer: jasmine.SpyObj<DomSanitizer>;
 
-export interface ConfirmationOptions {
-  id: string;
-  header: string;
-  content: string | SafeHtml;
-  buttons: ConfirmationButton[];
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ConfirmationService {
-  private confirmationsSignal = signal<ConfirmationOptions[]>([]);
-
-  constructor(private sanitizer: DomSanitizer) {}
-
-  activeConfirmations = computed(() => this.confirmationsSignal());
-
-  confirm(options: {
-    id: string;
-    header: string;
-    content: string | SafeHtml;
-    accept?: { label?: string; action: () => void };
-    reject?: { label?: string; action: () => void };
-    ok?: { label?: string; action: () => void };
-    cancel?: { label?: string; action: () => void };
-  }) {
-    const buttons: ConfirmationButton[] = [];
-
-    if (options.accept) {
-      buttons.push({ label: options.accept.label || 'Accept', action: options.accept.action });
-    }
-    if (options.reject) {
-      buttons.push({ label: options.reject.label || 'Reject', action: options.reject.action });
-    }
-    if (options.ok) {
-      buttons.push({ label: options.ok.label || 'OK', action: options.ok.action });
-    }
-    if (options.cancel) {
-      buttons.push({ label: options.cancel.label || 'Cancel', action: options.cancel.action });
-    }
-
-    const safeContent = typeof options.content === 'string' 
-      ? this.sanitizer.sanitize(SecurityContext.HTML, options.content) || ''
-      : options.content;
-
-    const confirmation: ConfirmationOptions = {
-      id: options.id,
-      header: options.header,
-      content: safeContent,
-      buttons
-    };
+  beforeEach(() => {
+    const sanitizerSpy = jasmine.createSpyObj('DomSanitizer', ['sanitize']);
     
-    this.confirmationsSignal.update(confirmations => [...confirmations, confirmation]);
+    TestBed.configureTestingModule({
+      providers: [
+        ConfirmationService,
+        { provide: DomSanitizer, useValue: sanitizerSpy }
+      ]
+    });
+    
+    service = TestBed.inject(ConfirmationService);
+    sanitizer = TestBed.inject(DomSanitizer) as jasmine.SpyObj<DomSanitizer>;
+  });
 
-    return confirmation.id;
-  }
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
 
-  close(id: string) {
-    this.confirmationsSignal.update(confirmations => 
-      confirmations.filter(confirmation => confirmation.id !== id)
-    );
-  }
+  it('should add a confirmation', () => {
+    sanitizer.sanitize.and.returnValue('Sanitized Content');
+    
+    const id = service.confirm({
+      id: 'test-id',
+      header: 'Test Header',
+      content: 'Test Content',
+      accept: { action: jest.fn() }
+    });
 
-  getConfirmationById(id: string) {
-    return computed(() => this.activeConfirmations().find(c => c.id === id));
-  }
-}
+    expect(id).toBe('test-id');
+    expect(service.activeConfirmations().length).toBe(1);
+    expect(service.activeConfirmations()[0].header).toBe('Test Header');
+    expect(service.activeConfirmations()[0].content).toBe('Sanitized Content');
+  });
 
-// libs/shared/confirmation/src/lib/confirmation-dialog/confirmation-dialog.component.ts
-import { Component, Input, inject, ChangeDetectionStrategy } from '@angular/core';
-import { CommonModule } from '@angular/common';
+  it('should close a confirmation', () => {
+    service.confirm({
+      id: 'test-id',
+      header: 'Test Header',
+      content: 'Test Content',
+      accept: { action: jest.fn() }
+    });
+
+    expect(service.activeConfirmations().length).toBe(1);
+
+    service.close('test-id');
+
+    expect(service.activeConfirmations().length).toBe(0);
+  });
+
+  it('should get confirmation by id', () => {
+    service.confirm({
+      id: 'test-id',
+      header: 'Test Header',
+      content: 'Test Content',
+      accept: { action: jest.fn() }
+    });
+
+    const confirmation = service.getConfirmationById('test-id')();
+
+    expect(confirmation).toBeTruthy();
+    expect(confirmation?.header).toBe('Test Header');
+  });
+
+  it('should handle HTML content', () => {
+    const htmlContent = '<p>Test <strong>HTML</strong></p>';
+    sanitizer.sanitize.and.returnValue(htmlContent);
+
+    service.confirm({
+      id: 'html-test',
+      header: 'HTML Test',
+      content: htmlContent,
+      ok: { action: jest.fn() }
+    });
+
+    const confirmation = service.getConfirmationById('html-test')();
+
+    expect(confirmation?.content).toBe(htmlContent);
+    expect(sanitizer.sanitize).toHaveBeenCalledWith(jasmine.any(Number), htmlContent);
+  });
+});
+
+// libs/shared/confirmation/src/lib/confirmation-dialog/confirmation-dialog.component.spec.ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ConfirmationDialogComponent } from './confirmation-dialog.component';
 import { ConfirmationService } from '../confirmation.service';
+import { By } from '@angular/platform-browser';
+import { ChangeDetectionStrategy } from '@angular/core';
 
-@Component({
-  selector: 'lib-confirmation-dialog',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    @if (confirmation(); as conf) {
-      <div class="modal">
-        <div class="modal-content">
-          <h2>{{ conf.header }}</h2>
-          <div [innerHTML]="conf.content"></div>
-          <div class="button-group">
-            @for (button of conf.buttons; track button) {
-              <button (click)="onButtonClick(button)">{{ button.label }}</button>
-            }
-          </div>
-        </div>
-      </div>
-    }
-  `,
-  styles: [`
-    .modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(0, 0, 0, 0.5);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-content {
-      background-color: white;
-      padding: 20px;
-      border-radius: 5px;
-      max-width: 80%;
-      max-height: 80%;
-      overflow: auto;
-    }
-    .button-group {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      margin-top: 20px;
-    }
-  `],
-  changeDetection: ChangeDetectionStrategy.OnPush
-})
-export class ConfirmationDialogComponent {
-  @Input() id!: string;
-  private confirmationService = inject(ConfirmationService);
+describe('ConfirmationDialogComponent', () => {
+  let component: ConfirmationDialogComponent;
+  let fixture: ComponentFixture<ConfirmationDialogComponent>;
+  let confirmationService: jasmine.SpyObj<ConfirmationService>;
 
-  confirmation = computed(() => this.confirmationService.getConfirmationById(this.id)());
-
-  onButtonClick(button: { action: () => void }) {
-    button.action();
-    this.confirmationService.close(this.id);
-  }
-}
-
-// libs/shared/confirmation/src/index.ts
-export * from './lib/confirmation.service';
-export * from './lib/confirmation-dialog/confirmation-dialog.component';
-
-// Example usage in an app component (apps/your-app/src/app/app.component.ts)
-import { Component, ChangeDetectionStrategy } from '@angular/core';
-import { ConfirmationDialogComponent, ConfirmationService } from '@your-workspace/shared/confirmation';
-
-@Component({
-  selector: 'app-root',
-  standalone: true,
-  imports: [ConfirmationDialogComponent],
-  template: `
-    <h2>Confirmation Dialog Demo</h2>
+  beforeEach(async () => {
+    const confirmationServiceSpy = jasmine.createSpyObj('ConfirmationService', ['getConfirmationById', 'close']);
     
-    <button (click)="openStringConfirmation()">Open String Content Confirmation</button>
-    <button (click)="openHtmlConfirmation()">Open HTML Content Confirmation</button>
-    <button (click)="openCustomConfirmation()">Open Custom ID Confirmation</button>
-    
-    <h3>Automatically Rendered Confirmations:</h3>
-    @for (confirmation of confirmationService.activeConfirmations(); track confirmation) {
-      <lib-confirmation-dialog [id]="confirmation.id"></lib-confirmation-dialog>
-    }
-    
-    <h3>Manually Placed Confirmation:</h3>
-    <lib-confirmation-dialog id="custom-confirmation"></lib-confirmation-dialog>
-  `,
-  changeDetection: ChangeDetectionStrategy.OnPush
-})
-export class AppComponent {
-  constructor(public confirmationService: ConfirmationService) {}
+    await TestBed.configureTestingModule({
+      imports: [ConfirmationDialogComponent],
+      providers: [
+        { provide: ConfirmationService, useValue: confirmationServiceSpy }
+      ]
+    }).overrideComponent(ConfirmationDialogComponent, {
+      set: { changeDetection: ChangeDetectionStrategy.Default }
+    }).compileComponents();
 
-  openStringConfirmation() {
-    this.confirmationService.confirm({
-      id: 'string-confirmation-' + Date.now(),
-      header: 'String Content Confirmation',
-      content: 'This is a simple string content.',
-      accept: { 
-        action: () => console.log('String confirmation accepted') 
-      },
-      reject: { 
-        action: () => console.log('String confirmation rejected') 
-      }
-    });
-  }
+    confirmationService = TestBed.inject(ConfirmationService) as jasmine.SpyObj<ConfirmationService>;
+  });
 
-  openHtmlConfirmation() {
-    this.confirmationService.confirm({
-      id: 'html-confirmation-' + Date.now(),
-      header: 'HTML Content Confirmation',
-      content: '<p>This is <strong>HTML</strong> content with a <a href="#">link</a>.</p>',
-      ok: { 
-        action: () => console.log('HTML confirmation acknowledged') 
-      }
-    });
-  }
+  beforeEach(() => {
+    fixture = TestBed.createComponent(ConfirmationDialogComponent);
+    component = fixture.componentInstance;
+    component.id = 'test-id';
+  });
 
-  openCustomConfirmation() {
-    this.confirmationService.confirm({
-      id: 'custom-confirmation',
-      header: 'Custom Placed Confirmation',
-      content: '<p>This confirmation uses a manually placed dialog component.</p>',
-      accept: { 
-        label: 'Yes', 
-        action: () => console.log('Custom confirmation accepted') 
-      },
-      reject: { 
-        label: 'No', 
-        action: () => console.log('Custom confirmation rejected') 
-      }
-    });
-  }
-}
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should display confirmation content when available', () => {
+    const mockConfirmation = {
+      id: 'test-id',
+      header: 'Test Header',
+      content: 'Test Content',
+      buttons: [{ label: 'OK', action: jest.fn() }]
+    };
+
+    confirmationService.getConfirmationById.and.returnValue(() => mockConfirmation);
+
+    fixture.detectChanges();
+
+    const headerElement = fixture.debugElement.query(By.css('h2'));
+    const contentElement = fixture.debugElement.query(By.css('.modal-content div'));
+    const buttonElement = fixture.debugElement.query(By.css('button'));
+
+    expect(headerElement.nativeElement.textContent).toBe('Test Header');
+    expect(contentElement.nativeElement.innerHTML).toBe('Test Content');
+    expect(buttonElement.nativeElement.textContent).toBe('OK');
+  });
+
+  it('should not display anything when no confirmation is available', () => {
+    confirmationService.getConfirmationById.and.returnValue(() => undefined);
+
+    fixture.detectChanges();
+
+    const modalElement = fixture.debugElement.query(By.css('.modal'));
+    expect(modalElement).toBeNull();
+  });
+
+  it('should call action and close when button is clicked', () => {
+    const mockAction = jest.fn();
+    const mockConfirmation = {
+      id: 'test-id',
+      header: 'Test Header',
+      content: 'Test Content',
+      buttons: [{ label: 'OK', action: mockAction }]
+    };
+
+    confirmationService.getConfirmationById.and.returnValue(() => mockConfirmation);
+
+    fixture.detectChanges();
+
+    const buttonElement = fixture.debugElement.query(By.css('button'));
+    buttonElement.triggerEventHandler('click', null);
+
+    expect(mockAction).toHaveBeenCalled();
+    expect(confirmationService.close).toHaveBeenCalledWith('test-id');
+  });
+});
