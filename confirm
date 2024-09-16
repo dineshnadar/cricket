@@ -1,3 +1,6 @@
+
+
+-------
 import { Injectable, signal, computed, WritableSignal } from '@angular/core';
 import { WIDGET_CONFIG, WidgetConfig, SubMenuItem } from './widget-config';
 
