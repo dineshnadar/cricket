@@ -1,215 +1,84 @@
-// libs/shared/confirmation/src/lib/confirmation.service.ts
-import { Injectable, signal, computed, SecurityContext } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-
-export interface ConfirmationButton {
-  label: string;
-  action: () => void;
-}
-
-export interface ConfirmationOptions {
-  id: string;
-  header: string;
-  content: string | SafeHtml;
-  buttons: ConfirmationButton[];
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ConfirmationService {
-  private confirmationsSignal = signal<ConfirmationOptions[]>([]);
-
-  constructor(private sanitizer: DomSanitizer) {}
-
-  activeConfirmations = computed(() => this.confirmationsSignal());
-
-  confirm(options: {
-    id: string;
-    header: string;
-    content: string | SafeHtml;
-    accept?: { label?: string; action: () => void };
-    reject?: { label?: string; action: () => void };
-    ok?: { label?: string; action: () => void };
-    cancel?: { label?: string; action: () => void };
-  }) {
-    const buttons: ConfirmationButton[] = [];
-
-    if (options.accept) {
-      buttons.push({ label: options.accept.label || 'Accept', action: options.accept.action });
-    }
-    if (options.reject) {
-      buttons.push({ label: options.reject.label || 'Reject', action: options.reject.action });
-    }
-    if (options.ok) {
-      buttons.push({ label: options.ok.label || 'OK', action: options.ok.action });
-    }
-    if (options.cancel) {
-      buttons.push({ label: options.cancel.label || 'Cancel', action: options.cancel.action });
-    }
-
-    const safeContent = typeof options.content === 'string' 
-      ? this.sanitizer.sanitize(SecurityContext.HTML, options.content) || ''
-      : options.content;
-
-    const confirmation: ConfirmationOptions = {
-      id: options.id,
-      header: options.header,
-      content: safeContent,
-      buttons
-    };
-    
-    this.confirmationsSignal.update(confirmations => [...confirmations, confirmation]);
-
-    return confirmation.id;
-  }
-
-  close(id: string) {
-    this.confirmationsSignal.update(confirmations => 
-      confirmations.filter(confirmation => confirmation.id !== id)
-    );
-  }
-
-  getConfirmationById(id: string) {
-    return computed(() => this.activeConfirmations().find(c => c.id === id));
-  }
-}
-
-// libs/shared/confirmation/src/lib/confirmation-dialog/confirmation-dialog.component.ts
-import { Component, Input, inject, ChangeDetectionStrategy } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { ConfirmationService } from '../confirmation.service';
+import { Component, inject, effect, OnInit, computed, signal } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { ProfileBuilderService, ActiveWidget } from './profile-builder.service';
+import { LeftMenuComponent } from './left-menu.component';
 
 @Component({
-  selector: 'lib-confirmation-dialog',
+  selector: 'app-party-builder',
   standalone: true,
-  imports: [CommonModule],
+  imports: [AsyncPipe, LeftMenuComponent],
   template: `
-    @if (confirmation(); as conf) {
-      <div class="modal">
-        <div class="modal-content">
-          <h2>{{ conf.header }}</h2>
-          <div [innerHTML]="conf.content"></div>
-          <div class="button-group">
-            @for (button of conf.buttons; track button) {
-              <button (click)="onButtonClick(button)">{{ button.label }}</button>
-            }
+    <!-- ... other template parts ... -->
+    @if (activeProfile()) {
+      <div class="party-builder">
+        <app-left-menu />
+        <div #widgetContainer></div>
+        <div class="widget-controls">
+          <div class="acknowledgment">
+            <label>
+              <input type="checkbox" 
+                     [checked]="isActiveWidgetAcknowledged()"
+                     (change)="toggleActiveWidgetAcknowledgment()">
+              Acknowledge this widget
+            </label>
+          </div>
+          <div class="widget-navigation">
+            <button (click)="loadPreviousWidget()" 
+                    [disabled]="isNavigating() || isFirstWidget()">
+              Previous
+            </button>
+            <button (click)="loadNextWidget()" 
+                    [disabled]="isNavigating() || (isLastWidget() | async)">
+              Next
+            </button>
+          </div>
+          <div class="navigation-mode">
+            <label>
+              <input type="checkbox" [checked]="includeSubItems()" (change)="toggleNavigationMode()">
+              Include sub-items in navigation
+            </label>
           </div>
         </div>
       </div>
     }
+    <!-- ... other template parts ... -->
   `,
-  styles: [`
-    .modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(0, 0, 0, 0.5);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-content {
-      background-color: white;
-      padding: 20px;
-      border-radius: 5px;
-      max-width: 80%;
-      max-height: 80%;
-      overflow: auto;
-    }
-    .button-group {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      margin-top: 20px;
-    }
-  `],
-  changeDetection: ChangeDetectionStrategy.OnPush
+  styles: [/* ... */]
 })
-export class ConfirmationDialogComponent {
-  @Input() id!: string;
-  private confirmationService = inject(ConfirmationService);
+export class PartyBuilderComponent implements OnInit {
+  private profileBuilder = inject(ProfileBuilderService);
 
-  confirmation = computed(() => this.confirmationService.getConfirmationById(this.id)());
+  isNavigating = signal(false);
+  includeSubItems = signal(false);
+  isActiveWidgetAcknowledged = signal(false);
 
-  onButtonClick(button: { action: () => void }) {
-    button.action();
-    this.confirmationService.close(this.id);
-  }
-}
+  activeWidget = this.profileBuilder.getActiveWidget;
+  visibleWidgets = this.profileBuilder.getVisibleWidgets;
 
-// libs/shared/confirmation/src/index.ts
-export * from './lib/confirmation.service';
-export * from './lib/confirmation-dialog/confirmation-dialog.component';
-
-// Example usage in an app component (apps/your-app/src/app/app.component.ts)
-import { Component, ChangeDetectionStrategy } from '@angular/core';
-import { ConfirmationDialogComponent, ConfirmationService } from '@your-workspace/shared/confirmation';
-
-@Component({
-  selector: 'app-root',
-  standalone: true,
-  imports: [ConfirmationDialogComponent],
-  template: `
-    <h2>Confirmation Dialog Demo</h2>
-    
-    <button (click)="openStringConfirmation()">Open String Content Confirmation</button>
-    <button (click)="openHtmlConfirmation()">Open HTML Content Confirmation</button>
-    <button (click)="openCustomConfirmation()">Open Custom ID Confirmation</button>
-    
-    <h3>Automatically Rendered Confirmations:</h3>
-    @for (confirmation of confirmationService.activeConfirmations(); track confirmation) {
-      <lib-confirmation-dialog [id]="confirmation.id"></lib-confirmation-dialog>
-    }
-    
-    <h3>Manually Placed Confirmation:</h3>
-    <lib-confirmation-dialog id="custom-confirmation"></lib-confirmation-dialog>
-  `,
-  changeDetection: ChangeDetectionStrategy.OnPush
-})
-export class AppComponent {
-  constructor(public confirmationService: ConfirmationService) {}
-
-  openStringConfirmation() {
-    this.confirmationService.confirm({
-      id: 'string-confirmation-' + Date.now(),
-      header: 'String Content Confirmation',
-      content: 'This is a simple string content.',
-      accept: { 
-        action: () => console.log('String confirmation accepted') 
-      },
-      reject: { 
-        action: () => console.log('String confirmation rejected') 
+  constructor() {
+    effect(() => {
+      // Update acknowledgment state when active widget changes
+      const currentWidget = this.activeWidget();
+      if (currentWidget) {
+        this.isActiveWidgetAcknowledged.set(
+          this.profileBuilder.isWidgetAcknowledged(currentWidget.widgetName)
+        );
+      } else {
+        this.isActiveWidgetAcknowledged.set(false);
       }
     });
   }
 
-  openHtmlConfirmation() {
-    this.confirmationService.confirm({
-      id: 'html-confirmation-' + Date.now(),
-      header: 'HTML Content Confirmation',
-      content: '<p>This is <strong>HTML</strong> content with a <a href="#">link</a>.</p>',
-      ok: { 
-        action: () => console.log('HTML confirmation acknowledged') 
-      }
-    });
+  // ... existing properties and methods ...
+
+  toggleActiveWidgetAcknowledgment() {
+    const currentWidget = this.activeWidget();
+    if (!currentWidget) return;
+
+    const newAckState = !this.isActiveWidgetAcknowledged();
+    this.profileBuilder.setWidgetAcknowledgment(currentWidget.widgetName, newAckState);
+    this.isActiveWidgetAcknowledged.set(newAckState);
   }
 
-  openCustomConfirmation() {
-    this.confirmationService.confirm({
-      id: 'custom-confirmation',
-      header: 'Custom Placed Confirmation',
-      content: '<p>This confirmation uses a manually placed dialog component.</p>',
-      accept: { 
-        label: 'Yes', 
-        action: () => console.log('Custom confirmation accepted') 
-      },
-      reject: { 
-        label: 'No', 
-        action: () => console.log('Custom confirmation rejected') 
-      }
-    });
-  }
+  // ... other existing methods ...
 }
