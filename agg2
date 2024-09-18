@@ -1,353 +1,163 @@
-import { Injectable, inject, signal, computed, WritableSignal } from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
-import { WIDGET_CONFIG, WidgetConfig } from './widget-config';
-import { WidgetStateService, WidgetState } from './widget-state.service';
-import { DynamicMenuService } from './dynamic-menu.service';
+// data.service.ts
+import { Injectable, inject } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, catchError, map, of, switchMap, throwError } from 'rxjs';
 
-@Injectable({ providedIn: 'root' })
-export class ProfileBuilderService {
-  private fb = inject(FormBuilder);
-  private widgetStateService = inject(WidgetStateService);
-  private dynamicMenuService = inject(DynamicMenuService);
+interface User {
+  id: number;
+  name: string;
+}
 
-  private profiles: WritableSignal<any[]> = signal([]);
-  private activeProfileIndex: WritableSignal<number | null> = signal(null);
-  private activeWidgetName: WritableSignal<string | null> = signal(null);
+interface Post {
+  id: number;
+  title: string;
+  body: string;
+  userId: number;
+}
 
-  getProfiles = computed(() => this.profiles());
-  getActiveProfile = computed(() => {
-    const index = this.activeProfileIndex();
-    return index !== null ? this.profiles()[index] : null;
-  });
-  getActiveWidgetName = computed(() => this.activeWidgetName());
+interface ProcessedPost extends Post {
+  wordCount: number;
+}
 
-  getCompletionPercentage = computed(() => {
-    const activeProfile = this.getActiveProfile();
-    if (!activeProfile) return 0;
+interface UserPostsResult {
+  user: User | null;
+  posts: ProcessedPost[] | null;
+  totalPosts: number;
+  averageWordCount: number;
+  error?: string;
+}
 
-    const widgets = this.getVisibleWidgets()();
-    const completedWidgets = widgets.filter(widget => 
-      this.widgetStateService.getWidgetState(widget.name)?.status === 'completed'
+@Injectable({
+  providedIn: 'root'
+})
+export class DataService {
+  private http = inject(HttpClient);
+  private apiUrl = 'https://jsonplaceholder.typicode.com';
+
+  getUser(userId: number): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/users/${userId}`).pipe(
+      catchError(this.handleError)
     );
-
-    return (completedWidgets.length / widgets.length) * 100;
-  });
-
-  constructor() {
-    this.addNewProfile();
   }
 
-  addNewProfile() {
-    const newProfile = {
-      id: Date.now().toString(),
-      type: 'personal',
-      name: `Profile ${this.profiles().length + 1}`,
+  getUserPosts(userId: number): Observable<Post[]> {
+    return this.http.get<Post[]>(`${this.apiUrl}/posts?userId=${userId}`).pipe(
+      catchError(error => {
+        console.error('Error fetching posts:', error);
+        return throwError(() => new Error('Failed to fetch posts'));
+      })
+    );
+  }
+
+  getUserWithPosts(userId: number): Observable<UserPostsResult> {
+    return this.getUser(userId).pipe(
+      switchMap(user => this.getUserPosts(user.id).pipe(
+        map(posts => ({ user, posts }))
+      )),
+      map(({ user, posts }) => this.processUserPosts(user, posts)),
+      catchError(error => {
+        if (error instanceof HttpErrorResponse && error.status === 404) {
+          return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: 'User not found' });
+        }
+        return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: this.getErrorMessage(error) });
+      })
+    );
+  }
+
+  private processUserPosts(user: User, posts: Post[]): UserPostsResult {
+    const processedPosts = posts.map(post => ({
+      ...post,
+      wordCount: post.body.split(/\s+/).length
+    }));
+
+    const totalPosts = processedPosts.length;
+    const totalWords = processedPosts.reduce((sum, post) => sum + post.wordCount, 0);
+    const averageWordCount = totalPosts > 0 ? totalWords / totalPosts : 0;
+
+    return {
+      user,
+      posts: processedPosts,
+      totalPosts,
+      averageWordCount: Math.round(averageWordCount * 100) / 100, // Round to 2 decimal places
     };
-    this.profiles.update(profiles => [...profiles, newProfile]);
-    this.setActiveProfileById(newProfile.id);
   }
 
-  setActiveProfileById(profileId: string) {
-    const index = this.profiles().findIndex(profile => profile.id === profileId);
-    if (index !== -1) {
-      this.activeProfileIndex.set(index);
-      this.widgetStateService.setActiveProfile(index);
-      this.dynamicMenuService.setActiveProfile(index);
-      this.loadInitialWidget();
-    }
+  private handleError(error: HttpErrorResponse) {
+    console.error('An error occurred:', error);
+    return throwError(() => error);
   }
 
-  loadAllWidgetsBasedOnRules() {
-    const visibleWidgets = this.getVisibleWidgets()();
-    visibleWidgets.forEach(widget => {
-      if (this.shouldLoadWidget(widget)) {
-        this.loadWidget(widget.name);
+  private getErrorMessage(error: any): string {
+    if (error instanceof HttpErrorResponse) {
+      if (error.status === 0) {
+        return 'A network error occurred. Please check your connection and try again.';
       }
-    });
-  }
-
-  private shouldLoadWidget(widget: WidgetConfig): boolean {
-    const widgetState = this.widgetStateService.getWidgetState(widget.name);
-    return widgetState?.status !== 'completed' && widgetState?.visible;
-  }
-
-  private loadWidget(widgetName: string) {
-    this.widgetStateService.updateWidgetState(widgetName, { 
-      visited: true, 
-      status: 'in-progress',
-      active: true
-    });
-  }
-
-  loadWidgetsBasedOnRules() {
-    const activeProfile = this.getActiveProfile();
-    if (!activeProfile) return;
-
-    if (this.shouldLoadAllWidgets(activeProfile)) {
-      this.loadAllWidgetsBasedOnRules();
-    } else {
-      const widgetsToLoad = this.determineWidgetsToLoad();
-      widgetsToLoad.forEach(widget => this.loadWidget(widget.name));
-    }
-  }
-
-  private shouldLoadAllWidgets(profile: any): boolean {
-    return profile.type === 'business' || profile.name.includes('Complete');
-  }
-
-  private determineWidgetsToLoad(): WidgetConfig[] {
-    const visibleWidgets = this.getVisibleWidgets()();
-    return visibleWidgets.filter(widget => {
-      const widgetState = this.widgetStateService.getWidgetState(widget.name);
-      return widgetState?.status === 'pending' || widgetState?.status === 'in-progress';
-    });
-  }
-
-  getVisibleWidgets = computed(() => {
-    return WIDGET_CONFIG.filter(widget => 
-      this.widgetStateService.isWidgetVisible(widget.name)
-    );
-  });
-
-  validateAllWidgets(): boolean {
-    let isValid = true;
-    this.getVisibleWidgets()().forEach(widget => {
-      const widgetValid = this.validateWidget(widget.name);
-      isValid = isValid && widgetValid;
-    });
-    return isValid;
-  }
-
-  private validateWidget(widgetName: string): boolean {
-    const isValid = Math.random() > 0.2; // Placeholder for actual validation logic
-    this.widgetStateService.setWidgetError(widgetName, !isValid, isValid ? '' : 'Validation failed');
-    this.widgetStateService.setWidgetStatus(widgetName, isValid ? 'completed' : 'error');
-    return isValid;
-  }
-
-  getNextIncompleteWidget(): string | null {
-    const visibleWidgets = this.getVisibleWidgets()();
-    for (const widget of visibleWidgets) {
-      const widgetState = this.widgetStateService.getWidgetState(widget.name);
-      if (widgetState?.status !== 'completed') {
-        return widget.name;
+      if (error.status === 404) {
+        return 'The requested user was not found.';
+      }
+      if (error.status >= 500) {
+        return 'A server error occurred. Please try again later.';
       }
     }
-    return null;
-  }
-
-  setActiveWidget(widgetName: string) {
-    this.activeWidgetName.set(widgetName);
-    this.widgetStateService.setWidgetActive(widgetName, true);
-    this.widgetStateService.setWidgetVisited(widgetName, true);
-    this.widgetStateService.setWidgetStatus(widgetName, 'in-progress');
-  }
-
-  findWidgetByName(name: string): WidgetConfig | undefined {
-    return WIDGET_CONFIG.find(widget => widget.name === name);
-  }
-
-  getWidgetFormGroup(widgetName: string): FormGroup | null {
-    return this.fb.group({}); // Placeholder for actual form group creation logic
-  }
-
-  private loadInitialWidget() {
-    const visibleWidgets = this.getVisibleWidgets()();
-    if (visibleWidgets.length > 0) {
-      this.setActiveWidget(visibleWidgets[0].name);
-    }
-  }
-
-  getNextWidget(currentWidgetName: string): string | null {
-    const visibleWidgets = this.getVisibleWidgets()();
-    const currentIndex = visibleWidgets.findIndex(widget => widget.name === currentWidgetName);
-    if (currentIndex < visibleWidgets.length - 1) {
-      return visibleWidgets[currentIndex + 1].name;
-    }
-    return null;
-  }
-
-  getPreviousWidget(currentWidgetName: string): string | null {
-    const visibleWidgets = this.getVisibleWidgets()();
-    const currentIndex = visibleWidgets.findIndex(widget => widget.name === currentWidgetName);
-    if (currentIndex > 0) {
-      return visibleWidgets[currentIndex - 1].name;
-    }
-    return null;
+    return 'An unexpected error occurred. Please try again.';
   }
 }
 
-------
-
-import { Component, ViewChild, ViewContainerRef, inject, effect, OnInit, computed } from '@angular/core';
-import { AsyncPipe } from '@angular/common';
-import { ProfileBuilderService } from './profile-builder.service';
-import { LeftMenuComponent } from './left-menu.component';
+// user-posts.component.ts
+import { Component, computed, signal } from '@angular/core';
+import { AsyncPipe, JsonPipe, NgIf, NgFor } from '@angular/common';
+import { DataService, UserPostsResult } from './data.service';
+import { Observable, catchError, of, startWith, switchMap } from 'rxjs';
 
 @Component({
-  selector: 'app-party-builder',
+  selector: 'app-user-posts',
   standalone: true,
-  imports: [AsyncPipe, LeftMenuComponent],
+  imports: [AsyncPipe, JsonPipe, NgIf, NgFor],
   template: `
-    <div class="profile-selector">
-      @for (profile of profileViewModels(); track profile.id) {
-        <button 
-          (click)="setActiveProfile(profile.id)" 
-          [class.active]="profile.id === activeProfileId()"
-        >
-          {{ profile.displayName }}
-        </button>
-      }
-      <button (click)="addNewProfile()">Add New Profile</button>
-    </div>
-    @if (activeProfile()) {
-      <div class="party-builder">
-        <app-left-menu />
-        <div #widgetContainer></div>
-        <div class="widget-navigation">
-          <button (click)="loadPreviousWidget()" [disabled]="!hasPreviousWidget()">Previous</button>
-          <button (click)="loadNextWidget()" [disabled]="!hasNextWidget()">Next</button>
-        </div>
+    <h1>User Posts</h1>
+    <input [ngModel]="userId()" (ngModelChange)="setUserId($event)" placeholder="Enter user ID">
+    <button (click)="loadUserPosts()">Load User Posts</button>
+
+    <ng-container *ngIf="userPosts$ | async as result">
+      <div *ngIf="result.user">
+        <h2>{{ result.user.name }}'s Posts</h2>
+        <p>Total Posts: {{ result.totalPosts }}</p>
+        <p>Average Word Count: {{ result.averageWordCount }}</p>
+        <ul *ngIf="result.posts">
+          <li *ngFor="let post of result.posts">
+            <h3>{{ post.title }}</h3>
+            <p>{{ post.body }}</p>
+            <small>Word Count: {{ post.wordCount }}</small>
+          </li>
+        </ul>
+        <p *ngIf="result.posts && !result.posts.length">No posts found for this user.</p>
       </div>
-    }
-    <div class="action-buttons">
-      <button (click)="validateAll()">Validate All</button>
-      <button (click)="loadAllWidgets()">Load All Widgets</button>
-      <button (click)="refreshWidgets()">Refresh Widgets</button>
-      <button (click)="loadNextIncompleteWidget()">Next Incomplete Widget</button>
-    </div>
-    <div class="completion-status">
-      Completion: {{ completionPercentage() | number:'1.0-0' }}%
-    </div>
-  `,
-  styles: [`
-    .profile-selector { /* Add styles for profile selector */ }
-    .party-builder { /* Add styles for party builder layout */ }
-    .widget-navigation { /* Add styles for widget navigation buttons */ }
-    .action-buttons { /* Add styles for action buttons */ }
-    .completion-status { /* Add styles for completion status */ }
-  `]
+      <p *ngIf="result.error" class="error">{{ result.error }}</p>
+    </ng-container>
+  `
 })
-export class PartyBuilderComponent implements OnInit {
-  @ViewChild('widgetContainer', { read: ViewContainerRef, static: false })
-  widgetContainer!: ViewContainerRef;
+export class UserPostsComponent {
+  private dataService = inject(DataService);
 
-  private profileBuilder = inject(ProfileBuilderService);
+  userId = signal(1);
 
-  profiles = this.profileBuilder.getProfiles;
-  activeProfile = this.profileBuilder.getActiveProfile;
-  completionPercentage = this.profileBuilder.getCompletionPercentage;
-
-  profileViewModels = computed(() => 
-    this.profiles().map(profile => ({
-      ...profile,
-      displayName: this.getProfileDisplayName(profile)
-    }))
+  userPosts$: Observable<UserPostsResult | null> = computed(() => this.userId()).pipe(
+    switchMap(id => this.dataService.getUserWithPosts(id).pipe(
+      catchError(err => {
+        console.error('Error in component:', err);
+        return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: 'Failed to load data. Please try again.' });
+      }),
+      startWith(null) // Start with null to show loading state
+    )),
+    startWith(null) // Initial null state
   );
 
-  activeProfileId = computed(() => this.activeProfile()?.id ?? null);
-  activeWidgetName = this.profileBuilder.getActiveWidgetName;
-
-  hasPreviousWidget = computed(() => {
-    const currentWidget = this.activeWidgetName();
-    return currentWidget ? !!this.profileBuilder.getPreviousWidget(currentWidget) : false;
-  });
-
-  hasNextWidget = computed(() => {
-    const currentWidget = this.activeWidgetName();
-    return currentWidget ? !!this.profileBuilder.getNextWidget(currentWidget) : false;
-  });
-
-  constructor() {
-    effect(() => {
-      const activeWidgetName = this.profileBuilder.getActiveWidgetName();
-      if (activeWidgetName) {
-        this.loadComponent(activeWidgetName);
-      }
-    });
+  setUserId(id: string) {
+    this.userId.set(Number(id));
   }
 
-  ngOnInit() {
-    if (this.activeProfileId() !== null) {
-      this.profileBuilder.loadWidgetsBasedOnRules();
-    }
-  }
-
-  private getProfileDisplayName(profile: any): string {
-    switch (profile.type) {
-      case 'personal':
-        return `Personal: ${profile.name}`;
-      case 'business':
-        return `Business: ${profile.name}`;
-      case 'family':
-        return `Family: ${profile.name}`;
-      default:
-        return `Profile: ${profile.name}`;
-    }
-  }
-
-  setActiveProfile(profileId: string) {
-    this.profileBuilder.setActiveProfileById(profileId);
-  }
-
-  addNewProfile() {
-    this.profileBuilder.addNewProfile();
-  }
-
-  validateAll() {
-    const isValid = this.profileBuilder.validateAllWidgets();
-    console.log(isValid ? 'All widgets are valid' : 'There are validation errors');
-  }
-
-  loadAllWidgets() {
-    this.profileBuilder.loadAllWidgetsBasedOnRules();
-  }
-
-  refreshWidgets() {
-    this.profileBuilder.loadWidgetsBasedOnRules();
-  }
-
-  loadNextIncompleteWidget() {
-    const nextWidgetName = this.profileBuilder.getNextIncompleteWidget();
-    if (nextWidgetName) {
-      this.profileBuilder.setActiveWidget(nextWidgetName);
-    } else {
-      console.log('All widgets are complete!');
-    }
-  }
-
-  loadPreviousWidget() {
-    const currentWidget = this.activeWidgetName();
-    if (currentWidget) {
-      const previousWidgetName = this.profileBuilder.getPreviousWidget(currentWidget);
-      if (previousWidgetName) {
-        this.profileBuilder.setActiveWidget(previousWidgetName);
-      }
-    }
-  }
-
-  loadNextWidget() {
-    const currentWidget = this.activeWidgetName();
-    if (currentWidget) {
-      const nextWidgetName = this.profileBuilder.getNextWidget(currentWidget);
-      if (nextWidgetName) {
-        this.profileBuilder.setActiveWidget(nextWidgetName);
-      }
-    }
-  }
-
-  async loadComponent(widgetName: string) {
-    this.widgetContainer.clear();
-    const widgetConfig = this.profileBuilder.findWidgetByName(widgetName);
-    if (widgetConfig && widgetConfig.component) {
-      const component = await widgetConfig.component();
-      const componentRef = this.widgetContainer.createComponent(component);
-      if (componentRef.instance.setFormGroup) {
-        const formGroup = this.profileBuilder.getWidgetFormGroup(widgetName);
-        if (formGroup) {
-          componentRef.instance.setFormGroup(formGroup);
-        }
-      }
-    }
+  loadUserPosts() {
+    // This will trigger the userPosts$ observable to re-emit
+    this.userId.set(this.userId());
   }
 }
