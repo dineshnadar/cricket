@@ -1,3 +1,52 @@
+import { Component, OnDestroy } from '@angular/core';
+import { Subject, takeUntil } from 'rxjs';
+
+interface WidgetComponentInstance {
+  ackStatusChanged?: EventEmitter<boolean>;
+  // ... other properties
+}
+
+@Component({
+  // ... component metadata
+})
+export class PartyBuilderComponent implements OnDestroy {
+  private destroy$ = new Subject<void>();
+
+  // ... other properties and methods
+
+  loadWidget(widgetName: string) {
+    // ... existing code to load the widget
+
+    const componentInstance = componentRef.instance as WidgetComponentInstance;
+
+    if (componentInstance.ackStatusChanged) {
+      componentInstance.ackStatusChanged.pipe(
+        takeUntil(this.destroy$)
+      ).subscribe({
+        next: (ackStatus: boolean) => {
+          try {
+            this.profileBuilder.updateWidgetAckStatus(widgetName, ackStatus);
+          } catch (error) {
+            console.error(`Error updating ack status for ${widgetName}:`, error);
+            // Handle error (e.g., show user notification)
+          }
+        },
+        error: (err) => {
+          console.error(`Error in ack status stream for ${widgetName}:`, err);
+          // Handle error (e.g., show user notification)
+        }
+      });
+    }
+
+    // ... rest of the method
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+}
+------
 import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
 import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
 
