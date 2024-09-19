@@ -1,26 +1,29 @@
-
 interface WidgetWithState extends WidgetConfig {
   state: WidgetState;
   subItems?: WidgetWithState[];
 }
 
 private processWidgets(widgets: (WidgetConfig | SubMenuItem)[]): WidgetWithState[] {
-  return widgets.map(widget => {
-    const state = this.profileService.getActiveProfileWidgetStates()?.[widget.name] || 
-                  this.profileService['initialWidgetState'];
-    const subItems = this.profileService.getSubMenuItems(widget);
-    
+  const result: WidgetWithState[] = [];
+
+  for (const widget of widgets) {
+    const widgetState = this.profileService.getWidgetState(widget.name);
+    const state = widgetState() || this.profileService['initialWidgetState'];
+
     const processedWidget: WidgetWithState = {
       ...widget,
-      state
+      state: { ...state } // Create a new object to avoid modifying the original state
     };
 
-    if (subItems.length) {
+    const subItems = this.profileService.getSubMenuItems(widget);
+    if (subItems.length > 0) {
       processedWidget.subItems = this.processWidgets(subItems);
     }
 
-    return processedWidget;
-  });
+    result.push(processedWidget);
+  }
+
+  return result;
 }
 -------
 
