@@ -1,3 +1,75 @@
+import { AbstractControl, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  transformValue(value: any, control: ExtendedAbstractControl | ExtendedControlOptions): any {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
+    if (typeof value === 'object' && !(value instanceof Date)) {
+      // ... (keep existing object handling logic)
+    }
+
+    // Handle primitive values
+    if (control.lookupData && Array.isArray(control.lookupData)) {
+      if (typeof value === 'string' && value.includes('|')) {
+        // Handle pipe-separated values
+        return this.transformPipeSeparatedValues(value, control.lookupData);
+      }
+
+      // Handle single value lookup
+      const matchingLookup = control.lookupData.find(item => item.value === value);
+      if (matchingLookup) return matchingLookup.label;
+    }
+
+    switch (value) {
+      case 'Y':
+        return 'Yes';
+      case 'N':
+        return 'No';
+      case true:
+        return 'Yes';
+      case false:
+        return 'No';
+      default:
+        return value;
+    }
+  }
+
+  private transformPipeSeparatedValues(value: string, lookupData: Array<{ label: string; value: any }>): string {
+    const codes = value.split('|').map(code => code.trim());
+    const transformedValues = codes
+      .map(code => {
+        const match = lookupData.find(item => item.value === code);
+        return match ? match.label : code; // Use original code if no mapping found
+      })
+      .filter(val => val !== ''); // Filter out empty values
+
+    return transformedValues.join(', ');
+  }
+
+  // ... other methods ...
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------
 import { FormGroup } from '@angular/forms';
 import { FieldItem, LayoutField } from './form-extension.types';
 
