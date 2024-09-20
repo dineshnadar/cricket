@@ -1,3 +1,59 @@
+import { FormGroup } from '@angular/forms';
+import { FieldItem, LayoutField } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  private createCombinedFieldItem(baseItem: FieldItem, parentControl: FormGroup): FieldItem {
+    if (!baseItem.combineFields || !Array.isArray(baseItem.combineFields)) {
+      console.error('combineFields is not properly defined for', baseItem.fldName);
+      return baseItem;
+    }
+
+    const separator = baseItem.combineSeparator || ' ';
+    let combinedValue: string;
+
+    if (baseItem.customCombine) {
+      combinedValue = this.customCombineAddress(baseItem.combineFields, parentControl);
+    } else {
+      const values = baseItem.combineFields.map(fieldName => {
+        const control = parentControl.get(fieldName);
+        return control ? this.transformValue(control.value, control) : '';
+      }).filter(value => value !== ''); // Filter out empty values
+
+      combinedValue = values.join(separator).trim();
+    }
+
+    return {
+      ...baseItem,
+      value: combinedValue,
+      computedValue: combinedValue,
+      isCombined: true,
+      useHtml: true
+    };
+  }
+
+  private customCombineAddress(fields: string[], parentControl: FormGroup): string {
+    const address1 = parentControl.get(fields[0])?.value || '';
+    const address2 = parentControl.get(fields[1])?.value || '';
+    const city = parentControl.get(fields[2])?.value || '';
+    const state = parentControl.get(fields[3])?.value || '';
+    const zip = parentControl.get(fields[4])?.value || '';
+
+    const parts = [
+      address1,
+      address2,
+      [city, state, zip].filter(Boolean).join(', ')
+    ].filter(Boolean); // Filter out empty parts
+
+    return parts.join('<br>');
+  }
+
+  // ... other methods ...
+}
+
+------------
+
 import { AbstractControl, FormGroup } from '@angular/forms';
 import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
 
