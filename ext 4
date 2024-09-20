@@ -1,29 +1,56 @@
-interface WidgetWithState extends WidgetConfig {
-  state: WidgetState;
-  subItems?: WidgetWithState[];
-}
+import { AbstractControl, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
 
-private processWidgets(widgets: (WidgetConfig | SubMenuItem)[]): WidgetWithState[] {
-  const result: WidgetWithState[] = [];
+export class FormExtensionHelpers {
+  // ... other methods ...
 
-  for (const widget of widgets) {
-    const widgetState = this.profileService.getWidgetState(widget.name);
-    const state = widgetState() || this.profileService['initialWidgetState'];
-
-    const processedWidget: WidgetWithState = {
-      ...widget,
-      state: { ...state } // Create a new object to avoid modifying the original state
-    };
-
-    const subItems = this.profileService.getSubMenuItems(widget);
-    if (subItems.length > 0) {
-      processedWidget.subItems = this.processWidgets(subItems);
+  transformValue(value: any, control: ExtendedAbstractControl | ExtendedControlOptions): any {
+    if (value === null || value === undefined) {
+      return '';
     }
 
-    result.push(processedWidget);
+    if (typeof value === 'object' && !(value instanceof Date)) {
+      if (control instanceof FormGroup) {
+        // Handle FormGroup
+        const transformedObject: any = {};
+        Object.keys(control.controls).forEach(key => {
+          transformedObject[key] = this.transformValue(value[key], control.get(key) as ExtendedAbstractControl);
+        });
+        return transformedObject;
+      } else if (Array.isArray(value)) {
+        // Handle arrays
+        return value.map(item => this.transformValue(item, control));
+      } else {
+        // Handle plain objects
+        const transformedObject: any = {};
+        Object.keys(value).forEach(key => {
+          transformedObject[key] = this.transformValue(value[key], control);
+        });
+        return transformedObject;
+      }
+    }
+
+    // Handle primitive values
+    if (control.lookupData && Array.isArray(control.lookupData)) {
+      const matchingLookup = control.lookupData.find(item => item.value === value);
+      if (matchingLookup) return matchingLookup.label;
+    }
+
+    switch (value) {
+      case 'Y':
+        return 'Yes';
+      case 'N':
+        return 'No';
+      case true:
+        return 'Yes';
+      case false:
+        return 'No';
+      default:
+        return value;
+    }
   }
 
-  return result;
+  // ... other methods ...
 }
 -------
 
