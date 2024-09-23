@@ -1,0 +1,149 @@
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionHelpers {
+  // ... existing methods ...
+
+  getExtendedReadViewForControl(control: AbstractControl, formLayouts: WeakMap<FormGroup, FormLayout>): FieldItem[] {
+    if (control instanceof FormGroup) {
+      const layout = formLayouts.get(control);
+      if (layout) {
+        return this.applyLayoutToFormGroup(control, layout);
+      }
+    }
+    return this.getBasicReadViewForControl(control);
+  }
+
+  private applyLayoutToFormGroup(formGroup: FormGroup, layout: FormLayout): FieldItem[] {
+    return layout.sections.flatMap(section => this.createSectionItems(section, formGroup));
+  }
+
+  private createSectionItems(section: LayoutSection, formGroup: FormGroup): FieldItem[] {
+    if (section.type === 'divider') {
+      return this.createDividerItem(section);
+    }
+
+    const sectionItem: FieldItem = this.createSectionHeaderItem(section);
+
+    if (section.subSections && section.subSections.length > 0) {
+      sectionItem.children = section.subSections.flatMap(subSection => 
+        this.createSubSectionItems(subSection, formGroup)
+      );
+    } else {
+      sectionItem.children = this.createFieldItems(section.fields, formGroup);
+    }
+
+    return [sectionItem];
+  }
+
+  private createSubSectionItems(subSection: LayoutSubSection, formGroup: FormGroup): FieldItem[] {
+    const subSectionItem: FieldItem = this.createSubSectionHeaderItem(subSection);
+    subSectionItem.children = this.createFieldItems(subSection.fields, formGroup);
+    return [subSectionItem];
+  }
+
+  private createSectionHeaderItem(section: LayoutSection): FieldItem {
+    return {
+      label: this.getSectionLabel(section),
+      fldName: `section_${section.type}`,
+      type: section.type,
+      editable: false,
+      visible: true,
+      expand: true,
+      value: null,
+      children: [],
+      labelWidth: section.labelWidth
+    };
+  }
+
+  private createSubSectionHeaderItem(subSection: LayoutSubSection): FieldItem {
+    return {
+      label: this.getSubSectionLabel(subSection),
+      fldName: `subSection_${subSection.type}`,
+      type: subSection.type,
+      editable: false,
+      visible: true,
+      expand: true,
+      value: null,
+      children: []
+    };
+  }
+
+  private createFieldItems(fields: LayoutField[], formGroup: FormGroup): FieldItem[] {
+    return fields.map(field => this.createFieldItem(field, formGroup))
+      .filter((item): item is FieldItem => item !== null);
+  }
+
+  private createFieldItem(field: LayoutField, formGroup: FormGroup): FieldItem | null {
+    // Existing implementation...
+  }
+
+  private getSectionLabel(section: LayoutSection): string {
+    switch (section.type) {
+      case 'leftHeader':
+      case 'leftRightHeader':
+        return section.leftHeader || '';
+      case 'rightHeader':
+        return section.rightHeader || '';
+      case 'commonHeader':
+        return section.commonHeader || '';
+      case 'accordion':
+      case 'accordionHeader':
+        return section.accordionHeader || '';
+      default:
+        return '';
+    }
+  }
+
+  private getSubSectionLabel(subSection: LayoutSubSection): string {
+    switch (subSection.type) {
+      case 'leftHeader':
+        return subSection.leftHeader || '';
+      case 'rightHeader':
+        return subSection.rightHeader || '';
+      case 'leftRightHeader':
+        return `${subSection.leftHeader || ''} ${subSection.rightHeader || ''}`.trim();
+      case 'commonHeader':
+        return subSection.commonHeader || '';
+      default:
+        return '';
+    }
+  }
+
+  private createDividerItem(section: LayoutSection): FieldItem[] {
+    return [{
+      label: '',
+      fldName: `divider_${Date.now()}`,
+      type: 'divider',
+      editable: false,
+      visible: true,
+      expand: false,
+      value: null,
+      isDivider: true,
+      dividerClass: section.dividerClass
+    }];
+  }
+
+  // ... other existing methods ...
+}
+
+-------
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionService {
+  // ... existing code ...
+
+  getExtendedReadView(control: AbstractControl): Signal<FieldItem[]> {
+    if (!this.readViewCache.has(control)) {
+      const readViewSignal = computed(() => {
+        this.updateTrigger();
+        return untracked(() => this.helpers.getExtendedReadViewForControl(control, this.formLayouts));
+      });
+      this.readViewCache.set(control, readViewSignal);
+    }
+    return this.readViewCache.get(control)!;
+  }
+
+  // ... other methods ...
+}
