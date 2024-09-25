@@ -1,4 +1,4 @@
-function optimizedGroupFieldsThreeLevels(fields, level = 1) {
+function optimizedGroupFieldsThreeLevels(fields, level = 1, sortByLabel = false) {
   const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
   let leftCount = 0, rightCount = 0;
 
@@ -8,7 +8,7 @@ function optimizedGroupFieldsThreeLevels(fields, level = 1) {
     field.seq = field.seq ?? i;
 
     if (field.fields && field.fields.length) {
-      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1);
+      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1, sortByLabel);
     }
 
     if (level === 2) {
@@ -22,38 +22,33 @@ function optimizedGroupFieldsThreeLevels(fields, level = 1) {
     }
   }
 
+  // Sort function
+  const sortFunction = sortByLabel
+    ? (a, b) => a.label.localeCompare(b.label)
+    : (a, b) => a.seq - b.seq;
+
   // Sort only once at the end
   if (level === 2) {
-    grouped.sort((a, b) => a.seq - b.seq);
+    grouped.sort(sortFunction);
   } else {
     for (const key in grouped) {
-      grouped[key].sort((a, b) => a.seq - b.seq);
+      grouped[key].sort(sortFunction);
     }
   }
 
   return grouped;
 }
 
-function optimizedGroupFieldsBySide(sections) {
+function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
   const sectionCount = sections.length;
   const result = new Array(sectionCount);
   for (let i = 0; i < sectionCount; i++) {
     const section = sections[i];
-    const grouped = optimizedGroupFieldsThreeLevels(section.fields);
+    const grouped = optimizedGroupFieldsThreeLevels(section.fields, 1, sortByLabel);
     delete section.fields;
     result[i] = { ...section, ...grouped };
   }
   return result;
-}
-
-// Performance testing function
-function testPerformance(sections, iterations = 100) {
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    optimizedGroupFieldsBySide(sections);
-  }
-  const end = performance.now();
-  console.log(`Average time per iteration: ${(end - start) / iterations} ms`);
 }
 
 // Usage in Angular service
@@ -63,11 +58,7 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class FieldGroupingService {
-  groupFields(sections) {
-    return optimizedGroupFieldsBySide(sections);
-  }
-
-  testPerformance(sections, iterations = 100) {
-    testPerformance(sections, iterations);
+  groupFields(sections, sortByLabel = false) {
+    return optimizedGroupFieldsBySide(sections, sortByLabel);
   }
 }
