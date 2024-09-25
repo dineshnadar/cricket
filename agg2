@@ -1,54 +1,59 @@
-function deepGroupFields(fields, sortByLabel = false) {
-  const grouped = { fieldsLeft: [], fieldsRight: [], fieldsFull: [] };
+function optimizedGroupFieldsThreeLevels(fields, level = 1) {
+  const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
   let leftCount = 0, rightCount = 0;
 
   const fieldCount = fields.length;
   for (let i = 0; i < fieldCount; i++) {
     const field = fields[i];
-    
     field.seq = field.seq ?? i;
-    
+
     if (field.fields && field.fields.length) {
-      const nestedGrouped = deepGroupFields(field.fields, sortByLabel);
-      field.fieldType = 'nested';
-      field.fieldsLeft = nestedGrouped.fieldsLeft;
-      field.fieldsRight = nestedGrouped.fieldsRight;
-      field.fieldsFull = nestedGrouped.fieldsFull;
-      delete field.fields;
+      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1);
     }
 
-    const side = field.side && ['left', 'right', 'full'].includes(field.side) 
-      ? field.side 
-      : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
-    
-    grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
+    if (level === 2) {
+      grouped.push(field);
+    } else {
+      const side = field.side && ['left', 'right', 'full'].includes(field.side)
+        ? field.side
+        : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
+      
+      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
+    }
   }
 
-  const sortFunction = sortByLabel
-    ? (a, b) => a.label.localeCompare(b.label)
-    : (a, b) => a.seq - b.seq;
-
-  for (const key in grouped) {
-    grouped[key].sort(sortFunction);
-    const groupLength = grouped[key].length;
-    for (let i = 0; i < groupLength; i++) {
-      grouped[key][i].seq = i + 1;
+  // Sort only once at the end
+  if (level === 2) {
+    grouped.sort((a, b) => a.seq - b.seq);
+  } else {
+    for (const key in grouped) {
+      grouped[key].sort((a, b) => a.seq - b.seq);
     }
   }
 
   return grouped;
 }
 
-function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
+function optimizedGroupFieldsBySide(sections) {
   const sectionCount = sections.length;
   const result = new Array(sectionCount);
   for (let i = 0; i < sectionCount; i++) {
     const section = sections[i];
-    const grouped = deepGroupFields(section.fields, sortByLabel);
+    const grouped = optimizedGroupFieldsThreeLevels(section.fields);
     delete section.fields;
     result[i] = { ...section, ...grouped };
   }
   return result;
+}
+
+// Performance testing function
+function testPerformance(sections, iterations = 100) {
+  const start = performance.now();
+  for (let i = 0; i < iterations; i++) {
+    optimizedGroupFieldsBySide(sections);
+  }
+  const end = performance.now();
+  console.log(`Average time per iteration: ${(end - start) / iterations} ms`);
 }
 
 // Usage in Angular service
@@ -58,7 +63,11 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class FieldGroupingService {
-  groupFields(sections, sortByLabel = false) {
-    return optimizedGroupFieldsBySide(sections, sortByLabel);
+  groupFields(sections) {
+    return optimizedGroupFieldsBySide(sections);
+  }
+
+  testPerformance(sections, iterations = 100) {
+    testPerformance(sections, iterations);
   }
 }
