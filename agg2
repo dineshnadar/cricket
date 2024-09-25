@@ -1,4 +1,10 @@
- createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout?: TableLayout): FieldItem {
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
     const control = parentControl instanceof FormGroup 
       ? parentControl.get(baseItem.fldName!) as FormArray 
       : parentControl as FormArray;
@@ -10,58 +16,42 @@
 
     const arrayItem: FieldItem = {
       ...baseItem,
-      type: baseItem.type as 'arraySimple' | 'arrayGroup',
-      value: control.value,
+      type: 'arrayGroup',
       isArray: true,
+      value: control.value,
       fields: control.controls.map((ctrl, index) => {
         if (ctrl instanceof FormGroup) {
-          // Handle array of form groups
+          // Handle nested FormGroup within the array
           return {
             fldName: `${baseItem.fldName}.${index}`,
             type: 'formGroup',
-            fields: this.createFieldsFromLayout(ctrl, layout)
+            fields: Object.keys(ctrl.controls).map(key => {
+              // Find the corresponding layout field for this key
+              const fieldLayout = layout.fields?.find(f => f.fldName === key);
+              return this.createFieldItem({
+                fldName: key,
+                type: 'field',
+                side: fieldLayout?.side || 'full',
+                seq: fieldLayout?.seq || index,
+                ...fieldLayout // Spread other layout properties
+              } as LayoutField, ctrl);
+            }).filter(Boolean) as FieldItem[]
           };
         } else {
-          // Handle array of simple controls
+          // Handle simple FormControl within the array
           return this.createFieldItem({
             fldName: `${baseItem.fldName}.${index}`,
             type: 'field',
             side: 'full',
-            seq: index
+            seq: index,
+            ...layout // Spread layout properties for simple array items
           } as LayoutField, control, index);
         }
-      }).filter(Boolean) as FieldItem[],
-      isValid: control.valid,
-      errors: control.errors,
-      touched: control.touched,
-      dirty: control.dirty
+      }).filter(Boolean) as FieldItem[]
     };
 
     return arrayItem;
   }
 
-  private createFieldsFromLayout(formGroup: FormGroup, layout?: TableLayout): FieldItem[] {
-    if (!layout || !layout.columns) {
-      // If no layout is provided, fall back to default behavior
-      return Object.keys(formGroup.controls).map(key => 
-        this.createFieldItem({
-          fldName: key,
-          type: 'field',
-          side: 'full',
-          seq: 0
-        } as LayoutField, formGroup)
-      ).filter(Boolean) as FieldItem[];
-    }
-
-    return layout.columns.map((column, index) => {
-      const layoutField: LayoutField = {
-        fldName: column.field,
-        type: 'field',
-        side: column.side || 'full',
-        seq: column.seq !== undefined ? column.seq : index,
-        label: column.header
-      };
-
-      return this.createFieldItem(layoutField, formGroup);
-    }).filter(Boolean) as FieldItem[];
-  }
+  // ... other methods ...
+}
