@@ -1,163 +1,67 @@
-// data.service.ts
-import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, catchError, map, of, switchMap, throwError } from 'rxjs';
+ createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout?: TableLayout): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
 
-interface User {
-  id: number;
-  name: string;
-}
-
-interface Post {
-  id: number;
-  title: string;
-  body: string;
-  userId: number;
-}
-
-interface ProcessedPost extends Post {
-  wordCount: number;
-}
-
-interface UserPostsResult {
-  user: User | null;
-  posts: ProcessedPost[] | null;
-  totalPosts: number;
-  averageWordCount: number;
-  error?: string;
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class DataService {
-  private http = inject(HttpClient);
-  private apiUrl = 'https://jsonplaceholder.typicode.com';
-
-  getUser(userId: number): Observable<User> {
-    return this.http.get<User>(`${this.apiUrl}/users/${userId}`).pipe(
-      catchError(this.handleError)
-    );
-  }
-
-  getUserPosts(userId: number): Observable<Post[]> {
-    return this.http.get<Post[]>(`${this.apiUrl}/posts?userId=${userId}`).pipe(
-      catchError(error => {
-        console.error('Error fetching posts:', error);
-        return throwError(() => new Error('Failed to fetch posts'));
-      })
-    );
-  }
-
-  getUserWithPosts(userId: number): Observable<UserPostsResult> {
-    return this.getUser(userId).pipe(
-      switchMap(user => this.getUserPosts(user.id).pipe(
-        map(posts => ({ user, posts }))
-      )),
-      map(({ user, posts }) => this.processUserPosts(user, posts)),
-      catchError(error => {
-        if (error instanceof HttpErrorResponse && error.status === 404) {
-          return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: 'User not found' });
-        }
-        return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: this.getErrorMessage(error) });
-      })
-    );
-  }
-
-  private processUserPosts(user: User, posts: Post[]): UserPostsResult {
-    const processedPosts = posts.map(post => ({
-      ...post,
-      wordCount: post.body.split(/\s+/).length
-    }));
-
-    const totalPosts = processedPosts.length;
-    const totalWords = processedPosts.reduce((sum, post) => sum + post.wordCount, 0);
-    const averageWordCount = totalPosts > 0 ? totalWords / totalPosts : 0;
-
-    return {
-      user,
-      posts: processedPosts,
-      totalPosts,
-      averageWordCount: Math.round(averageWordCount * 100) / 100, // Round to 2 decimal places
-    };
-  }
-
-  private handleError(error: HttpErrorResponse) {
-    console.error('An error occurred:', error);
-    return throwError(() => error);
-  }
-
-  private getErrorMessage(error: any): string {
-    if (error instanceof HttpErrorResponse) {
-      if (error.status === 0) {
-        return 'A network error occurred. Please check your connection and try again.';
-      }
-      if (error.status === 404) {
-        return 'The requested user was not found.';
-      }
-      if (error.status >= 500) {
-        return 'A server error occurred. Please try again later.';
-      }
+    if (!(control instanceof FormArray)) {
+      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+      return baseItem;
     }
-    return 'An unexpected error occurred. Please try again.';
-  }
-}
 
-// user-posts.component.ts
-import { Component, computed, signal } from '@angular/core';
-import { AsyncPipe, JsonPipe, NgIf, NgFor } from '@angular/common';
-import { DataService, UserPostsResult } from './data.service';
-import { Observable, catchError, of, startWith, switchMap } from 'rxjs';
+    const arrayItem: FieldItem = {
+      ...baseItem,
+      type: baseItem.type as 'arraySimple' | 'arrayGroup',
+      value: control.value,
+      isArray: true,
+      fields: control.controls.map((ctrl, index) => {
+        if (ctrl instanceof FormGroup) {
+          // Handle array of form groups
+          return {
+            fldName: `${baseItem.fldName}.${index}`,
+            type: 'formGroup',
+            fields: this.createFieldsFromLayout(ctrl, layout)
+          };
+        } else {
+          // Handle array of simple controls
+          return this.createFieldItem({
+            fldName: `${baseItem.fldName}.${index}`,
+            type: 'field',
+            side: 'full',
+            seq: index
+          } as LayoutField, control, index);
+        }
+      }).filter(Boolean) as FieldItem[],
+      isValid: control.valid,
+      errors: control.errors,
+      touched: control.touched,
+      dirty: control.dirty
+    };
 
-@Component({
-  selector: 'app-user-posts',
-  standalone: true,
-  imports: [AsyncPipe, JsonPipe, NgIf, NgFor],
-  template: `
-    <h1>User Posts</h1>
-    <input [ngModel]="userId()" (ngModelChange)="setUserId($event)" placeholder="Enter user ID">
-    <button (click)="loadUserPosts()">Load User Posts</button>
-
-    <ng-container *ngIf="userPosts$ | async as result">
-      <div *ngIf="result.user">
-        <h2>{{ result.user.name }}'s Posts</h2>
-        <p>Total Posts: {{ result.totalPosts }}</p>
-        <p>Average Word Count: {{ result.averageWordCount }}</p>
-        <ul *ngIf="result.posts">
-          <li *ngFor="let post of result.posts">
-            <h3>{{ post.title }}</h3>
-            <p>{{ post.body }}</p>
-            <small>Word Count: {{ post.wordCount }}</small>
-          </li>
-        </ul>
-        <p *ngIf="result.posts && !result.posts.length">No posts found for this user.</p>
-      </div>
-      <p *ngIf="result.error" class="error">{{ result.error }}</p>
-    </ng-container>
-  `
-})
-export class UserPostsComponent {
-  private dataService = inject(DataService);
-
-  userId = signal(1);
-
-  userPosts$: Observable<UserPostsResult | null> = computed(() => this.userId()).pipe(
-    switchMap(id => this.dataService.getUserWithPosts(id).pipe(
-      catchError(err => {
-        console.error('Error in component:', err);
-        return of({ user: null, posts: null, totalPosts: 0, averageWordCount: 0, error: 'Failed to load data. Please try again.' });
-      }),
-      startWith(null) // Start with null to show loading state
-    )),
-    startWith(null) // Initial null state
-  );
-
-  setUserId(id: string) {
-    this.userId.set(Number(id));
+    return arrayItem;
   }
 
-  loadUserPosts() {
-    // This will trigger the userPosts$ observable to re-emit
-    this.userId.set(this.userId());
+  private createFieldsFromLayout(formGroup: FormGroup, layout?: TableLayout): FieldItem[] {
+    if (!layout || !layout.columns) {
+      // If no layout is provided, fall back to default behavior
+      return Object.keys(formGroup.controls).map(key => 
+        this.createFieldItem({
+          fldName: key,
+          type: 'field',
+          side: 'full',
+          seq: 0
+        } as LayoutField, formGroup)
+      ).filter(Boolean) as FieldItem[];
+    }
+
+    return layout.columns.map((column, index) => {
+      const layoutField: LayoutField = {
+        fldName: column.field,
+        type: 'field',
+        side: column.side || 'full',
+        seq: column.seq !== undefined ? column.seq : index,
+        label: column.header
+      };
+
+      return this.createFieldItem(layoutField, formGroup);
+    }).filter(Boolean) as FieldItem[];
   }
-}
