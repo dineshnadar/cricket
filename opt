@@ -1,0 +1,67 @@
+function optimizedGroupFieldsThreeLevels(items, level = 1, sortByLabel = false) {
+  const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
+  let leftCount = 0, rightCount = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = {...items[i]}; // Shallow clone
+    item.seq = item.seq ?? i;
+
+    if (Array.isArray(item.ind)) {
+      item.ind = optimizedGroupFieldsThreeLevels(item.ind, level + 1, sortByLabel);
+    }
+
+    if (level === 2) {
+      grouped.push(item);
+    } else {
+      const side = item.side && ['left', 'right', 'full'].includes(item.side)
+        ? item.side
+        : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
+      
+      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(item);
+    }
+  }
+
+  // Sort only once at the end
+  const sortFunction = sortByLabel
+    ? (a, b) => (a.label || '').localeCompare(b.label || '')
+    : (a, b) => (a.seq - b.seq);
+
+  if (level === 2) {
+    grouped.sort(sortFunction);
+  } else {
+    for (const key in grouped) {
+      grouped[key].sort(sortFunction);
+    }
+  }
+
+  return grouped;
+}
+
+function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
+  return optimizedGroupFieldsThreeLevels(sections, 1, sortByLabel);
+}
+
+// Performance testing function
+function testPerformance(data, iterations = 100) {
+  const start = performance.now();
+  for (let i = 0; i < iterations; i++) {
+    optimizedGroupFieldsBySide(data, false);
+  }
+  const end = performance.now();
+  console.log(`Average time per iteration: ${(end - start) / iterations} ms`);
+}
+
+// Usage and testing
+const originalData = [
+  { seq: 1, side: 'left', label: 'Item 1', ind: [{ seq: 1, label: 'Subitem 1' }, { seq: 2, label: 'Subitem 2' }] },
+  { seq: 2, side: 'right', label: 'Item 2' },
+  { seq: 3, side: 'full', label: 'Item 3', ind: [{ seq: 1, label: 'Subitem 3', ind: [{ seq: 1, label: 'Sub-subitem 1' }] }] },
+  // Add more items for a more realistic test
+];
+
+const groupedItems = optimizedGroupFieldsBySide(originalData, false);
+console.log(JSON.stringify(groupedItems, null, 2));
+console.log('Original data unchanged:', JSON.stringify(originalData, null, 2));
+
+// Run performance test
+testPerformance(originalData, 1000);
