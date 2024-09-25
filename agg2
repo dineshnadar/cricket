@@ -1,64 +1,42 @@
-function optimizedGroupFieldsThreeLevels(fields, level = 1, sortByLabel = false) {
-  const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
-  let leftCount = 0, rightCount = 0;
-
-  const fieldCount = fields.length;
-  for (let i = 0; i < fieldCount; i++) {
-    const field = fields[i];
-    field.seq = field.seq ?? i;
-
-    if (field.fields && field.fields.length) {
-      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1, sortByLabel);
-    }
-
-    if (level === 2) {
-      grouped.push(field);
-    } else {
-      const side = field.side && ['left', 'right', 'full'].includes(field.side)
-        ? field.side
-        : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
-      
-      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
-    }
-  }
-
-  // Sort function
-  const sortFunction = sortByLabel
-    ? (a, b) => a.label.localeCompare(b.label)
-    : (a, b) => a.seq - b.seq;
-
-  // Sort only once at the end
-  if (level === 2) {
-    grouped.sort(sortFunction);
-  } else {
-    for (const key in grouped) {
-      grouped[key].sort(sortFunction);
-    }
-  }
-
-  return grouped;
+interface IndItem {
+  code?: string;
+  y?: string;
 }
 
-function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
-  const sectionCount = sections.length;
-  const result = new Array(sectionCount);
-  for (let i = 0; i < sectionCount; i++) {
-    const section = sections[i];
-    const grouped = optimizedGroupFieldsThreeLevels(section.fields, 1, sortByLabel);
-    delete section.fields;
-    result[i] = { ...section, ...grouped };
-  }
-  return result;
+interface DataItem {
+  ind?: IndItem[];
+  [key: string]: any;
 }
 
-// Usage in Angular service
-import { Injectable } from '@angular/core';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class FieldGroupingService {
-  groupFields(sections, sortByLabel = false) {
-    return optimizedGroupFieldsBySide(sections, sortByLabel);
-  }
+function filterAndMapDinoData(data: DataItem[]): any[] {
+  return (data ?? [])
+    .filter(item => 
+      item?.ind?.some(indItem => 
+        indItem?.code === 'IsDino' && indItem?.y === 'Y'
+      ) ?? false
+    )
+    .map(item => {
+      // Perform any mapping operations here
+      // For example, you might want to create a new object with specific properties
+      return {
+        // Add the properties you want to include in the mapped result
+        ...item,
+        isDino: true
+      };
+    });
 }
+
+// Usage
+const originalData: DataItem[] = [
+  { ind: [{ code: 'IsDino', y: 'Y' }, { code: 'Other', y: 'N' }], name: 'Dino1' },
+  { ind: [{ code: 'IsDino', y: 'N' }, { code: 'Other', y: 'Y' }], name: 'NotDino' },
+  { ind: [{ code: 'IsDino', y: 'Y' }, { code: 'Other', y: 'Y' }], name: 'Dino2' },
+  { name: 'NoIndData' },
+  {},
+  { ind: [] },
+  { ind: [{ code: 'IsDino' }] },
+  { ind: [{ y: 'Y' }] },
+];
+
+const filteredAndMappedData = filterAndMapDinoData(originalData);
+console.log(filteredAndMappedData);
