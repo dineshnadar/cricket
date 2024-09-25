@@ -55,3 +55,37 @@ export class FormExtensionHelpers {
 
   // ... other methods ...
 }
+
+------
+
+private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+  let control: AbstractControl | null;
+  
+  if (parentControl instanceof FormArray) {
+    control = parentControl.at(arrayIndex!);
+  } else {
+    control = parentControl.get(field.fldName!);
+  }
+
+  if (!control) return null;
+
+  const extendedControl = control as ExtendedAbstractControl;
+
+  let baseItem: FieldItem = {
+    ...field,
+    value: control.value,
+    isValid: control.valid,
+    errors: control.errors,
+    status: control.status,
+    touched: control.touched,
+    dirty: control.dirty
+  };
+
+  switch (field.type) {
+    // ... other cases ...
+    case 'arraySimple':
+    case 'arrayGroup':
+      return this.createArrayFieldItem(baseItem, parentControl, field);
+    // ... other cases ...
+  }
+}
