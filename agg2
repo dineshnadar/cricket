@@ -1,91 +1,64 @@
-import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
+function deepGroupFields(fields, sortByLabel = false) {
+  const grouped = { fieldsLeft: [], fieldsRight: [], fieldsFull: [] };
+  let leftCount = 0, rightCount = 0;
 
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    if (!(control instanceof FormArray)) {
-      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-      return baseItem;
+  const fieldCount = fields.length;
+  for (let i = 0; i < fieldCount; i++) {
+    const field = fields[i];
+    
+    field.seq = field.seq ?? i;
+    
+    if (field.fields && field.fields.length) {
+      const nestedGrouped = deepGroupFields(field.fields, sortByLabel);
+      field.fieldType = 'nested';
+      field.fieldsLeft = nestedGrouped.fieldsLeft;
+      field.fieldsRight = nestedGrouped.fieldsRight;
+      field.fieldsFull = nestedGrouped.fieldsFull;
+      delete field.fields;
     }
 
-    const arrayItem: FieldItem = {
-      ...baseItem,
-      type: 'arrayGroup',
-      isArray: true,
-      value: control.value,
-      fields: control.controls.map((ctrl, index) => {
-        if (ctrl instanceof FormGroup) {
-          // Handle nested FormGroup within the array
-          return {
-            fldName: `${baseItem.fldName}.${index}`,
-            type: 'formGroup',
-            fields: Object.keys(ctrl.controls).map(key => {
-              // Find the corresponding layout field for this key
-              const fieldLayout = layout.fields?.find(f => f.fldName === key);
-              return this.createFieldItem({
-                fldName: key,
-                type: 'field',
-                side: fieldLayout?.side || 'full',
-                seq: fieldLayout?.seq || index,
-                ...fieldLayout // Spread other layout properties
-              } as LayoutField, ctrl);
-            }).filter(Boolean) as FieldItem[]
-          };
-        } else {
-          // Handle simple FormControl within the array
-          return this.createFieldItem({
-            fldName: `${baseItem.fldName}.${index}`,
-            type: 'field',
-            side: 'full',
-            seq: index,
-            ...layout // Spread layout properties for simple array items
-          } as LayoutField, control, index);
-        }
-      }).filter(Boolean) as FieldItem[]
-    };
-
-    return arrayItem;
+    const side = field.side && ['left', 'right', 'full'].includes(field.side) 
+      ? field.side 
+      : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
+    
+    grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
   }
 
-  // ... other methods ...
+  const sortFunction = sortByLabel
+    ? (a, b) => a.label.localeCompare(b.label)
+    : (a, b) => a.seq - b.seq;
+
+  for (const key in grouped) {
+    grouped[key].sort(sortFunction);
+    const groupLength = grouped[key].length;
+    for (let i = 0; i < groupLength; i++) {
+      grouped[key][i].seq = i + 1;
+    }
+  }
+
+  return grouped;
 }
 
-------
-
-private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
-  let control: AbstractControl | null;
-  
-  if (parentControl instanceof FormArray) {
-    control = parentControl.at(arrayIndex!);
-  } else {
-    control = parentControl.get(field.fldName!);
+function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
+  const sectionCount = sections.length;
+  const result = new Array(sectionCount);
+  for (let i = 0; i < sectionCount; i++) {
+    const section = sections[i];
+    const grouped = deepGroupFields(section.fields, sortByLabel);
+    delete section.fields;
+    result[i] = { ...section, ...grouped };
   }
+  return result;
+}
 
-  if (!control) return null;
+// Usage in Angular service
+import { Injectable } from '@angular/core';
 
-  const extendedControl = control as ExtendedAbstractControl;
-
-  let baseItem: FieldItem = {
-    ...field,
-    value: control.value,
-    isValid: control.valid,
-    errors: control.errors,
-    status: control.status,
-    touched: control.touched,
-    dirty: control.dirty
-  };
-
-  switch (field.type) {
-    // ... other cases ...
-    case 'arraySimple':
-    case 'arrayGroup':
-      return this.createArrayFieldItem(baseItem, parentControl, field);
-    // ... other cases ...
+@Injectable({
+  providedIn: 'root'
+})
+export class FieldGroupingService {
+  groupFields(sections, sortByLabel = false) {
+    return optimizedGroupFieldsBySide(sections, sortByLabel);
   }
 }
