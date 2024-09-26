@@ -1,33 +1,38 @@
-function optimizedGroupFieldsThreeLevels(items, level = 1, sortByLabel = false) {
+function optimizedGroupFieldsThreeLevels(fields, level = 1, sortByLabel = false) {
   const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
   let leftCount = 0, rightCount = 0;
 
-  for (let i = 0; i < items.length; i++) {
-    const item = {...items[i]}; // Shallow clone
-    item.seq = item.seq ?? i;
+  for (let i = 0; i < fields.length; i++) {
+    const originalField = fields[i];
+    let field = { ...originalField }; // Shallow copy to avoid modifying original
 
-    if (Array.isArray(item.ind)) {
-      item.ind = optimizedGroupFieldsThreeLevels(item.ind, level + 1, sortByLabel);
+    if (field.seq == null) {
+      field.seq = i; // Assign seq without modifying original
+    }
+
+    if (field.fields && field.fields.length) {
+      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1, sortByLabel);
     }
 
     if (level === 2) {
-      grouped.push(item);
+      grouped.push(field);
     } else {
-      const side = item.side && ['left', 'right', 'full'].includes(item.side)
-        ? item.side
+      const side = field.side && ['left', 'right', 'full'].includes(field.side)
+        ? field.side
         : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
       
-      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(item);
+      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
     }
   }
 
-  // Sort only once at the end
+  // Sort function
   const sortFunction = sortByLabel
     ? (a, b) => (a.label || '').localeCompare(b.label || '')
-    : (a, b) => (a.seq - b.seq);
+    : (a, b) => (a.seq ?? 0) - (b.seq ?? 0);
 
+  // Sort only once at the end
   if (level === 2) {
-    grouped.sort(sortFunction);
+    return grouped.sort(sortFunction);
   } else {
     for (const key in grouped) {
       grouped[key].sort(sortFunction);
@@ -38,30 +43,21 @@ function optimizedGroupFieldsThreeLevels(items, level = 1, sortByLabel = false) 
 }
 
 function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
-  return optimizedGroupFieldsThreeLevels(sections, 1, sortByLabel);
+  return sections.map(section => {
+    const { fields, ...rest } = section;
+    const grouped = optimizedGroupFieldsThreeLevels(fields, 1, sortByLabel);
+    return { ...rest, ...grouped };
+  });
 }
 
-// Performance testing function
-function testPerformance(data, iterations = 100) {
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    optimizedGroupFieldsBySide(data, false);
+// Usage in Angular service
+import { Injectable } from '@angular/core';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FieldGroupingService {
+  groupFields(sections, sortByLabel = false) {
+    return optimizedGroupFieldsBySide(sections, sortByLabel);
   }
-  const end = performance.now();
-  console.log(`Average time per iteration: ${(end - start) / iterations} ms`);
 }
-
-// Usage and testing
-const originalData = [
-  { seq: 1, side: 'left', label: 'Item 1', ind: [{ seq: 1, label: 'Subitem 1' }, { seq: 2, label: 'Subitem 2' }] },
-  { seq: 2, side: 'right', label: 'Item 2' },
-  { seq: 3, side: 'full', label: 'Item 3', ind: [{ seq: 1, label: 'Subitem 3', ind: [{ seq: 1, label: 'Sub-subitem 1' }] }] },
-  // Add more items for a more realistic test
-];
-
-const groupedItems = optimizedGroupFieldsBySide(originalData, false);
-console.log(JSON.stringify(groupedItems, null, 2));
-console.log('Original data unchanged:', JSON.stringify(originalData, null, 2));
-
-// Run performance test
-testPerformance(originalData, 1000);
