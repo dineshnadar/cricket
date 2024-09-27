@@ -1,63 +1,72 @@
-function optimizedGroupFieldsThreeLevels(fields, level = 1, sortByLabel = false) {
-  const grouped = level !== 2 ? { fieldsLeft: [], fieldsRight: [], fieldsFull: [] } : [];
-  let leftCount = 0, rightCount = 0;
+import { TestBed } from '@angular/core/testing';
+import { FieldGroupingService } from './field-grouping.service';
 
-  for (let i = 0; i < fields.length; i++) {
-    const originalField = fields[i];
-    let field = { ...originalField }; // Shallow copy to avoid modifying original
+describe('FieldGroupingService', () => {
+  let service: FieldGroupingService;
 
-    if (field.seq == null) {
-      field.seq = i; // Assign seq without modifying original
-    }
-
-    if (field.fields && field.fields.length) {
-      field.fields = optimizedGroupFieldsThreeLevels(field.fields, level + 1, sortByLabel);
-    }
-
-    if (level === 2) {
-      grouped.push(field);
-    } else {
-      const side = field.side && ['left', 'right', 'full'].includes(field.side)
-        ? field.side
-        : (leftCount <= rightCount ? (leftCount++, 'left') : (rightCount++, 'right'));
-      
-      grouped[`fields${side.charAt(0).toUpperCase() + side.slice(1)}`].push(field);
-    }
-  }
-
-  // Sort function
-  const sortFunction = sortByLabel
-    ? (a, b) => (a.label || '').localeCompare(b.label || '')
-    : (a, b) => (a.seq ?? 0) - (b.seq ?? 0);
-
-  // Sort only once at the end
-  if (level === 2) {
-    return grouped.sort(sortFunction);
-  } else {
-    for (const key in grouped) {
-      grouped[key].sort(sortFunction);
-    }
-  }
-
-  return grouped;
-}
-
-function optimizedGroupFieldsBySide(sections, sortByLabel = false) {
-  return sections.map(section => {
-    const { fields, ...rest } = section;
-    const grouped = optimizedGroupFieldsThreeLevels(fields, 1, sortByLabel);
-    return { ...rest, ...grouped };
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [FieldGroupingService]
+    });
+    service = TestBed.inject(FieldGroupingService);
   });
-}
 
-// Usage in Angular service
-import { Injectable } from '@angular/core';
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
 
-@Injectable({
-  providedIn: 'root'
-})
-export class FieldGroupingService {
-  groupFields(sections, sortByLabel = false) {
-    return optimizedGroupFieldsBySide(sections, sortByLabel);
-  }
-}
+  it('should group fields correctly', () => {
+    const testData = [
+      {
+        fields: [
+          { label: 'Field1', side: 'left', seq: 1 },
+          { label: 'Field2', side: 'right', seq: 2 },
+          { label: 'Field3', side: 'full', seq: 3 }
+        ]
+      }
+    ];
+
+    const result = service.groupFields(testData);
+
+    expect(result[0].fieldsLeft.length).toBe(1);
+    expect(result[0].fieldsRight.length).toBe(1);
+    expect(result[0].fieldsFull.length).toBe(1);
+    expect(result[0].fieldsLeft[0].label).toBe('Field1');
+    expect(result[0].fieldsRight[0].label).toBe('Field2');
+    expect(result[0].fieldsFull[0].label).toBe('Field3');
+  });
+
+  it('should sort by label when sortByLabel is true', () => {
+    const testData = [
+      {
+        fields: [
+          { label: 'C', side: 'left', seq: 1 },
+          { label: 'A', side: 'left', seq: 2 },
+          { label: 'B', side: 'left', seq: 3 }
+        ]
+      }
+    ];
+
+    const result = service.groupFields(testData, true);
+
+    expect(result[0].fieldsLeft[0].label).toBe('A');
+    expect(result[0].fieldsLeft[1].label).toBe('B');
+    expect(result[0].fieldsLeft[2].label).toBe('C');
+  });
+
+  it('should not modify the original data', () => {
+    const testData = [
+      {
+        fields: [
+          { label: 'Field1', side: 'left', seq: 1 },
+          { label: 'Field2', side: 'right', seq: 2 }
+        ]
+      }
+    ];
+
+    const originalDataStringified = JSON.stringify(testData);
+    service.groupFields(testData);
+
+    expect(JSON.stringify(testData)).toBe(originalDataStringified);
+  });
+});
