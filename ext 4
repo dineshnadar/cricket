@@ -1,4 +1,98 @@
+rivate createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
 
+    if (!(control instanceof FormArray)) {
+      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+      return baseItem;
+    }
+
+    const arrayItem: FieldItem = {
+      ...baseItem,
+      type: 'arrayGroup',
+      isArray: true,
+      value: control.value,
+      fields: []
+    };
+
+    arrayItem.fields = control.controls.map((ctrl, index) => {
+      const itemFields = layout.fields && layout.fields.length > 0
+        ? this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`)
+        : this.generateFieldsFromControl(ctrl as FormGroup, `${baseItem.fldName}.${index}`);
+
+      return {
+        fldName: `${baseItem.fldName}.${index}`,
+        type: 'formGroup',
+        label: `Item ${index + 1}`,
+        seq: index,
+        side: 'full',
+        fields: itemFields,
+        value: ctrl.value,
+        isValid: ctrl.valid,
+        errors: ctrl.errors,
+        status: ctrl.status,
+        touched: ctrl.touched,
+        dirty: ctrl.dirty
+      };
+    });
+
+    return arrayItem;
+  }
+
+  private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
+    return layoutFields.flatMap(fieldLayout => {
+      const nestedControl = control.get(fieldLayout.fldName);
+      if (!nestedControl) return [];
+
+      if (nestedControl instanceof FormGroup) {
+        return this.generateFieldsFromControl(nestedControl, `${basePath}.${fieldLayout.fldName}`);
+      } else {
+        return [this.createFieldItem({
+          ...fieldLayout,
+          fldName: `${basePath}.${fieldLayout.fldName}`,
+        }, control)].filter(Boolean) as FieldItem[];
+      }
+    });
+  }
+
+  private generateFieldsFromControl(control: FormGroup, basePath: string): FieldItem[] {
+    return Object.entries(control.controls).flatMap(([key, ctrl]) => {
+      if (ctrl instanceof FormGroup) {
+        return this.generateFieldsFromControl(ctrl, `${basePath}.${key}`);
+      } else if (ctrl instanceof FormArray) {
+        return [];
+      } else {
+        const layoutField: LayoutField = {
+          fldName: `${basePath}.${key}`,
+          type: 'field',
+          label: this.generateLabelFromPath(key),
+          seq: 0,
+          side: 'full'
+        };
+        const fieldItem = this.createFieldItem(layoutField, control);
+        return fieldItem ? [fieldItem] : [];
+      }
+    });
+  }
+
+
+private generateLabelFromPath(path: string): string {
+    const parts = path.split('.');
+    const lastPart = parts[parts.length - 1];
+    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1).replace(/([A-Z])/g, ' $1').trim();
+  }
+
+
+
+
+
+
+
+
+
+
+-----------------x--------------------------x--------
 import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
 import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
 
