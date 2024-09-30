@@ -1,3 +1,124 @@
+
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+    console.log('Creating array field item for:', baseItem.fldName);
+    
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
+
+    if (!(control instanceof FormArray)) {
+      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+      return baseItem;
+    }
+
+    const arrayItem: FieldItem = {
+      ...baseItem,
+      type: 'arrayGroup',
+      isArray: true,
+      value: control.value,
+      fields: []
+    };
+
+    console.log('Control value:', control.value);
+
+    arrayItem.fields = control.controls.map((ctrl, index) => {
+      const itemFields = layout.fields && layout.fields.length > 0
+        ? this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`)
+        : this.generateFieldsFromControl(ctrl, `${baseItem.fldName}.${index}`);
+
+      return {
+        fldName: `${baseItem.fldName}.${index}`,
+        type: 'formGroup',
+        label: `Item ${index + 1}`,
+        seq: index,
+        side: 'full',
+        fields: itemFields,
+        value: ctrl.value,
+        isValid: ctrl.valid,
+        errors: ctrl.errors,
+        status: ctrl.status,
+        touched: ctrl.touched,
+        dirty: ctrl.dirty
+      };
+    });
+
+    console.log('Final array item:', arrayItem);
+    return arrayItem;
+  }
+
+  private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
+    return layoutFields.map(fieldLayout => {
+      const nestedControl = control.get(fieldLayout.fldName);
+      if (!nestedControl) return null;
+
+      return this.createFieldItem({
+        ...fieldLayout,
+        fldName: `${basePath}.${fieldLayout.fldName}`,
+      }, control);
+    }).filter(Boolean) as FieldItem[];
+  }
+
+  private generateFieldsFromControl(control: AbstractControl, basePath: string): FieldItem[] {
+    if (control instanceof FormGroup) {
+      return Object.entries(control.controls).map(([key, ctrl]) => {
+        const layoutField: LayoutField = {
+          fldName: key,
+          type: 'field',
+          label: this.generateLabelFromPath(key),
+          seq: 0,
+          side: 'full'
+        };
+        return this.createFieldItem(layoutField, control);
+      }).filter(Boolean) as FieldItem[];
+    } else if (control instanceof FormArray) {
+      // This case should be handled by createArrayFieldItem, so we'll return an empty array
+      return [];
+    } else {
+      // It's a FormControl
+      const layoutField: LayoutField = {
+        fldName: basePath,
+        type: 'field',
+        label: this.generateLabelFromPath(basePath),
+        seq: 0,
+        side: 'full'
+      };
+      const fieldItem = this.createFieldItem(layoutField, control.parent as FormGroup);
+      return fieldItem ? [fieldItem] : [];
+    }
+  }
+
+  // ... other methods (createFieldItem, generateLabelFromPath, etc.) ...
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------mmmmmm-----------
 private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
   console.log('Creating array field item for:', baseItem.fldName);
   
