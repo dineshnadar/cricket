@@ -1,10 +1,10 @@
-import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
-
 export class FormExtensionHelpers {
   // ... other methods ...
 
   private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+    console.log('Creating array field item for:', baseItem.fldName);
+    console.log('Layout:', JSON.stringify(layout, null, 2));
+
     const control = parentControl instanceof FormGroup 
       ? parentControl.get(baseItem.fldName!) as FormArray 
       : parentControl as FormArray;
@@ -22,40 +22,50 @@ export class FormExtensionHelpers {
       fields: []
     };
 
-    // Sort layout fields by sequence
-    const sortedLayoutFields = this.sortLayoutFields(layout.fields || []);
+    console.log('Control value:', control.value);
+    console.log('Layout fields:', layout.fields);
 
     arrayItem.fields = control.controls.flatMap((ctrl, index) => {
-      return this.createNestedFields(ctrl as FormGroup, sortedLayoutFields, `${baseItem.fldName}.${index}`);
+      const result = this.createNestedFields(ctrl as FormGroup, layout.fields || [], `${baseItem.fldName}.${index}`);
+      console.log(`Fields created for ${baseItem.fldName}.${index}:`, result);
+      return result;
     });
 
+    console.log('Final array item:', arrayItem);
     return arrayItem;
   }
 
   private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
+    console.log('Creating nested fields for:', basePath);
+    console.log('Layout fields:', layoutFields);
+    console.log('Control:', control);
+
     return layoutFields.flatMap(fieldLayout => {
+      console.log('Processing field layout:', fieldLayout);
       const nestedControl = control.get(fieldLayout.fldName);
-      if (!nestedControl) return [];
+      
+      if (!nestedControl) {
+        console.log('No control found for:', fieldLayout.fldName);
+        return [];
+      }
 
       if (nestedControl instanceof FormGroup) {
-        // Handle nested FormGroup
+        console.log('Nested FormGroup found:', fieldLayout.fldName);
         return this.createNestedFields(
           nestedControl, 
           fieldLayout.fields || [], 
           `${basePath}.${fieldLayout.fldName}`
         );
       } else {
-        // Handle FormControl
-        return this.createFieldItem({
+        console.log('Creating field item for:', fieldLayout.fldName);
+        const fieldItem = this.createFieldItem({
           ...fieldLayout,
           fldName: `${basePath}.${fieldLayout.fldName}`,
         }, control);
+        console.log('Created field item:', fieldItem);
+        return fieldItem ? [fieldItem] : [];
       }
-    }).filter(Boolean) as FieldItem[];
-  }
-
-  private sortLayoutFields(fields: LayoutField[]): LayoutField[] {
-    return fields.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    }).filter(Boolean);
   }
 
   // ... other methods ...
