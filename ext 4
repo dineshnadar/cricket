@@ -1,39 +1,105 @@
+private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+  console.log('Creating array field item for:', baseItem.fldName);
+  
+  const control = parentControl instanceof FormGroup 
+    ? parentControl.get(baseItem.fldName!) as FormArray 
+    : parentControl as FormArray;
+
+  if (!(control instanceof FormArray)) {
+    console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+    return baseItem;
+  }
+
+  const arrayItem: FieldItem = {
+    ...baseItem,
+    type: 'arrayGroup',
+    isArray: true,
+    value: control.value,
+    fields: []
+  };
+
+  console.log('Control value:', control.value);
+
+  arrayItem.fields = control.controls.flatMap((ctrl, index) => {
+    if (layout.fields && layout.fields.length > 0) {
+      // Use layout fields if provided
+      return this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`);
+    } else {
+      // Generate fields based on form structure if no layout fields are provided
+      return this.generateFieldsFromControl(ctrl, `${baseItem.fldName}.${index}`);
+    }
+  });
+
+  console.log('Final array item:', arrayItem);
+  return arrayItem;
+}
+
+
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
+
 export class FormExtensionHelpers {
   // ... other methods ...
 
-  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
-    console.log('Creating array field item for:', baseItem.fldName);
-    console.log('Layout:', JSON.stringify(layout, null, 2));
+  private generateFieldsFromControl(control: AbstractControl, basePath: string): FieldItem[] {
+    if (control instanceof FormGroup) {
+      return Object.entries(control.controls).flatMap(([key, ctrl]) => 
+        this.generateFieldsFromControl(ctrl, `${basePath}.${key}`)
+      );
+    } else if (control instanceof FormArray) {
+      return control.controls.flatMap((ctrl, index) => 
+        this.generateFieldsFromControl(ctrl, `${basePath}.${index}`)
+      );
+    } else {
+      // It's a FormControl
+      const layoutField: LayoutField = {
+        fldName: basePath,
+        type: 'field',
+        label: this.generateLabelFromPath(basePath),
+        seq: 0,
+        side: 'full'
+      };
+      
+      const fieldItem = this.createFieldItem(layoutField, control.parent as FormGroup);
+      return fieldItem ? [fieldItem] : [];
+    }
+  }
 
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    if (!(control instanceof FormArray)) {
-      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-      return baseItem;
+  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+    let control: AbstractControl | null;
+    
+    if (parentControl instanceof FormArray) {
+      control = parentControl.at(arrayIndex!);
+    } else {
+      control = parentControl.get(field.fldName!);
     }
 
-    const arrayItem: FieldItem = {
-      ...baseItem,
-      type: 'arrayGroup',
-      isArray: true,
+    if (!control) {
+      console.log('No control found for:', field.fldName);
+      return null;
+    }
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    return {
+      ...field,
       value: control.value,
-      fields: []
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
     };
-
-    console.log('Control value:', control.value);
-    console.log('Layout fields:', layout.fields);
-
-    arrayItem.fields = control.controls.flatMap((ctrl, index) => {
-      const result = this.createNestedFields(ctrl as FormGroup, layout.fields || [], `${baseItem.fldName}.${index}`);
-      console.log(`Fields created for ${baseItem.fldName}.${index}:`, result);
-      return result;
-    });
-
-    console.log('Final array item:', arrayItem);
-    return arrayItem;
   }
+
+  private generateLabelFromPath(path: string): string {
+    const parts = path.split('.');
+    const lastPart = parts[parts.length - 1];
+    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1).replace(/([A-Z])/g, ' $1').trim();
+  }
+
+  // ... other methods ...
+}
 
   private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
     console.log('Creating nested fields for:', basePath);
