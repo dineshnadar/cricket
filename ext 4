@@ -1,3 +1,125 @@
+
+import { Injectable } from '@angular/core';
+import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
+import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionHelpers {
+  // ... (previous code remains the same)
+
+  private generateFieldsFromControl(formGroup: FormGroup, layoutFields: LayoutField[]): FieldItem[] {
+    return layoutFields.flatMap(layoutField => {
+      const control = formGroup.get(layoutField.fldName);
+      if (!control) return [];
+
+      if (control instanceof FormGroup) {
+        const groupItem = this.createFieldItem(layoutField, formGroup) as FieldItem;
+        if (groupItem) {
+          groupItem.fields = this.generateFieldsFromControl(control, layoutField.fields || []);
+        }
+        return groupItem ? [groupItem] : [];
+      } else if (control instanceof FormArray) {
+        return [this.createArrayFieldItem(layoutField, formGroup, control)];
+      } else {
+        return [this.createFieldItem(layoutField, formGroup)].filter(Boolean) as FieldItem[];
+      }
+    });
+  }
+
+  private createArrayFieldItem(layout: LayoutField, parentControl: FormGroup, control: FormArray): FieldItem {
+    const arrayItem: FieldItem = {
+      ...layout,
+      type: 'arrayGroup',
+      isArray: true,
+      value: control.value,
+      fields: []
+    };
+
+    arrayItem.fields = control.controls.map((ctrl, index) => {
+      const itemLayout: LayoutField = {
+        fldName: `${layout.fldName}.${index}`,
+        type: ctrl instanceof FormGroup ? 'formGroup' : 'field',
+        label: `Item ${index + 1}`,
+        seq: index,
+        side: 'full',
+        fields: layout.fields || []
+      };
+
+      if (ctrl instanceof FormGroup) {
+        const groupItem = this.createFieldItem(itemLayout, parentControl) as FieldItem;
+        if (groupItem) {
+          groupItem.fields = this.generateFieldsFromControl(ctrl, itemLayout.fields);
+        }
+        return groupItem;
+      } else {
+        return this.createFieldItem(itemLayout, parentControl);
+      }
+    }).filter(Boolean) as FieldItem[];
+
+    return arrayItem;
+  }
+
+  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
+    let control: AbstractControl | null;
+    
+    if (parentControl instanceof FormArray) {
+      control = parentControl.at(arrayIndex!);
+    } else {
+      control = parentControl.get(field.fldName!);
+    }
+
+    if (!control) return null;
+
+    const extendedControl = control as ExtendedAbstractControl;
+
+    let baseItem: FieldItem = {
+      ...field,
+      value: control.value,
+      isValid: control.valid,
+      errors: control.errors,
+      status: control.status,
+      touched: control.touched,
+      dirty: control.dirty
+    };
+
+    // ... (rest of createFieldItem implementation)
+  }
+
+  // ... (rest of the code remains the same)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+------------x--------------------x------
 import { Injectable } from '@angular/core';
 import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
 import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
