@@ -1,4 +1,91 @@
-rivate createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+import { Injectable } from '@angular/core';
+import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
+import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class FormExtensionHelpers {
+  // ... (previous code remains the same)
+
+  private generateFieldsFromControl(control: FormGroup, basePath: string, layout?: LayoutField): FieldItem[] {
+    return Object.entries(control.controls).flatMap(([key, ctrl]) => {
+      const fullPath = `${basePath}.${key}`;
+      const layoutField = layout?.fields?.find(field => field.fldName === key);
+
+      if (ctrl instanceof FormGroup) {
+        return this.generateFieldsFromControl(ctrl, fullPath, layoutField);
+      } else if (ctrl instanceof FormArray) {
+        return this.generateFieldsFromFormArray(ctrl, fullPath, layoutField);
+      } else {
+        const fieldLayout: LayoutField = {
+          fldName: key,
+          type: 'field',
+          label: layoutField?.label || this.generateLabelFromPath(key),
+          seq: layoutField?.seq || 0,
+          side: layoutField?.side || 'full'
+        };
+        return [this.createFieldItem(fieldLayout, control)].filter(Boolean) as FieldItem[];
+      }
+    });
+  }
+
+  private generateFieldsFromFormArray(control: FormArray, basePath: string, layout?: LayoutField): FieldItem[] {
+    const arrayFieldLayout: LayoutField = {
+      fldName: basePath,
+      type: 'arrayGroup',
+      label: layout?.label || this.generateLabelFromPath(basePath),
+      seq: layout?.seq || 0,
+      side: layout?.side || 'full',
+      fields: []
+    };
+
+    const arrayItem = this.createFieldItem(arrayFieldLayout, control.parent as FormGroup, control) as FieldItem;
+    if (!arrayItem) return [];
+
+    arrayItem.fields = control.controls.map((ctrl, index) => {
+      if (ctrl instanceof FormGroup) {
+        const groupFieldLayout: LayoutField = {
+          fldName: `${index}`,
+          type: 'formGroup',
+          label: `Item ${index + 1}`,
+          seq: index,
+          side: 'full',
+          fields: layout?.fields || []
+        };
+        const groupItem = this.createFieldItem(groupFieldLayout, control, index) as FieldItem;
+        if (groupItem) {
+          groupItem.fields = this.generateFieldsFromControl(ctrl, `${basePath}.${index}`, layout);
+        }
+        return groupItem;
+      } else {
+        const fieldLayout: LayoutField = {
+          fldName: `${index}`,
+          type: 'field',
+          label: layout?.label || `Item ${index + 1}`,
+          seq: index,
+          side: 'full'
+        };
+        return this.createFieldItem(fieldLayout, control, index);
+      }
+    }).filter(Boolean) as FieldItem[];
+
+    return [arrayItem];
+  }
+
+  // ... (rest of the code remains the same)
+}
+
+
+
+
+
+
+
+
+
+---------------------x---------x------------x--------------x---------------x------------
+private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
     const control = parentControl instanceof FormGroup 
       ? parentControl.get(baseItem.fldName!) as FormArray 
       : parentControl as FormArray;
