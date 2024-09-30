@@ -1,3 +1,88 @@
+
+import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
+import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
+
+export class FormExtensionHelpers {
+  // ... other methods ...
+
+  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
+    const control = parentControl instanceof FormGroup 
+      ? parentControl.get(baseItem.fldName!) as FormArray 
+      : parentControl as FormArray;
+
+    if (!(control instanceof FormArray)) {
+      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
+      return baseItem;
+    }
+
+    const arrayItem: FieldItem = {
+      ...baseItem,
+      type: 'arrayGroup',
+      isArray: true,
+      value: control.value,
+      fields: []
+    };
+
+    // Sort layout fields by sequence
+    const sortedLayoutFields = this.sortLayoutFields(layout.fields || []);
+
+    arrayItem.fields = control.controls.flatMap((ctrl, index) => {
+      return sortedLayoutFields.map(fieldLayout => {
+        const nestedControl = ctrl.get(fieldLayout.fldName);
+        if (!nestedControl) return null;
+
+        if (nestedControl instanceof FormGroup) {
+          // Handle nested FormGroup (e.g., street)
+          return this.createNestedGroupFields(
+            `${baseItem.fldName}.${index}.${fieldLayout.fldName}`,
+            nestedControl,
+            fieldLayout
+          );
+        } else {
+          // Handle simple FormControl (e.g., city, zipCode)
+          return this.createFieldItem({
+            ...fieldLayout,
+            fldName: `${baseItem.fldName}.${index}.${fieldLayout.fldName}`,
+          }, ctrl as FormGroup);
+        }
+      }).filter(Boolean);
+    }).filter(Boolean) as FieldItem[];
+
+    return arrayItem;
+  }
+
+  private createNestedGroupFields(baseFldName: string, control: FormGroup, layout: LayoutField): FieldItem[] {
+    return Object.keys(control.controls).map(key => {
+      const nestedLayout = layout.fields?.find(f => f.fldName === key);
+      return this.createFieldItem({
+        ...nestedLayout,
+        fldName: `${baseFldName}.${key}`,
+        type: 'field',
+        side: nestedLayout?.side || 'full',
+        seq: nestedLayout?.seq || 0,
+      } as LayoutField, control);
+    }).filter(Boolean) as FieldItem[];
+  }
+
+  private sortLayoutFields(fields: LayoutField[]): LayoutField[] {
+    return fields.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  }
+
+  // ... other methods ...
+}
+
+
+
+
+
+
+
+
+
+
+
+
+--------------------------x-----------xx--------
 import { AbstractControl, FormGroup } from '@angular/forms';
 import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
 
