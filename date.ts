@@ -34,7 +34,7 @@ export interface TableConfig {
 // table.component.ts
 import { Component, Input, Output, EventEmitter, ChangeDetectionStrategy, computed, Signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { FormGroup, ReactiveFormsModule, FormArray } from '@angular/forms';
 import { TableColumn, FieldItem, TableConfig } from './table.types';
 
 @Component({
@@ -61,7 +61,7 @@ import { TableColumn, FieldItem, TableConfig } from './table.types';
         </tr>
       </thead>
       <tbody>
-        @for (row of displayedRows(); track row.fldName) {
+        @for (row of displayedRows(); track row.fldName; let rowIndex = $index) {
           <tr [class.clickable]="isRowClickable()"
               (click)="onRowClick(row.fldName)">
             @for (column of visibleColumns(); track column.key) {
@@ -69,7 +69,7 @@ import { TableColumn, FieldItem, TableConfig } from './table.types';
                 @if (column.cellTemplate) {
                   <ng-container *ngTemplateOutlet="column.cellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column }"></ng-container>
                 } @else {
-                  <ng-container *ngTemplateOutlet="defaultCellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column }"></ng-container>
+                  <ng-container *ngTemplateOutlet="defaultCellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column, rowIndex: rowIndex }"></ng-container>
                 }
               </td>
             }
@@ -94,9 +94,9 @@ import { TableColumn, FieldItem, TableConfig } from './table.types';
     }
     <button (click)="addRow.emit()" [disabled]="!canAddRow()">Add Row</button>
 
-    <ng-template #defaultCellTemplate let-field let-row="row" let-column="column">
-      @if (isEditing(row.fldName, column.key) && row.editable && !row.readOnly) {
-        <input [formControl]="getFormControl(row.fldName, column.key)"
+    <ng-template #defaultCellTemplate let-field let-row="row" let-column="column" let-rowIndex="rowIndex">
+      @if (isEditing(rowIndex, column.key) && row.editable && !row.readOnly) {
+        <input [formControl]="rowsFormArray.at(rowIndex).get(column.key)"
                (blur)="toggleEdit.emit({rowName: row.fldName, key: column.key})"
                (click)="$event.stopPropagation()">
       } @else {
@@ -134,6 +134,8 @@ export class TableComponent {
   sortColumn: string | null = null;
   sortDirection: 'asc' | 'desc' = 'asc';
 
+  rowsFormArray = computed(() => this.tableForm().get('rows') as FormArray);
+
   visibleColumns = computed(() => {
     const cols = Array.isArray(this.columns) ? this.columns : this.columns();
     return cols.filter(col => col.visible);
@@ -169,14 +171,8 @@ export class TableComponent {
     }
   }
 
-  getFormControl(rowName: string, key: string) {
-    const rowIndex = this.rows().findIndex(row => row.fldName === rowName);
-    return this.tableForm().get(`rows.${rowIndex}.${key}`)!;
-  }
-
-  isEditing = (rowName: string, key: string): boolean => {
-    const rowIndex = this.rows().findIndex(row => row.fldName === rowName);
-    return this.tableForm().get(`rows.${rowIndex}.${key}.editing`)?.value ?? false;
+  isEditing = (rowIndex: number, key: string): boolean => {
+    return this.rowsFormArray().at(rowIndex).get(key)?.get('editing')?.value ?? false;
   }
 
   isRowClickable = (): boolean => {
@@ -223,7 +219,6 @@ export class TableComponent {
     return a < b ? -1 : 1;
   }
 }
-
 
 ----------xxxx---------
 
