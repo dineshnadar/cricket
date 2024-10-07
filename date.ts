@@ -31,204 +31,27 @@ export interface TableConfig {
 
 --------xxx----
 
-// table.component.ts
-import { Component, Input, Output, EventEmitter, ChangeDetectionStrategy, computed, Signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormGroup, ReactiveFormsModule, FormArray } from '@angular/forms';
-import { TableColumn, FieldItem, TableConfig } from './table.types';
-
-@Component({
-  selector: 'app-table',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
-    <table>
-      <thead>
-        <tr>
-          @for (column of visibleColumns(); track column.key) {
-            <th (click)="config.enableSorting ? sort(column.key) : null">
-              {{ column.header }}
-              <button (click)="toggleColumnVisibility.emit(column.key); $event.stopPropagation()">
-                {{ column.visible ? 'Hide' : 'Show' }}
-              </button>
-              @if (config.enableSorting && sortColumn === column.key) {
-                <span>{{ sortDirection === 'asc' ? '▲' : '▼' }}</span>
-              }
-            </th>
-          }
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (row of displayedRows(); track row.fldName; let rowIndex = $index) {
-          <tr [class.clickable]="isRowClickable()"
-              (click)="onRowClick(row.fldName)">
-            @for (column of visibleColumns(); track column.key) {
-              <td>
-                @if (column.cellTemplate) {
-                  <ng-container *ngTemplateOutlet="column.cellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column }"></ng-container>
-                } @else {
-                  <ng-container *ngTemplateOutlet="defaultCellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column, rowIndex: rowIndex }"></ng-container>
-                }
-              </td>
-            }
-            <td>
-              @if (row.editable && !row.readOnly) {
-                <button (click)="editRow.emit(row.fldName)">Edit</button>
-              }
-              @if (!row.readOnly) {
-                <button (click)="deleteRow.emit(row.fldName)">Delete</button>
-              }
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
-    @if (config.enablePagination) {
-      <div class="pagination">
-        <button (click)="pageChange.emit(currentPage() - 1)" [disabled]="currentPage() === 1">Previous</button>
-        <span>Page {{ currentPage() }} of {{ totalPages() }}</span>
-        <button (click)="pageChange.emit(currentPage() + 1)" [disabled]="currentPage() === totalPages()">Next</button>
-      </div>
-    }
-    <button (click)="addRow.emit()" [disabled]="!canAddRow()">Add Row</button>
-
-    <ng-template #defaultCellTemplate let-field let-row="row" let-column="column" let-rowIndex="rowIndex">
-      @if (isEditing(rowIndex, column.key) && row.editable && !row.readOnly) {
-        <input [formControl]="rowsFormArray.at(rowIndex).get(column.key)"
-               (blur)="toggleEdit.emit({rowName: row.fldName, key: column.key})"
-               (click)="$event.stopPropagation()">
-      } @else {
-        <span 
-          (click)="onCellClick(row.fldName, column.key, $event)"
-          [class.clickable]="column.clickable"
-        >
-          {{ column.useComputedValue ? field.computedValue : field.value }}
-        </span>
-      }
-    </ng-template>
-  `,
-  styles: [`
-    .clickable { cursor: pointer; }
-  `]
-})
-export class TableComponent {
-  @Input({ required: true }) tableForm!: Signal<FormGroup>;
-  @Input() columns: Signal<TableColumn[]> | TableColumn[] = [];
-  @Input({ required: true }) rows!: Signal<FieldItem[]>;
-  @Input() config: TableConfig = {};
-  @Input() currentPage: Signal<number> = computed(() => 1);
-  @Input() totalPages: Signal<number> = computed(() => 1);
-  @Input({ required: true }) canAddRow!: Signal<boolean>;
-  @Output() toggleColumnVisibility = new EventEmitter<string>();
-  @Output() toggleEdit = new EventEmitter<{rowName: string, key: string}>();
-  @Output() editRow = new EventEmitter<string>();
-  @Output() deleteRow = new EventEmitter<string>();
-  @Output() pageChange = new EventEmitter<number>();
-  @Output() addRow = new EventEmitter<void>();
-  @Output() cellClick = new EventEmitter<{rowName: string, key: string}>();
-  @Output() rowClick = new EventEmitter<string>();
-  @Output() sortChange = new EventEmitter<{column: string, direction: 'asc' | 'desc'}>();
-
-  sortColumn: string | null = null;
-  sortDirection: 'asc' | 'desc' = 'asc';
-
-  rowsFormArray = computed(() => this.tableForm().get('rows') as FormArray);
-
-  visibleColumns = computed(() => {
-    const cols = Array.isArray(this.columns) ? this.columns : this.columns();
-    return cols.filter(col => col.visible);
-  });
-
-  displayedRows = computed(() => {
-    let rows = this.sortedAndFilteredRows();
-    if (this.config.enablePagination) {
-      const pageSize = 10; // You can make this configurable
-      const startIndex = (this.currentPage() - 1) * pageSize;
-      rows = rows.slice(startIndex, startIndex + pageSize);
-    }
-    return rows;
-  });
-
-  private sortedAndFilteredRows = computed(() => {
-    let rows = this.rows();
-    if (this.config.enableSorting && this.sortColumn) {
-      rows = [...rows].sort((a, b) => {
-        const aValue = this.getSortValue(a, this.sortColumn!);
-        const bValue = this.getSortValue(b, this.sortColumn!);
-        return this.sortDirection === 'asc' ? this.compare(aValue, bValue) : this.compare(bValue, aValue);
-      });
-    }
-    // Add filtering logic here if needed
-    return rows;
-  });
-
-  constructor() {
-    if (this.config.enableSorting && this.config.defaultSortColumn) {
-      this.sortColumn = this.config.defaultSortColumn;
-      this.sortDirection = this.config.defaultSortDirection || 'asc';
-    }
-  }
-
-  isEditing = (rowIndex: number, key: string): boolean => {
-    return this.rowsFormArray().at(rowIndex).get(key)?.get('editing')?.value ?? false;
-  }
-
-  isRowClickable = (): boolean => {
-    return (Array.isArray(this.columns) ? this.columns : this.columns()).some(col => col.rowClickable);
-  }
-
-  onCellClick(rowName: string, key: string, event: Event): void {
-    event.stopPropagation();
-    const column = (Array.isArray(this.columns) ? this.columns : this.columns()).find(col => col.key === key);
-    if (column?.clickable) {
-      this.cellClick.emit({rowName, key});
-    } else {
-      const row = this.rows().find(r => r.fldName === rowName);
-      if (row?.editable && !row.readOnly) {
-        this.toggleEdit.emit({rowName, key});
-      }
-    }
-  }
-
-  onRowClick(rowName: string): void {
-    if (this.isRowClickable()) {
-      this.rowClick.emit(rowName);
-    }
-  }
-
-  sort(column: string): void {
-    if (this.sortColumn === column) {
-      this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      this.sortColumn = column;
-      this.sortDirection = 'asc';
-    }
-    this.sortChange.emit({column: this.sortColumn, direction: this.sortDirection});
-  }
-
-  private getSortValue(row: FieldItem, key: string): any {
-    const column = (Array.isArray(this.columns) ? this.columns : this.columns()).find(col => col.key === key);
-    const field = row.fields![key];
-    return column?.useComputedValue ? field.computedValue : field.value;
-  }
-
-  private compare(a: any, b: any): number {
-    if (a === b) return 0;
-    return a < b ? -1 : 1;
-  }
-}
-
-----------xxxx---------
-
 import { Component, computed, signal, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
 import { TableComponent } from './table.component';
 import { FormExtensionService } from './form-extension.service';
 import { TableColumn, FieldItem, TableConfig } from './table.types';
 import { ApiService } from './api.service';
-import { memoize } from './memoize.util'; // Assume we have a memoization utility
+import { memoize } from './memoize.util';
+
+interface ColumnConfig {
+  key: string;
+  header: string;
+  visible: boolean;
+  useComputedValue?: boolean;
+  conditionalKey?: (row: any) => string;
+  nestedKey?: string[];
+}
+
+interface TableMode {
+  isReadOnly: boolean;
+  editableColumns?: string[];
+}
 
 @Component({
   selector: 'app-complex-form',
@@ -245,6 +68,7 @@ import { memoize } from './memoize.util'; // Assume we have a memoization utilit
           [currentPage]="currentPage()"
           [totalPages]="totalPages()"
           [canAddRow]="canAddRow()"
+          [tableMode]="tableMode()"
           (toggleColumnVisibility)="toggleColumnVisibility($event)"
           (toggleEdit)="toggleEdit($event)"
           (editRow)="editRow($event)"
@@ -269,15 +93,22 @@ export class ComplexFormComponent implements OnInit {
 
   complexForm = signal<FormGroup | null>(null);
   
-  columns = signal<TableColumn[]>([
-    { key: 'name', header: 'Name', visible: true, clickable: true, rowClickable: true },
+  columns = signal<ColumnConfig[]>([
+    { key: 'name', header: 'Name', visible: true },
     { key: 'age', header: 'Age', visible: true, useComputedValue: true },
-    { key: 'email', header: 'Email', visible: true, clickable: true }
+    { 
+      key: 'email', 
+      header: 'Email', 
+      visible: true, 
+      conditionalKey: (row) => row.usaStatus === 'Y' ? 'emailInfo.emailType' : 'emailInfo.email',
+      nestedKey: ['emailInfo', 'email']
+    },
+    { key: 'usaStatus', header: 'USA Status', visible: true }
   ]);
 
   private rawRows = signal<FieldItem[]>([]);
   
-  memoizedRows = memoize(() => this.rawRows());
+  memoizedRows = memoize(() => this.generateRows(this.rawRows(), this.columns()));
 
   tableConfig: TableConfig = {
     enablePagination: true,
@@ -286,11 +117,13 @@ export class ComplexFormComponent implements OnInit {
     defaultSortDirection: 'asc'
   };
 
+  tableMode = signal<TableMode>({ isReadOnly: false });
+
   currentPage = signal(1);
   totalPages = computed(() => Math.ceil(this.rawRows().length / this.pageSize));
   canAddRow = computed(() => {
     const rows = this.rawRows();
-    return rows.length > 0 && rows.every(row => row.isValid);
+    return !this.tableMode().isReadOnly && rows.length > 0 && rows.every(row => row.isValid);
   });
 
   private pageSize = 10;
@@ -344,6 +177,29 @@ export class ComplexFormComponent implements OnInit {
     this.rawRows.set(uiView.find(item => item.fldName === 'rows')?.fields || []);
   }
 
+  private generateRows(rawRows: FieldItem[], columns: ColumnConfig[]): FieldItem[] {
+    return rawRows.map(row => {
+      const newRow: FieldItem = { ...row, fields: {} };
+      columns.forEach(column => {
+        let value;
+        if (column.conditionalKey) {
+          const key = column.conditionalKey(row);
+          value = this.getNestedValue(row, key.split('.'));
+        } else if (column.nestedKey) {
+          value = this.getNestedValue(row, column.nestedKey);
+        } else {
+          value = row.fields![column.key];
+        }
+        newRow.fields![column.key] = value;
+      });
+      return newRow;
+    });
+  }
+
+  private getNestedValue(obj: any, keys: string[]): any {
+    return keys.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
+  }
+
   get rowsArray(): FormArray | null {
     return this.complexForm()?.get('rows') as FormArray | null;
   }
@@ -355,6 +211,11 @@ export class ComplexFormComponent implements OnInit {
   }
 
   toggleEdit(event: {rowName: string, key: string}): void {
+    if (this.tableMode().isReadOnly || 
+        (this.tableMode().editableColumns && !this.tableMode().editableColumns.includes(event.key))) {
+      return;
+    }
+
     const rowsArray = this.rowsArray;
     if (!rowsArray) return;
 
@@ -372,11 +233,13 @@ export class ComplexFormComponent implements OnInit {
   }
 
   editRow(rowName: string): void {
+    if (this.tableMode().isReadOnly) return;
     console.log('Editing row', rowName);
     // Implement edit logic if needed
   }
 
   deleteRow(rowName: string): void {
+    if (this.tableMode().isReadOnly) return;
     const rowsArray = this.rowsArray;
     if (!rowsArray) return;
 
@@ -394,6 +257,7 @@ export class ComplexFormComponent implements OnInit {
   }
 
   addRow(): void {
+    if (this.tableMode().isReadOnly) return;
     const rowsArray = this.rowsArray;
     if (rowsArray && this.canAddRow()) {
       const newRow = this.createRow();
@@ -417,6 +281,10 @@ export class ComplexFormComponent implements OnInit {
     // Implement your sorting logic here if needed
   }
 
+  setTableMode(mode: TableMode): void {
+    this.tableMode.set(mode);
+  }
+
   private createRow(data?: any): FormGroup {
     const row = this.fb.group({
       name: this.fb.group({
@@ -427,10 +295,12 @@ export class ComplexFormComponent implements OnInit {
         value: [data?.age || '', [Validators.required, Validators.min(0)]],
         editing: [false]
       }),
-      email: this.fb.group({
-        value: [data?.email || '', [Validators.required, Validators.email]],
+      emailInfo: this.fb.group({
+        email: [data?.emailInfo?.email || '', [Validators.required, Validators.email]],
+        emailType: [data?.emailInfo?.emailType || ''],
         editing: [false]
       }),
+      usaStatus: [data?.usaStatus || 'N'],
       editable: [true],
       readOnly: [false]
     });
@@ -441,11 +311,11 @@ export class ComplexFormComponent implements OnInit {
       type: 'group'
     });
 
-    ['name', 'age', 'email'].forEach(key => {
+    ['name', 'age', 'emailInfo', 'usaStatus'].forEach(key => {
       this.formExtensionService.extendControl(row.get(key)!, {
         label: key.charAt(0).toUpperCase() + key.slice(1),
         fldName: key,
-        type: 'field'
+        type: key === 'emailInfo' ? 'group' : 'field'
       });
     });
 
@@ -455,5 +325,228 @@ export class ComplexFormComponent implements OnInit {
     }));
 
     return row;
+  }
+}
+
+-------x--------x-
+  this.setTableMode({ isReadOnly: true }); // For full read-only mode
+this.setTableMode({ isReadOnly: false, editableColumns: ['name', 'age'] }); // For partial edit mode
+
+
+---------------x-----------x
+
+{
+  key: 'email',
+  header: 'Email',
+  visible: true,
+  conditionalKey: (row) => row.usaStatus === 'Y' ? 'emailInfo.emailType' : 'emailInfo.email',
+  nestedKey: ['emailInfo', 'email']
+}
+
+-------x-----
+  // table.component.ts
+import { Component, Input, Output, EventEmitter, ChangeDetectionStrategy, computed, Signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormGroup, ReactiveFormsModule, FormArray } from '@angular/forms';
+import { TableColumn, FieldItem, TableConfig, TableMode } from './table.types';
+import { memoize } from './memoize.util';
+
+@Component({
+  selector: 'app-table',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <table>
+      <thead>
+        <tr>
+          @for (column of visibleColumns(); track column.key) {
+            <th (click)="config.enableSorting ? sort(column.key) : null">
+              {{ column.header }}
+              <button (click)="toggleColumnVisibility.emit(column.key); $event.stopPropagation()">
+                {{ column.visible ? 'Hide' : 'Show' }}
+              </button>
+              @if (config.enableSorting && sortColumn() === column.key) {
+                <span>{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+              }
+            </th>
+          }
+          @if (!tableMode.isReadOnly) {
+            <th>Actions</th>
+          }
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of displayedRows(); track row.fldName) {
+          <tr [class.clickable]="isRowClickable()"
+              (click)="onRowClick(row.fldName)">
+            @for (column of visibleColumns(); track column.key) {
+              <td>
+                @if (column.cellTemplate) {
+                  <ng-container *ngTemplateOutlet="column.cellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column }"></ng-container>
+                } @else {
+                  <ng-container *ngTemplateOutlet="defaultCellTemplate; context: { $implicit: row.fields![column.key], row: row, column: column }"></ng-container>
+                }
+              </td>
+            }
+            @if (!tableMode.isReadOnly) {
+              <td>
+                @if (row.editable && !row.readOnly) {
+                  <button (click)="editRow.emit(row.fldName)">Edit</button>
+                }
+                @if (!row.readOnly) {
+                  <button (click)="deleteRow.emit(row.fldName)">Delete</button>
+                }
+              </td>
+            }
+          </tr>
+        }
+      </tbody>
+    </table>
+    @if (config.enablePagination) {
+      <div class="pagination">
+        <button (click)="pageChange.emit(currentPage - 1)" [disabled]="currentPage === 1">Previous</button>
+        <span>Page {{ currentPage }} of {{ totalPages }}</span>
+        <button (click)="pageChange.emit(currentPage + 1)" [disabled]="currentPage === totalPages">Next</button>
+      </div>
+    }
+    @if (!tableMode.isReadOnly) {
+      <button (click)="addRow.emit()" [disabled]="!canAddRow">Add Row</button>
+    }
+
+    <ng-template #defaultCellTemplate let-field let-row="row" let-column="column">
+      @if (isEditing(row.fldName, column.key) && isEditable(column.key) && row.editable && !row.readOnly) {
+        <input [formControl]="getFormControl(row.fldName, column.key)"
+               (blur)="toggleEdit.emit({rowName: row.fldName, key: column.key})"
+               (click)="$event.stopPropagation()">
+      } @else {
+        <span 
+          (click)="onCellClick(row.fldName, column.key, $event)"
+          [class.clickable]="column.clickable"
+        >
+          {{ column.useComputedValue ? field.computedValue : field.value }}
+        </span>
+      }
+    </ng-template>
+  `,
+  styles: [`
+    .clickable { cursor: pointer; }
+  `]
+})
+export class TableComponent {
+  @Input({ required: true }) tableForm!: FormGroup;
+  @Input() columns!: TableColumn[];
+  @Input({ required: true }) rows!: FieldItem[];
+  @Input() config: TableConfig = {};
+  @Input() currentPage!: number;
+  @Input() totalPages!: number;
+  @Input({ required: true }) canAddRow!: boolean;
+  @Input() tableMode: TableMode = { isReadOnly: false };
+  @Output() toggleColumnVisibility = new EventEmitter<string>();
+  @Output() toggleEdit = new EventEmitter<{rowName: string, key: string}>();
+  @Output() editRow = new EventEmitter<string>();
+  @Output() deleteRow = new EventEmitter<string>();
+  @Output() pageChange = new EventEmitter<number>();
+  @Output() addRow = new EventEmitter<void>();
+  @Output() cellClick = new EventEmitter<{rowName: string, key: string}>();
+  @Output() rowClick = new EventEmitter<string>();
+  @Output() sortChange = new EventEmitter<{column: string, direction: 'asc' | 'desc'}>();
+
+  private sortColumnSignal = signal<string | null>(null);
+  private sortDirectionSignal = signal<'asc' | 'desc'>('asc');
+
+  sortColumn = this.sortColumnSignal.asReadonly();
+  sortDirection = this.sortDirectionSignal.asReadonly();
+
+  visibleColumns = computed(() => this.columns.filter(col => col.visible));
+
+  private memoizedSortFunction = memoize((a: FieldItem, b: FieldItem, column: string, direction: 'asc' | 'desc') => {
+    const aValue = this.getSortValue(a, column);
+    const bValue = this.getSortValue(b, column);
+    return direction === 'asc' ? this.compare(aValue, bValue) : this.compare(bValue, aValue);
+  });
+
+  displayedRows = computed(() => {
+    let rows = this.rows;
+    if (this.config.enableSorting && this.sortColumn()) {
+      rows = [...rows].sort((a, b) => 
+        this.memoizedSortFunction(a, b, this.sortColumn()!, this.sortDirection())
+      );
+    }
+    if (this.config.enablePagination) {
+      const pageSize = 10; // You can make this configurable
+      const startIndex = (this.currentPage - 1) * pageSize;
+      rows = rows.slice(startIndex, startIndex + pageSize);
+    }
+    return rows;
+  });
+
+  rowsFormArray = computed(() => this.tableForm.get('rows') as FormArray);
+
+  constructor() {
+    if (this.config.enableSorting && this.config.defaultSortColumn) {
+      this.sortColumnSignal.set(this.config.defaultSortColumn);
+      this.sortDirectionSignal.set(this.config.defaultSortDirection || 'asc');
+    }
+  }
+
+  isEditing = memoize((rowName: string, key: string): boolean => {
+    const rowIndex = this.rows.findIndex(row => row.fldName === rowName);
+    return this.rowsFormArray().at(rowIndex).get(key)?.get('editing')?.value ?? false;
+  });
+
+  isEditable(columnKey: string): boolean {
+    if (this.tableMode.isReadOnly) return false;
+    if (!this.tableMode.editableColumns) return true;
+    return this.tableMode.editableColumns.includes(columnKey);
+  }
+
+  isRowClickable = (): boolean => {
+    return this.columns.some(col => col.rowClickable);
+  }
+
+  getFormControl = memoize((rowName: string, key: string) => {
+    const rowIndex = this.rows.findIndex(row => row.fldName === rowName);
+    return this.rowsFormArray().at(rowIndex).get(key);
+  });
+
+  onCellClick(rowName: string, key: string, event: Event): void {
+    event.stopPropagation();
+    const column = this.columns.find(col => col.key === key);
+    if (column?.clickable) {
+      this.cellClick.emit({rowName, key});
+    } else if (this.isEditable(key)) {
+      const row = this.rows.find(r => r.fldName === rowName);
+      if (row?.editable && !row.readOnly) {
+        this.toggleEdit.emit({rowName, key});
+      }
+    }
+  }
+
+  onRowClick(rowName: string): void {
+    if (this.isRowClickable()) {
+      this.rowClick.emit(rowName);
+    }
+  }
+
+  sort(column: string): void {
+    if (this.sortColumn() === column) {
+      this.sortDirectionSignal.update(dir => dir === 'asc' ? 'desc' : 'asc');
+    } else {
+      this.sortColumnSignal.set(column);
+      this.sortDirectionSignal.set('asc');
+    }
+    this.sortChange.emit({column: this.sortColumn()!, direction: this.sortDirection()});
+  }
+
+  private getSortValue(row: FieldItem, key: string): any {
+    const column = this.columns.find(col => col.key === key);
+    const field = row.fields![key];
+    return column?.useComputedValue ? field.computedValue : field.value;
+  }
+
+  private compare(a: any, b: any): number {
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
   }
 }
