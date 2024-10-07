@@ -222,46 +222,52 @@ export class TableComponent {
 
 ----------xxxx---------
 
-// complex-form.component.ts
-import { Component, computed, signal, inject } from '@angular/core';
+import { Component, computed, signal, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
 import { TableComponent } from './table.component';
 import { FormExtensionService } from './form-extension.service';
 import { TableColumn, FieldItem, TableConfig } from './table.types';
+import { ApiService } from './api.service';
+import { memoize } from './memoize.util'; // Assume we have a memoization utility
 
 @Component({
   selector: 'app-complex-form',
   standalone: true,
   imports: [TableComponent],
   template: `
-    <form [formGroup]="complexForm()">
-      <app-table
-        [tableForm]="tableForm"
-        [columns]="columns"
-        [rows]="rows"
-        [config]="tableConfig"
-        [currentPage]="currentPage"
-        [totalPages]="totalPages"
-        [canAddRow]="canAddRow"
-        (toggleColumnVisibility)="toggleColumnVisibility($event)"
-        (toggleEdit)="toggleEdit($event)"
-        (editRow)="editRow($event)"
-        (deleteRow)="deleteRow($event)"
-        (pageChange)="onPageChange($event)"
-        (addRow)="addRow()"
-        (cellClick)="onCellClick($event)"
-        (rowClick)="onRowClick($event)"
-        (sortChange)="onSortChange($event)">
-      </app-table>
-    </form>
-  `
+    @if (complexForm(); as form) {
+      <form [formGroup]="form">
+        <app-table
+          [tableForm]="form"
+          [columns]="columns()"
+          [rows]="memoizedRows()"
+          [config]="tableConfig"
+          [currentPage]="currentPage()"
+          [totalPages]="totalPages()"
+          [canAddRow]="canAddRow()"
+          (toggleColumnVisibility)="toggleColumnVisibility($event)"
+          (toggleEdit)="toggleEdit($event)"
+          (editRow)="editRow($event)"
+          (deleteRow)="deleteRow($event)"
+          (pageChange)="onPageChange($event)"
+          (addRow)="addRow()"
+          (cellClick)="onCellClick($event)"
+          (rowClick)="onRowClick($event)"
+          (sortChange)="onSortChange($event)">
+        </app-table>
+      </form>
+    } @else {
+      <app-skeleton-loader></app-skeleton-loader>
+    }
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class ComplexFormComponent {
+export class ComplexFormComponent implements OnInit {
   private fb = inject(FormBuilder);
   private formExtensionService = inject(FormExtensionService);
+  private apiService = inject(ApiService);
 
-  complexForm = signal<FormGroup>(this.initForm());
-  tableForm = computed(() => this.complexForm().get('tableData') as FormGroup);
+  complexForm = signal<FormGroup | null>(null);
   
   columns = signal<TableColumn[]>([
     { key: 'name', header: 'Name', visible: true, clickable: true, rowClickable: true },
@@ -269,10 +275,9 @@ export class ComplexFormComponent {
     { key: 'email', header: 'Email', visible: true, clickable: true }
   ]);
 
-  rows = computed(() => {
-    const uiView = this.formExtensionService.getUIReadView(this.tableForm());
-    return uiView.find(item => item.fldName === 'rows')?.fields || [];
-  });
+  private rawRows = signal<FieldItem[]>([]);
+  
+  memoizedRows = memoize(() => this.rawRows());
 
   tableConfig: TableConfig = {
     enablePagination: true,
@@ -282,35 +287,65 @@ export class ComplexFormComponent {
   };
 
   currentPage = signal(1);
-  totalPages = computed(() => Math.ceil(this.rows().length / this.pageSize));
-  canAddRow = computed(() => this.rows().every(row => row.isValid));
+  totalPages = computed(() => Math.ceil(this.rawRows().length / this.pageSize));
+  canAddRow = computed(() => {
+    const rows = this.rawRows();
+    return rows.length > 0 && rows.every(row => row.isValid);
+  });
 
   private pageSize = 10;
 
-  private initForm(): FormGroup {
+  ngOnInit() {
+    this.loadFormData();
+  }
+
+  private async loadFormData() {
+    try {
+      const data = await this.apiService.getFormData().toPromise();
+      this.initForm(data);
+    } catch (error) {
+      console.error('Error loading form data:', error);
+      // Handle error (e.g., show error message to user)
+    }
+  }
+
+  private initForm(data: any): void {
     const form = this.fb.group({
-      tableData: this.fb.group({
-        rows: this.fb.array([])
-      })
+      rows: this.fb.array([])
     });
     
-    this.formExtensionService.extendControl(form.get('tableData')!, {
+    this.formExtensionService.extendControl(form, {
       label: 'Table Data',
       fldName: 'tableData',
       type: 'group'
     });
 
-    this.formExtensionService.extendControl(form.get('tableData.rows')!, {
+    this.formExtensionService.extendControl(form.get('rows')!, {
       label: 'Rows',
       fldName: 'rows',
       type: 'array'
     });
 
-    return form;
+    if (data && data.rows) {
+      data.rows.forEach((rowData: any) => {
+        const row = this.createRow(rowData);
+        (form.get('rows') as FormArray).push(row);
+      });
+    }
+
+    this.complexForm.set(form);
+    this.updateRawRows();
   }
 
-  get rowsArray(): FormArray {
-    return this.tableForm().get('rows') as FormArray;
+  private updateRawRows() {
+    const form = this.complexForm();
+    if (!form) return;
+    const uiView = this.formExtensionService.getUIReadView(form);
+    this.rawRows.set(uiView.find(item => item.fldName === 'rows')?.fields || []);
+  }
+
+  get rowsArray(): FormArray | null {
+    return this.complexForm()?.get('rows') as FormArray | null;
   }
 
   toggleColumnVisibility(columnKey: string): void {
@@ -320,11 +355,19 @@ export class ComplexFormComponent {
   }
 
   toggleEdit(event: {rowName: string, key: string}): void {
-    const rowIndex = this.rows().findIndex(row => row.fldName === event.rowName);
-    const row = this.rowsArray.at(rowIndex) as FormGroup;
+    const rowsArray = this.rowsArray;
+    if (!rowsArray) return;
+
+    const rowIndex = this.rawRows().findIndex(row => row.fldName === event.rowName);
+    if (rowIndex === -1) return;
+
+    const row = rowsArray.at(rowIndex) as FormGroup;
     if (row.get('editable')?.value && !row.get('readOnly')?.value) {
-      const field = row.get(key) as FormGroup;
-      field.patchValue({ editing: !field.get('editing')?.value });
+      const field = row.get(event.key) as FormGroup;
+      if (field) {
+        field.patchValue({ editing: !field.get('editing')?.value });
+        this.updateRawRows();
+      }
     }
   }
 
@@ -334,8 +377,14 @@ export class ComplexFormComponent {
   }
 
   deleteRow(rowName: string): void {
-    const rowIndex = this.rows().findIndex(row => row.fldName === rowName);
-    this.rowsArray.removeAt(rowIndex);
+    const rowsArray = this.rowsArray;
+    if (!rowsArray) return;
+
+    const rowIndex = this.rawRows().findIndex(row => row.fldName === rowName);
+    if (rowIndex !== -1) {
+      rowsArray.removeAt(rowIndex);
+      this.updateRawRows();
+    }
   }
 
   onPageChange(page: number): void {
@@ -345,9 +394,11 @@ export class ComplexFormComponent {
   }
 
   addRow(): void {
-    if (this.canAddRow()) {
+    const rowsArray = this.rowsArray;
+    if (rowsArray && this.canAddRow()) {
       const newRow = this.createRow();
-      this.rowsArray.push(newRow);
+      rowsArray.push(newRow);
+      this.updateRawRows();
     }
   }
 
@@ -366,18 +417,18 @@ export class ComplexFormComponent {
     // Implement your sorting logic here if needed
   }
 
-  private createRow(): FormGroup {
+  private createRow(data?: any): FormGroup {
     const row = this.fb.group({
       name: this.fb.group({
-        value: ['', Validators.required],
+        value: [data?.name || '', Validators.required],
         editing: [false]
       }),
       age: this.fb.group({
-        value: ['', [Validators.required, Validators.min(0)]],
+        value: [data?.age || '', [Validators.required, Validators.min(0)]],
         editing: [false]
       }),
       email: this.fb.group({
-        value: ['', [Validators.required, Validators.email]],
+        value: [data?.email || '', [Validators.required, Validators.email]],
         editing: [false]
       }),
       editable: [true],
@@ -385,8 +436,8 @@ export class ComplexFormComponent {
     });
 
     this.formExtensionService.extendControl(row, {
-      label: `Row ${this.rowsArray.length + 1}`,
-      fldName: `row${this.rowsArray.length + 1}`,
+      label: `Row ${this.rowsArray?.length ?? 0 + 1}`,
+      fldName: `row${this.rowsArray?.length ?? 0 + 1}`,
       type: 'group'
     });
 
@@ -398,11 +449,10 @@ export class ComplexFormComponent {
       });
     });
 
-    // Example of adding a computed value for the 'age' field
-    this.formExtensionService.registerCustomComputation(row.get('age')!, (control) => {
+    this.formExtensionService.registerCustomComputation(row.get('age')!, memoize((control) => {
       const age = control.get('value')?.value;
       return age ? `${age} years old` : '';
-    });
+    }));
 
     return row;
   }
