@@ -18,19 +18,17 @@ function filterObjects<T extends Record<string, any>>(
         if ('OR' in cond) {
             return cond.OR.some(c => evaluateConditions(item, c));
         }
-        return Object.entries(cond).every(([key, value]) => {
-            const itemValue = getNestedValue(item, key);
-            return compareValues(itemValue, value);
-        });
+        const nestedValue = getNestedValue(item);
+        if (Array.isArray(nestedValue)) {
+            return nestedValue.some(obj => 
+                Object.entries(cond).every(([key, value]) => compareValues(obj[key], value))
+            );
+        }
+        return Object.entries(cond).every(([key, value]) => compareValues(nestedValue[key], value));
     }
 
-    function getNestedValue(obj: any, key: string): any {
-        let current = obj;
-        for (const part of pathParts) {
-            if (current[part] === undefined) return undefined;
-            current = current[part];
-        }
-        return current[key] !== undefined ? current[key] : current;
+    function getNestedValue(obj: any): any {
+        return pathParts.reduce((current, part) => current && current[part], obj);
     }
 
     function compareValues(a: any, b: any): boolean {
@@ -38,10 +36,7 @@ function filterObjects<T extends Record<string, any>>(
             return b(a);
         }
         if (Array.isArray(a)) {
-            return a.some(item => compareValues(item, b));
-        }
-        if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
-            return Object.entries(b).every(([k, v]) => compareValues(a[k], v));
+            return a.includes(b);
         }
         return a === b;
     }
