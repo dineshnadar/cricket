@@ -6,11 +6,18 @@ type Condition = {
 
 type FilterConditions = Condition | { AND: FilterConditions[] } | { OR: FilterConditions[] };
 
+interface FilterResult<T> {
+    data: T[];
+    totalCount: number;
+    matched: boolean;
+    message: string;
+}
+
 export function filterObjects<T>(
     data: T[],
     conditions: FilterConditions,
     nestedPath: string = ''
-): T[] {
+): FilterResult<T> {
     function evaluateConditions(item: T, cond: FilterConditions): boolean {
         if (Array.isArray(cond)) {
             return cond.every(c => evaluateConditions(item, c));
@@ -37,7 +44,16 @@ export function filterObjects<T>(
         }, obj);
     }
 
-    return data.filter(item => evaluateConditions(item, conditions));
+    const filteredData = data.filter(item => evaluateConditions(item, conditions));
+
+    return {
+        data: filteredData,
+        totalCount: filteredData.length,
+        matched: filteredData.length > 0,
+        message: filteredData.length > 0 
+            ? `Found ${filteredData.length} matching item(s).`
+            : "No items match the given conditions."
+    };
 }
 
 // Usage Examples
@@ -50,11 +66,11 @@ const flatData = [
     { id: 4, name: 'Alice', age: 35, city: 'New York' }
 ];
 
-console.log("1. Flat data - Filter by age:");
+console.log("1. Flat data - Filter by age (match):");
 console.log(filterObjects(flatData, { age: 30 }));
 
-console.log("\n2. Flat data - Filter by age and city:");
-console.log(filterObjects(flatData, { AND: [{ age: 35 }, { city: 'New York' }] }));
+console.log("\n2. Flat data - Filter by non-existent age (no match):");
+console.log(filterObjects(flatData, { age: 50 }));
 
 // 2. Nested Object Filtering
 const nestedData = [
@@ -79,52 +95,16 @@ const nestedData = [
                 country: "Canada"
             }
         }
-    },
-    {
-        name: "Product C",
-        details: {
-            price: 200,
-            inStock: true,
-            manufacturer: {
-                name: "Company X",
-                country: "USA"
-            }
-        }
     }
 ];
 
-console.log("\n3. Nested data - Filter by price:");
+console.log("\n3. Nested data - Filter by price (match):");
 console.log(filterObjects(nestedData, { price: 150 }, "details"));
 
-console.log("\n4. Nested data - Filter by manufacturer country:");
-console.log(filterObjects(nestedData, { country: "USA" }, "details.manufacturer"));
+console.log("\n4. Nested data - Filter by non-existent country (no match):");
+console.log(filterObjects(nestedData, { country: "Germany" }, "details.manufacturer"));
 
-// 3. Array of Objects Filtering
-const arrayObjectData = [
-    {
-        name: "2323",
-        ind: [
-            { code: "mymaster", value: "Y" },
-            { code: "myowner", value: "N" },
-            { code: "myu", value: "Z" },
-            { code: "upc", value: "C" }
-        ]
-    },
-    {
-        name: "23D23",
-        ind: [
-            { code: "mymaster", value: "Y" },
-            { code: "myowner", value: "Y" },
-            { code: "myu", value: "X" },
-            { code: "upc", value: "D" }
-        ]
-    }
-];
-
-console.log("\n5. Array of objects - Filter by mymaster and myowner:");
-console.log(filterObjects(arrayObjectData, { AND: [{ mymaster: "Y" }, { myowner: "N" }] }, "ind"));
-
-// 4. Complex Conditions
+// 3. Complex Conditions
 const complexData = [
     { id: 1, name: 'John', age: 30, skills: ['JavaScript', 'Python'], active: true },
     { id: 2, name: 'Jane', age: 25, skills: ['Java', 'C++'], active: false },
@@ -132,7 +112,7 @@ const complexData = [
     { id: 4, name: 'Alice', age: 35, skills: ['JavaScript', 'TypeScript'], active: true }
 ];
 
-console.log("\n6. Complex conditions - Filter by age range, skills, and active status:");
+console.log("\n5. Complex conditions - Filter with matches:");
 console.log(filterObjects(complexData, {
     AND: [
         { OR: [{ age: 30 }, { age: 35 }] },
@@ -141,46 +121,11 @@ console.log(filterObjects(complexData, {
     ]
 }));
 
-// 5. Deeply Nested Structures
-const deeplyNestedData = [
-    {
-        id: 1,
-        info: {
-            personal: {
-                name: 'John',
-                age: 30
-            },
-            professional: {
-                skills: ['JavaScript', 'Python'],
-                experience: [
-                    { company: 'TechCorp', years: 5 },
-                    { company: 'WebSolutions', years: 3 }
-                ]
-            }
-        }
-    },
-    {
-        id: 2,
-        info: {
-            personal: {
-                name: 'Jane',
-                age: 28
-            },
-            professional: {
-                skills: ['Java', 'C++'],
-                experience: [
-                    { company: 'DataSystems', years: 4 },
-                    { company: 'TechCorp', years: 2 }
-                ]
-            }
-        }
-    }
-];
-
-console.log("\n7. Deeply nested - Filter by age and company experience:");
-console.log(filterObjects(deeplyNestedData, {
+console.log("\n6. Complex conditions - Filter with no matches:");
+console.log(filterObjects(complexData, {
     AND: [
-        { age: 30 },
-        (item: any) => item.info.professional.experience.some((exp: any) => exp.company === 'TechCorp')
+        { age: 50 },
+        (item: any) => item.skills.includes('Java'),
+        { active: false }
     ]
-}, "info.personal"));
+}));
