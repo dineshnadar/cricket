@@ -6,120 +6,181 @@ type Condition = {
 
 type FilterConditions = Condition | { AND: FilterConditions[] } | { OR: FilterConditions[] };
 
-export function filterObjects<T>(data: T[], conditions: FilterConditions): T[] {
-    return data.filter(item => {
-        const evaluate = (item: T, cond: FilterConditions): boolean => {
-            if (Array.isArray(cond)) {
-                return cond.every(c => evaluate(item, c));
+export function filterObjects<T>(
+    data: T[],
+    conditions: FilterConditions,
+    nestedPath: string = ''
+): T[] {
+    function evaluateConditions(item: T, cond: FilterConditions): boolean {
+        if (Array.isArray(cond)) {
+            return cond.every(c => evaluateConditions(item, c));
+        }
+        if ('OR' in cond) {
+            return cond.OR.some(c => evaluateConditions(item, c));
+        }
+        if ('AND' in cond) {
+            return cond.AND.every(c => evaluateConditions(item, c));
+        }
+        return Object.entries(cond).every(([key, value]) => {
+            const itemValue = getNestedValue(item, nestedPath, key);
+            return itemValue === value;
+        });
+    }
+
+    function getNestedValue(obj: any, path: string, key: string): any {
+        const fullPath = path ? `${path}.${key}` : key;
+        return fullPath.split('.').reduce((current, part) => {
+            if (Array.isArray(current)) {
+                return current.find(item => item.code === part)?.value;
             }
-            if ('OR' in cond) {
-                return cond.OR.some(c => evaluate(item, c));
-            }
-            if ('AND' in cond) {
-                return cond.AND.every(c => evaluate(item, c));
-            }
-            return Object.entries(cond).every(([key, value]) => {
-                if (typeof item === 'object' && item !== null) {
-                    return (item as any)[key] === value;
-                }
-                return false;
-            });
-        };
-        
-        return evaluate(item, conditions);
-    });
+            return current && current[part] !== undefined ? current[part] : undefined;
+        }, obj);
+    }
+
+    return data.filter(item => evaluateConditions(item, conditions));
 }
 
-// filter.component.ts
+// Usage Examples
 
-import { Component } from '@angular/core';
-import { filterObjects } from './filter-utils';
+// 1. Flat Object Filtering
+const flatData = [
+    { id: 1, name: 'John', age: 30, city: 'New York' },
+    { id: 2, name: 'Jane', age: 25, city: 'Los Angeles' },
+    { id: 3, name: 'Bob', age: 40, city: 'Chicago' },
+    { id: 4, name: 'Alice', age: 35, city: 'New York' }
+];
 
-interface Product {
-    id: string;
-    name: string;
-    category: string;
-    price: number;
-    inStock: boolean;
-}
+console.log("1. Flat data - Filter by age:");
+console.log(filterObjects(flatData, { age: 30 }));
 
-@Component({
-    selector: 'app-filter',
-    template: `
-        <h2>Product Filter</h2>
-        <button (click)="applyFilter('inStock')">Show In Stock</button>
-        <button (click)="applyFilter('category')">Show Electronics</button>
-        <button (click)="applyFilter('price')">Show Price < 500</button>
-        <button (click)="applyFilter('complex')">Complex Filter</button>
-        <button (click)="resetFilter()">Reset</button>
-        
-        <div *ngIf="filteredProducts.length > 0">
-            <h3>Filtered Products ({{ filteredProducts.length }})</h3>
-            <ul>
-                <li *ngFor="let product of filteredProducts">
-                    {{ product.name }} - ${{ product.price }} 
-                    ({{ product.category }}, {{ product.inStock ? 'In Stock' : 'Out of Stock' }})
-                </li>
-            </ul>
-        </div>
-        <div *ngIf="filteredProducts.length === 0">
-            <p>No products match the current filter.</p>
-        </div>
-    `
-})
-export class FilterComponent {
-    private products: Product[] = [
-        { id: '1', name: 'Laptop', category: 'Electronics', price: 999, inStock: true },
-        { id: '2', name: 'Smartphone', category: 'Electronics', price: 699, inStock: true },
-        { id: '3', name: 'Headphones', category: 'Electronics', price: 199, inStock: false },
-        { id: '4', name: 'Book', category: 'Books', price: 15, inStock: true },
-        { id: '5', name: 'Desk Chair', category: 'Furniture', price: 250, inStock: true },
-        { id: '6', name: 'Coffee Maker', category: 'Appliances', price: 89, inStock: false },
-        { id: '7', name: 'Gaming Console', category: 'Electronics', price: 499, inStock: true },
-        { id: '8', name: 'Tablet', category: 'Electronics', price: 349, inStock: false },
-    ];
+console.log("\n2. Flat data - Filter by age and city:");
+console.log(filterObjects(flatData, { AND: [{ age: 35 }, { city: 'New York' }] }));
 
-    filteredProducts: Product[] = [...this.products];
-
-    applyFilter(filterType: string): void {
-        switch (filterType) {
-            case 'inStock':
-                this.filteredProducts = filterObjects(this.products, { inStock: true });
-                break;
-            case 'category':
-                this.filteredProducts = filterObjects(this.products, { category: 'Electronics' });
-                break;
-            case 'price':
-                this.filteredProducts = filterObjects(this.products, (item: Product) => item.price < 500);
-                break;
-            case 'complex':
-                this.filteredProducts = filterObjects(this.products, {
-                    AND: [
-                        { category: 'Electronics' },
-                        { inStock: true },
-                        (item: Product) => item.price >= 300
-                    ]
-                });
-                break;
-            default:
-                this.resetFilter();
+// 2. Nested Object Filtering
+const nestedData = [
+    {
+        name: "Product A",
+        details: {
+            price: 100,
+            inStock: true,
+            manufacturer: {
+                name: "Company X",
+                country: "USA"
+            }
+        }
+    },
+    {
+        name: "Product B",
+        details: {
+            price: 150,
+            inStock: false,
+            manufacturer: {
+                name: "Company Y",
+                country: "Canada"
+            }
+        }
+    },
+    {
+        name: "Product C",
+        details: {
+            price: 200,
+            inStock: true,
+            manufacturer: {
+                name: "Company X",
+                country: "USA"
+            }
         }
     }
+];
 
-    resetFilter(): void {
-        this.filteredProducts = [...this.products];
+console.log("\n3. Nested data - Filter by price:");
+console.log(filterObjects(nestedData, { price: 150 }, "details"));
+
+console.log("\n4. Nested data - Filter by manufacturer country:");
+console.log(filterObjects(nestedData, { country: "USA" }, "details.manufacturer"));
+
+// 3. Array of Objects Filtering
+const arrayObjectData = [
+    {
+        name: "2323",
+        ind: [
+            { code: "mymaster", value: "Y" },
+            { code: "myowner", value: "N" },
+            { code: "myu", value: "Z" },
+            { code: "upc", value: "C" }
+        ]
+    },
+    {
+        name: "23D23",
+        ind: [
+            { code: "mymaster", value: "Y" },
+            { code: "myowner", value: "Y" },
+            { code: "myu", value: "X" },
+            { code: "upc", value: "D" }
+        ]
     }
-}
+];
 
-// app.module.ts
+console.log("\n5. Array of objects - Filter by mymaster and myowner:");
+console.log(filterObjects(arrayObjectData, { AND: [{ mymaster: "Y" }, { myowner: "N" }] }, "ind"));
 
-import { NgModule } from '@angular/core';
-import { BrowserModule } from '@angular/platform-browser';
-import { FilterComponent } from './filter.component';
+// 4. Complex Conditions
+const complexData = [
+    { id: 1, name: 'John', age: 30, skills: ['JavaScript', 'Python'], active: true },
+    { id: 2, name: 'Jane', age: 25, skills: ['Java', 'C++'], active: false },
+    { id: 3, name: 'Bob', age: 40, skills: ['Python', 'Ruby'], active: true },
+    { id: 4, name: 'Alice', age: 35, skills: ['JavaScript', 'TypeScript'], active: true }
+];
 
-@NgModule({
-    declarations: [FilterComponent],
-    imports: [BrowserModule],
-    bootstrap: [FilterComponent]
-})
-export class AppModule { }
+console.log("\n6. Complex conditions - Filter by age range, skills, and active status:");
+console.log(filterObjects(complexData, {
+    AND: [
+        { OR: [{ age: 30 }, { age: 35 }] },
+        (item: any) => item.skills.includes('JavaScript'),
+        { active: true }
+    ]
+}));
+
+// 5. Deeply Nested Structures
+const deeplyNestedData = [
+    {
+        id: 1,
+        info: {
+            personal: {
+                name: 'John',
+                age: 30
+            },
+            professional: {
+                skills: ['JavaScript', 'Python'],
+                experience: [
+                    { company: 'TechCorp', years: 5 },
+                    { company: 'WebSolutions', years: 3 }
+                ]
+            }
+        }
+    },
+    {
+        id: 2,
+        info: {
+            personal: {
+                name: 'Jane',
+                age: 28
+            },
+            professional: {
+                skills: ['Java', 'C++'],
+                experience: [
+                    { company: 'DataSystems', years: 4 },
+                    { company: 'TechCorp', years: 2 }
+                ]
+            }
+        }
+    }
+];
+
+console.log("\n7. Deeply nested - Filter by age and company experience:");
+console.log(filterObjects(deeplyNestedData, {
+    AND: [
+        { age: 30 },
+        (item: any) => item.info.professional.experience.some((exp: any) => exp.company === 'TechCorp')
+    ]
+}, "info.personal"));
