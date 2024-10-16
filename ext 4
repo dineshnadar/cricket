@@ -72,6 +72,286 @@ export const sharedConfigs: Record<string, SharedConfig> = {
   }
 };
 
+---------------------xxxxx-----------------
+
+// libs/party-builder/src/lib/context-config.service.ts
+
+import { Injectable } from '@angular/core';
+import { ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig } from './context-config';
+import { contextConfigs, sharedConfigs } from '../../../apps/your-app/src/app/party-builder-config';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ContextConfigService {
+  private currentContext: string = '';
+  private currentUseCase: string = '';
+
+  setContext(context: string, useCase: string) {
+    this.currentContext = context;
+    this.currentUseCase = useCase;
+  }
+
+  getCurrentContext() {
+    return { context: this.currentContext, useCase: this.currentUseCase };
+  }
+
+  private getUseCaseConfig(context: string, useCase: string): UseCaseConfig | null {
+    return contextConfigs[context]?.useCases[useCase] || null;
+  }
+
+  getButtons(context?: string, useCase?: string): ButtonConfig[] {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.buttons || [];
+  }
+
+  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
+    const buttons = this.getButtons(context, useCase);
+    return buttons.reduce((acc, button) => {
+      (acc[button.location] = acc[button.location] || []).push(button);
+      return acc;
+    }, {} as Record<string, ButtonConfig[]>);
+  }
+
+  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.apiCalls[apiCallId];
+  }
+
+  getInitialApiCalls(context?: string, useCase?: string): string[] {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.initialApiCalls || [];
+  }
+
+  getLookup(lookupName: string, context?: string): any[] {
+    const relevantContext = context || this.currentContext;
+    return contextConfigs[relevantContext]?.lookups?.[lookupName] || 
+           sharedConfigs.standardPartyBuilder?.lookups?.[lookupName] || 
+           [];
+  }
+
+  getMetadata(context?: string): Record<string, any> | undefined {
+    const relevantContext = context || this.currentContext;
+    return contextConfigs[relevantContext]?.metadata || 
+           sharedConfigs.standardPartyBuilder?.metadata;
+  }
+
+  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, additionalTransforms?: ((input: any) => any)[]): Promise<any> {
+    const apiCall = this.getApiCall(apiCallName, context, useCase);
+    if (!apiCall) {
+      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
+    }
+
+    let preparedData: any = {};
+    for (const inputConfig of apiCall.inputs) {
+      if (typeof inputConfig === 'string') {
+        if (input[inputConfig] !== undefined) {
+          preparedData[inputConfig] = input[inputConfig];
+        }
+      } else {
+        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
+        if (lookupValue !== undefined) {
+          preparedData[inputConfig.name] = lookupValue;
+        }
+      }
+    }
+
+    if (apiCall.lookups) {
+      for (const lookupName of apiCall.lookups) {
+        preparedData[lookupName] = this.getLookup(lookupName, context);
+      }
+    }
+
+    const metadata = this.getMetadata(context);
+    if (metadata) {
+      preparedData.metadata = metadata;
+    }
+
+    const transforms = [
+      apiCall.transformInput,
+      ...(additionalTransforms || [])
+    ].filter(Boolean);
+
+    for (const transform of transforms) {
+      preparedData = await transform(preparedData);
+    }
+
+    return preparedData;
+  }
+
+  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
+    const lookup = this.getLookup(lookupName, context);
+    const lookupItem = lookup.find(item => item[key] === value);
+    return lookupItem ? lookupItem.value : undefined;
+  }
+
+  getSharedUseCaseConfig(useCaseName: string): UseCaseConfig | null {
+    return sharedConfigs.standardPartyBuilder?.useCases[useCaseName] || null;
+  }
+
+  mergeWithSharedConfig(contextUseCase: string, sharedUseCase: string, context?: string): UseCaseConfig {
+    const contextConfig = this.getUseCaseConfig(context || this.currentContext, contextUseCase);
+    const sharedConfig = this.getSharedUseCaseConfig(sharedUseCase);
+
+    if (!contextConfig) {
+      throw new Error(`Context use case ${contextUseCase} not found`);
+    }
+
+    if (!sharedConfig) {
+      throw new Error(`Shared use case ${sharedUseCase} not found`);
+    }
+
+    return {
+      buttons: [...(contextConfig.buttons || []), ...(sharedConfig.buttons || [])],
+      apiCalls: { ...sharedConfig.apiCalls, ...contextConfig.apiCalls },
+      initialApiCalls: [...(sharedConfig.initialApiCalls || []), ...(contextConfig.initialApiCalls || [])]
+    };
+  }
+
+  private getRelevantUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
+    if (context && useCase) {
+      return this.getUseCaseConfig(context, useCase);
+    }
+    return this.getUseCaseConfig(this.currentContext, this.currentUseCase);
+  }
+}
+
+---------------xxxxx------------
+
+// libs/party-builder/src/lib/context-config.ts
+
+export interface ButtonConfig {
+  id: string;
+  label: string;
+  action: string;
+  location: 'header' | 'footer' | 'form-top' | 'form-bottom' | 'sidebar';
+  visible: boolean;
+  disabled: boolean;
+  requireConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+export interface ApiCallConfig {
+  baseUrl: string;
+  endpoint: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  inputs: Array<string | { name: string; fromLookup: string; key: string }>;
+  lookups?: string[];
+  transformInput?: (input: any) => any;
+  dependsOn?: string[];
+}
+
+export interface UseCaseConfig {
+  buttons: ButtonConfig[];
+  apiCalls: Record<string, ApiCallConfig>;
+  initialApiCalls: string[];
+}
+
+export interface ContextConfig {
+  useCases: Record<string, UseCaseConfig>;
+  lookups?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+export interface SharedConfig {
+  useCases: Record<string, UseCaseConfig>;
+  lookups?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+// Remove the following lines as we no longer need injection tokens
+// export const CONTEXT_CONFIG = new InjectionToken<Record<string, ContextConfig>>('CONTEXT_CONFIG');
+// export const SHARED_CONFIG = new InjectionToken<Record<string, SharedConfig>>('SHARED_CONFIG');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+------------------xxxx----------------------xxxx-----------------------------xxxx---------
+// apps/your-app/src/app/party-builder-config.ts
+
+import { ContextConfig, SharedConfig, ButtonConfig, ApiCallConfig } from '@your-org/party-builder';
+
+// Common Buttons
+const commonButtons: Record<string, ButtonConfig> = {
+  save: { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
+  submit: { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
+  cancel: { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
+};
+
+// Common API Calls
+const commonApiCalls: Record<string, ApiCallConfig> = {
+  getPartyDetails: {
+    baseUrl: 'https://api.example.com',
+    endpoint: '/party',
+    method: 'GET',
+    inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
+  },
+  submitParty: {
+    baseUrl: 'https://api.example.com',
+    endpoint: '/submit',
+    method: 'POST',
+    inputs: ['partyData', 'metadata']
+  }
+};
+
+// Common Lookups
+const commonLookups = {
+  partyTypes: [
+    { value: 'individual', label: 'Individual' },
+    { value: 'corporate', label: 'Corporate' }
+  ]
+};
+
+export const contextConfigs: Record<string, ContextConfig> = {
+  partyBuilder: {
+    useCases: {
+      existingPartyWithoutAccounts: {
+        buttons: [commonButtons.save, commonButtons.submit, commonButtons.cancel],
+        apiCalls: {
+          getPartyDetails: commonApiCalls.getPartyDetails,
+          submitParty: commonApiCalls.submitParty
+        },
+        initialApiCalls: ['getPartyDetails']
+      }
+    },
+    lookups: commonLookups,
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
+    }
+  }
+};
+
+export const sharedConfigs: Record<string, SharedConfig> = {
+  standardPartyBuilder: {
+    useCases: {
+      basicPartyCreation: {
+        buttons: [commonButtons.save, commonButtons.cancel],
+        apiCalls: {
+          getPartyDetails: commonApiCalls.getPartyDetails
+        },
+        initialApiCalls: []
+      }
+    },
+    lookups: commonLookups,
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
+    }
+  }
+};
+
 ----------
 Library Structure (libs/party-builder/src/):
 
