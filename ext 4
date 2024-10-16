@@ -1,1683 +1,715 @@
 
-import { Injectable } from '@angular/core';
-import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
-import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
+Library Structure (libs/party-builder/src/):
+
+Copylib/
+├── button.component.ts
+├── context-config.service.ts
+├── party-builder.service.ts
+├── party-builder.component.ts
+├── context-config.ts
+index.ts
+
+libs/party-builder/src/lib/context-config.ts:
+
+typescriptCopyimport { InjectionToken } from '@angular/core';
+
+export interface ButtonConfig {
+  id: string;
+  label: string;
+  action: string;
+  location: 'header' | 'footer' | 'form-top' | 'form-bottom' | 'sidebar';
+  visible: boolean;
+  disabled: boolean;
+  requireConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+export interface ApiCallConfig {
+  baseUrl: string;
+  endpoint: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  inputs: Array<string | { name: string; fromLookup: string; key: string }>;
+  lookups?: string[];
+  transformInput?: (input: any) => any;
+  dependsOn?: string[];
+}
+
+export interface UseCaseConfig {
+  buttons: ButtonConfig[];
+  apiCalls: Record<string, ApiCallConfig>;
+  initialApiCalls: string[];
+}
+
+export interface ContextConfig {
+  useCases: Record<string, UseCaseConfig>;
+  lookups?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+export interface SharedConfig {
+  useCases: Record<string, UseCaseConfig>;
+  lookups?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+export const CONTEXT_CONFIG = new InjectionToken<Record<string, ContextConfig>>('CONTEXT_CONFIG');
+export const SHARED_CONFIG = new InjectionToken<Record<string, SharedConfig>>('SHARED_CONFIG');
+
+libs/party-builder/src/lib/context-config.service.ts:
+
+typescriptCopyimport { Injectable, Inject } from '@angular/core';
+import { CONTEXT_CONFIG, SHARED_CONFIG, ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig } from './context-config';
 
 @Injectable({
   providedIn: 'root'
 })
-export class FormExtensionHelpers {
-  // ... (previous code remains the same)
+export class ContextConfigService {
+  private currentContext: string = '';
+  private currentUseCase: string = '';
 
-  private generateFieldsFromControl(formGroup: FormGroup, layoutFields: LayoutField[]): FieldItem[] {
-    return layoutFields.flatMap(layoutField => {
-      const control = formGroup.get(layoutField.fldName);
-      if (!control) return [];
+  constructor(
+    @Inject(CONTEXT_CONFIG) private contextConfigs: Record<string, ContextConfig>,
+    @Inject(SHARED_CONFIG) private sharedConfigs: Record<string, SharedConfig>
+  ) {}
 
-      if (control instanceof FormGroup) {
-        const groupItem = this.createFieldItem(layoutField, formGroup) as FieldItem;
-        if (groupItem) {
-          groupItem.fields = this.generateFieldsFromControl(control, layoutField.fields || []);
+  setContext(context: string, useCase: string) {
+    this.currentContext = context;
+    this.currentUseCase = useCase;
+  }
+
+  getCurrentContext() {
+    return { context: this.currentContext, useCase: this.currentUseCase };
+  }
+
+  private getUseCaseConfig(context: string, useCase: string): UseCaseConfig | null {
+    return this.contextConfigs[context]?.useCases[useCase] || null;
+  }
+
+  getButtons(context?: string, useCase?: string): ButtonConfig[] {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.buttons || [];
+  }
+
+  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
+    const buttons = this.getButtons(context, useCase);
+    return buttons.reduce((acc, button) => {
+      (acc[button.location] = acc[button.location] || []).push(button);
+      return acc;
+    }, {} as Record<string, ButtonConfig[]>);
+  }
+
+  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.apiCalls[apiCallId];
+  }
+
+  getInitialApiCalls(context?: string, useCase?: string): string[] {
+    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
+    return useCaseConfig?.initialApiCalls || [];
+  }
+
+  getLookup(lookupName: string, context?: string): any[] {
+    const relevantContext = context || this.currentContext;
+    return this.contextConfigs[relevantContext]?.lookups?.[lookupName] || 
+           this.sharedConfigs.standardPartyBuilder?.lookups?.[lookupName] || 
+           [];
+  }
+
+  getMetadata(context?: string): Record<string, any> | undefined {
+    const relevantContext = context || this.currentContext;
+    return this.contextConfigs[relevantContext]?.metadata || 
+           this.sharedConfigs.standardPartyBuilder?.metadata;
+  }
+
+  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, additionalTransforms?: ((input: any) => any)[]): Promise<any> {
+    const apiCall = this.getApiCall(apiCallName, context, useCase);
+    if (!apiCall) {
+      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
+    }
+
+    let preparedData: any = {};
+    for (const inputConfig of apiCall.inputs) {
+      if (typeof inputConfig === 'string') {
+        if (input[inputConfig] !== undefined) {
+          preparedData[inputConfig] = input[inputConfig];
         }
-        return groupItem ? [groupItem] : [];
-      } else if (control instanceof FormArray) {
-        return [this.createArrayFieldItem(layoutField, formGroup, control)];
       } else {
-        return [this.createFieldItem(layoutField, formGroup)].filter(Boolean) as FieldItem[];
-      }
-    });
-  }
-
-  private createArrayFieldItem(layout: LayoutField, parentControl: FormGroup, control: FormArray): FieldItem {
-    const arrayItem: FieldItem = {
-      ...layout,
-      type: 'arrayGroup',
-      isArray: true,
-      value: control.value,
-      fields: []
-    };
-
-    arrayItem.fields = control.controls.map((ctrl, index) => {
-      const itemLayout: LayoutField = {
-        fldName: `${layout.fldName}.${index}`,
-        type: ctrl instanceof FormGroup ? 'formGroup' : 'field',
-        label: `Item ${index + 1}`,
-        seq: index,
-        side: 'full',
-        fields: layout.fields || []
-      };
-
-      if (ctrl instanceof FormGroup) {
-        const groupItem = this.createFieldItem(itemLayout, parentControl) as FieldItem;
-        if (groupItem) {
-          groupItem.fields = this.generateFieldsFromControl(ctrl, itemLayout.fields);
+        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
+        if (lookupValue !== undefined) {
+          preparedData[inputConfig.name] = lookupValue;
         }
-        return groupItem;
-      } else {
-        return this.createFieldItem(itemLayout, parentControl);
       }
-    }).filter(Boolean) as FieldItem[];
-
-    return arrayItem;
-  }
-
-  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
-    let control: AbstractControl | null;
-    
-    if (parentControl instanceof FormArray) {
-      control = parentControl.at(arrayIndex!);
-    } else {
-      control = parentControl.get(field.fldName!);
     }
 
-    if (!control) return null;
-
-    const extendedControl = control as ExtendedAbstractControl;
-
-    let baseItem: FieldItem = {
-      ...field,
-      value: control.value,
-      isValid: control.valid,
-      errors: control.errors,
-      status: control.status,
-      touched: control.touched,
-      dirty: control.dirty
-    };
-
-    // ... (rest of createFieldItem implementation)
-  }
-
-  // ... (rest of the code remains the same)
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-------------x--------------------x------
-import { Injectable } from '@angular/core';
-import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
-import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class FormExtensionHelpers {
-  // ... (previous code remains the same)
-
-  private generateFieldsFromControl(control: FormGroup, basePath: string, layout?: LayoutField): FieldItem[] {
-    return Object.entries(control.controls).flatMap(([key, ctrl]) => {
-      const fullPath = `${basePath}.${key}`;
-      const layoutField = layout?.fields?.find(field => field.fldName === key);
-
-      if (ctrl instanceof FormGroup) {
-        return this.generateFieldsFromControl(ctrl, fullPath, layoutField);
-      } else if (ctrl instanceof FormArray) {
-        return this.generateFieldsFromFormArray(ctrl, fullPath, layoutField);
-      } else {
-        const fieldLayout: LayoutField = {
-          fldName: key,
-          type: 'field',
-          label: layoutField?.label || this.generateLabelFromPath(key),
-          seq: layoutField?.seq || 0,
-          side: layoutField?.side || 'full'
-        };
-        return [this.createFieldItem(fieldLayout, control)].filter(Boolean) as FieldItem[];
+    if (apiCall.lookups) {
+      for (const lookupName of apiCall.lookups) {
+        preparedData[lookupName] = this.getLookup(lookupName, context);
       }
-    });
-  }
-
-  private generateFieldsFromFormArray(control: FormArray, basePath: string, layout?: LayoutField): FieldItem[] {
-    const arrayFieldLayout: LayoutField = {
-      fldName: basePath,
-      type: 'arrayGroup',
-      label: layout?.label || this.generateLabelFromPath(basePath),
-      seq: layout?.seq || 0,
-      side: layout?.side || 'full',
-      fields: []
-    };
-
-    const arrayItem = this.createFieldItem(arrayFieldLayout, control.parent as FormGroup, control) as FieldItem;
-    if (!arrayItem) return [];
-
-    arrayItem.fields = control.controls.map((ctrl, index) => {
-      if (ctrl instanceof FormGroup) {
-        const groupFieldLayout: LayoutField = {
-          fldName: `${index}`,
-          type: 'formGroup',
-          label: `Item ${index + 1}`,
-          seq: index,
-          side: 'full',
-          fields: layout?.fields || []
-        };
-        const groupItem = this.createFieldItem(groupFieldLayout, control, index) as FieldItem;
-        if (groupItem) {
-          groupItem.fields = this.generateFieldsFromControl(ctrl, `${basePath}.${index}`, layout);
-        }
-        return groupItem;
-      } else {
-        const fieldLayout: LayoutField = {
-          fldName: `${index}`,
-          type: 'field',
-          label: layout?.label || `Item ${index + 1}`,
-          seq: index,
-          side: 'full'
-        };
-        return this.createFieldItem(fieldLayout, control, index);
-      }
-    }).filter(Boolean) as FieldItem[];
-
-    return [arrayItem];
-  }
-
-  // ... (rest of the code remains the same)
-}
-
-
-
-
-
-
-
-
-
----------------------x---------x------------x--------------x---------------x------------
-private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    if (!(control instanceof FormArray)) {
-      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-      return baseItem;
     }
 
-    const arrayItem: FieldItem = {
-      ...baseItem,
-      type: 'arrayGroup',
-      isArray: true,
-      value: control.value,
-      fields: []
-    };
-
-    arrayItem.fields = control.controls.map((ctrl, index) => {
-      const itemFields = layout.fields && layout.fields.length > 0
-        ? this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`)
-        : this.generateFieldsFromControl(ctrl as FormGroup, `${baseItem.fldName}.${index}`);
-
-      return {
-        fldName: `${baseItem.fldName}.${index}`,
-        type: 'formGroup',
-        label: `Item ${index + 1}`,
-        seq: index,
-        side: 'full',
-        fields: itemFields,
-        value: ctrl.value,
-        isValid: ctrl.valid,
-        errors: ctrl.errors,
-        status: ctrl.status,
-        touched: ctrl.touched,
-        dirty: ctrl.dirty
-      };
-    });
-
-    return arrayItem;
-  }
-
-  private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
-    return layoutFields.flatMap(fieldLayout => {
-      const nestedControl = control.get(fieldLayout.fldName);
-      if (!nestedControl) return [];
-
-      if (nestedControl instanceof FormGroup) {
-        return this.generateFieldsFromControl(nestedControl, `${basePath}.${fieldLayout.fldName}`);
-      } else {
-        return [this.createFieldItem({
-          ...fieldLayout,
-          fldName: `${basePath}.${fieldLayout.fldName}`,
-        }, control)].filter(Boolean) as FieldItem[];
-      }
-    });
-  }
-
-  private generateFieldsFromControl(control: FormGroup, basePath: string): FieldItem[] {
-    return Object.entries(control.controls).flatMap(([key, ctrl]) => {
-      if (ctrl instanceof FormGroup) {
-        return this.generateFieldsFromControl(ctrl, `${basePath}.${key}`);
-      } else if (ctrl instanceof FormArray) {
-        return [];
-      } else {
-        const layoutField: LayoutField = {
-          fldName: `${basePath}.${key}`,
-          type: 'field',
-          label: this.generateLabelFromPath(key),
-          seq: 0,
-          side: 'full'
-        };
-        const fieldItem = this.createFieldItem(layoutField, control);
-        return fieldItem ? [fieldItem] : [];
-      }
-    });
-  }
-
-
-private generateLabelFromPath(path: string): string {
-    const parts = path.split('.');
-    const lastPart = parts[parts.length - 1];
-    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1).replace(/([A-Z])/g, ' $1').trim();
-  }
-
-
-
-
-
-
-
-
-
-
------------------x--------------------------x--------
-import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
-    console.log('Creating array field item for:', baseItem.fldName);
-    
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    if (!(control instanceof FormArray)) {
-      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-      return baseItem;
+    const metadata = this.getMetadata(context);
+    if (metadata) {
+      preparedData.metadata = metadata;
     }
 
-    const arrayItem: FieldItem = {
-      ...baseItem,
-      type: 'arrayGroup',
-      isArray: true,
-      value: control.value,
-      fields: []
-    };
+    const transforms = [
+      apiCall.transformInput,
+      ...(additionalTransforms || [])
+    ].filter(Boolean);
 
-    console.log('Control value:', control.value);
-
-    arrayItem.fields = control.controls.map((ctrl, index) => {
-      const itemFields = layout.fields && layout.fields.length > 0
-        ? this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`)
-        : this.generateFieldsFromControl(ctrl, `${baseItem.fldName}.${index}`);
-
-      return {
-        fldName: `${baseItem.fldName}.${index}`,
-        type: 'formGroup',
-        label: `Item ${index + 1}`,
-        seq: index,
-        side: 'full',
-        fields: itemFields,
-        value: ctrl.value,
-        isValid: ctrl.valid,
-        errors: ctrl.errors,
-        status: ctrl.status,
-        touched: ctrl.touched,
-        dirty: ctrl.dirty
-      };
-    });
-
-    console.log('Final array item:', arrayItem);
-    return arrayItem;
-  }
-
-  private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
-    return layoutFields.map(fieldLayout => {
-      const nestedControl = control.get(fieldLayout.fldName);
-      if (!nestedControl) return null;
-
-      return this.createFieldItem({
-        ...fieldLayout,
-        fldName: `${basePath}.${fieldLayout.fldName}`,
-      }, control);
-    }).filter(Boolean) as FieldItem[];
-  }
-
-  private generateFieldsFromControl(control: AbstractControl, basePath: string): FieldItem[] {
-    if (control instanceof FormGroup) {
-      return Object.entries(control.controls).map(([key, ctrl]) => {
-        const layoutField: LayoutField = {
-          fldName: key,
-          type: 'field',
-          label: this.generateLabelFromPath(key),
-          seq: 0,
-          side: 'full'
-        };
-        return this.createFieldItem(layoutField, control);
-      }).filter(Boolean) as FieldItem[];
-    } else if (control instanceof FormArray) {
-      // This case should be handled by createArrayFieldItem, so we'll return an empty array
-      return [];
-    } else {
-      // It's a FormControl
-      const layoutField: LayoutField = {
-        fldName: basePath,
-        type: 'field',
-        label: this.generateLabelFromPath(basePath),
-        seq: 0,
-        side: 'full'
-      };
-      const fieldItem = this.createFieldItem(layoutField, control.parent as FormGroup);
-      return fieldItem ? [fieldItem] : [];
-    }
-  }
-
-  // ... other methods (createFieldItem, generateLabelFromPath, etc.) ...
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
------------------------mmmmmm-----------
-private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray, layout: LayoutField): FieldItem {
-  console.log('Creating array field item for:', baseItem.fldName);
-  
-  const control = parentControl instanceof FormGroup 
-    ? parentControl.get(baseItem.fldName!) as FormArray 
-    : parentControl as FormArray;
-
-  if (!(control instanceof FormArray)) {
-    console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-    return baseItem;
-  }
-
-  const arrayItem: FieldItem = {
-    ...baseItem,
-    type: 'arrayGroup',
-    isArray: true,
-    value: control.value,
-    fields: []
-  };
-
-  console.log('Control value:', control.value);
-
-  arrayItem.fields = control.controls.flatMap((ctrl, index) => {
-    if (layout.fields && layout.fields.length > 0) {
-      // Use layout fields if provided
-      return this.createNestedFields(ctrl as FormGroup, layout.fields, `${baseItem.fldName}.${index}`);
-    } else {
-      // Generate fields based on form structure if no layout fields are provided
-      return this.generateFieldsFromControl(ctrl, `${baseItem.fldName}.${index}`);
-    }
-  });
-
-  console.log('Final array item:', arrayItem);
-  return arrayItem;
-}
-
-
-import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  private generateFieldsFromControl(control: AbstractControl, basePath: string): FieldItem[] {
-    if (control instanceof FormGroup) {
-      return Object.entries(control.controls).flatMap(([key, ctrl]) => 
-        this.generateFieldsFromControl(ctrl, `${basePath}.${key}`)
-      );
-    } else if (control instanceof FormArray) {
-      return control.controls.flatMap((ctrl, index) => 
-        this.generateFieldsFromControl(ctrl, `${basePath}.${index}`)
-      );
-    } else {
-      // It's a FormControl
-      const layoutField: LayoutField = {
-        fldName: basePath,
-        type: 'field',
-        label: this.generateLabelFromPath(basePath),
-        seq: 0,
-        side: 'full'
-      };
-      
-      const fieldItem = this.createFieldItem(layoutField, control.parent as FormGroup);
-      return fieldItem ? [fieldItem] : [];
-    }
-  }
-
-  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
-    let control: AbstractControl | null;
-    
-    if (parentControl instanceof FormArray) {
-      control = parentControl.at(arrayIndex!);
-    } else {
-      control = parentControl.get(field.fldName!);
+    for (const transform of transforms) {
+      preparedData = await transform(preparedData);
     }
 
-    if (!control) {
-      console.log('No control found for:', field.fldName);
-      return null;
+    return preparedData;
+  }
+
+  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
+    const lookup = this.getLookup(lookupName, context);
+    const lookupItem = lookup.find(item => item[key] === value);
+    return lookupItem ? lookupItem.value : undefined;
+  }
+
+  getSharedUseCaseConfig(useCaseName: string): UseCaseConfig | null {
+    return this.sharedConfigs.standardPartyBuilder?.useCases[useCaseName] || null;
+  }
+
+  mergeWithSharedConfig(contextUseCase: string, sharedUseCase: string, context?: string): UseCaseConfig {
+    const contextConfig = this.getUseCaseConfig(context || this.currentContext, contextUseCase);
+    const sharedConfig = this.getSharedUseCaseConfig(sharedUseCase);
+
+    if (!contextConfig) {
+      throw new Error(`Context use case ${contextUseCase} not found`);
     }
 
-    const extendedControl = control as ExtendedAbstractControl;
+    if (!sharedConfig) {
+      throw new Error(`Shared use case ${sharedUseCase} not found`);
+    }
 
     return {
-      ...field,
-      value: control.value,
-      isValid: control.valid,
-      errors: control.errors,
-      status: control.status,
-      touched: control.touched,
-      dirty: control.dirty
+      buttons: [...(contextConfig.buttons || []), ...(sharedConfig.buttons || [])],
+      apiCalls: { ...sharedConfig.apiCalls, ...contextConfig.apiCalls },
+      initialApiCalls: [...(sharedConfig.initialApiCalls || []), ...(contextConfig.initialApiCalls || [])]
     };
   }
 
-  private generateLabelFromPath(path: string): string {
-    const parts = path.split('.');
-    const lastPart = parts[parts.length - 1];
-    return lastPart.charAt(0).toUpperCase() + lastPart.slice(1).replace(/([A-Z])/g, ' $1').trim();
+  private getRelevantUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
+    if (context && useCase) {
+      return this.getUseCaseConfig(context, useCase);
+    }
+    return this.getUseCaseConfig(this.currentContext, this.currentUseCase);
   }
-
-  // ... other methods ...
 }
 
-  private createNestedFields(control: FormGroup, layoutFields: LayoutField[], basePath: string): FieldItem[] {
-    console.log('Creating nested fields for:', basePath);
-    console.log('Layout fields:', layoutFields);
-    console.log('Control:', control);
+libs/party-builder/src/lib/party-builder.service.ts:
 
-    return layoutFields.flatMap(fieldLayout => {
-      console.log('Processing field layout:', fieldLayout);
-      const nestedControl = control.get(fieldLayout.fldName);
-      
-      if (!nestedControl) {
-        console.log('No control found for:', fieldLayout.fldName);
-        return [];
+typescriptCopyimport { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { ContextConfigService } from './context-config.service';
+import { catchError, Observable, of } from 'rxjs';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class PartyBuilderService {
+  private http = inject(HttpClient);
+  private contextConfig = inject(ContextConfigService);
+
+  executeApiCall(apiCallName: string, input: any, context?: string, useCase?: string): Observable<any> {
+    const apiCall = this.contextConfig.getApiCall(apiCallName, context, useCase);
+    if (!apiCall) {
+      return of(null);
+    }
+
+    return this.contextConfig.prepareApiCall(apiCallName, input, context, useCase).then(preparedData => {
+      const url = `${apiCall.baseUrl}${apiCall.endpoint}`;
+      switch (apiCall.method) {
+        case 'GET':
+          return this.http.get(url, { params: preparedData });
+        case 'POST':
+          return this.http.post(url, preparedData);
+        case 'PUT':
+          return this.http.put(url, preparedData);
+        case 'DELETE':
+          return this.http.delete(url, { body: preparedData });
+        default:
+          throw new Error(`Unsupported HTTP method: ${apiCall.method}`);
       }
-
-      if (nestedControl instanceof FormGroup) {
-        console.log('Nested FormGroup found:', fieldLayout.fldName);
-        return this.createNestedFields(
-          nestedControl, 
-          fieldLayout.fields || [], 
-          `${basePath}.${fieldLayout.fldName}`
-        );
-      } else {
-        console.log('Creating field item for:', fieldLayout.fldName);
-        const fieldItem = this.createFieldItem({
-          ...fieldLayout,
-          fldName: `${basePath}.${fieldLayout.fldName}`,
-        }, control);
-        console.log('Created field item:', fieldItem);
-        return fieldItem ? [fieldItem] : [];
-      }
-    }).filter(Boolean);
-  }
-
-  // ... other methods ...
-}
-
-
-
-
-
-
-
-
-
-
-
-
---------------------------x-----------xx--------
-import { AbstractControl, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  transformValue(value: any, control: ExtendedAbstractControl | ExtendedControlOptions): any {
-    if (value === null || value === undefined) {
-      return '';
-    }
-
-    if (typeof value === 'object' && !(value instanceof Date)) {
-      // ... (keep existing object handling logic)
-    }
-
-    // Handle primitive values
-    if (control.lookupData && Array.isArray(control.lookupData)) {
-      if (typeof value === 'string' && value.includes('|')) {
-        // Handle pipe-separated values
-        return this.transformPipeSeparatedValues(value, control.lookupData);
-      }
-
-      // Handle single value lookup
-      const matchingLookup = control.lookupData.find(item => item.value === value);
-      if (matchingLookup) return matchingLookup.label;
-    }
-
-    switch (value) {
-      case 'Y':
-        return 'Yes';
-      case 'N':
-        return 'No';
-      case true:
-        return 'Yes';
-      case false:
-        return 'No';
-      default:
-        return value;
-    }
-  }
-
-  private transformPipeSeparatedValues(value: string, lookupData: Array<{ label: string; value: any }>): string {
-    const codes = value.split('|').map(code => code.trim());
-    const transformedValues = codes
-      .map(code => {
-        const match = lookupData.find(item => item.value === code);
-        return match ? match.label : code; // Use original code if no mapping found
+    }).pipe(
+      catchError(error => {
+        console.error(`Error in API call ${apiCallName}:`, error);
+        return of(null);
       })
-      .filter(val => val !== ''); // Filter out empty values
-
-    return transformedValues.join(', ');
-  }
-
-  // ... other methods ...
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
------------
-import { FormGroup } from '@angular/forms';
-import { FieldItem, LayoutField } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  private createCombinedFieldItem(baseItem: FieldItem, parentControl: FormGroup): FieldItem {
-    if (!baseItem.combineFields || !Array.isArray(baseItem.combineFields)) {
-      console.error('combineFields is not properly defined for', baseItem.fldName);
-      return baseItem;
-    }
-
-    const separator = baseItem.combineSeparator || ' ';
-    let combinedValue: string;
-
-    if (baseItem.customCombine) {
-      combinedValue = this.customCombineAddress(baseItem.combineFields, parentControl);
-    } else {
-      const values = baseItem.combineFields.map(fieldName => {
-        const control = parentControl.get(fieldName);
-        return control ? this.transformValue(control.value, control) : '';
-      }).filter(value => value !== ''); // Filter out empty values
-
-      combinedValue = values.join(separator).trim();
-    }
-
-    return {
-      ...baseItem,
-      value: combinedValue,
-      computedValue: combinedValue,
-      isCombined: true,
-      useHtml: true
-    };
-  }
-
-  private customCombineAddress(fields: string[], parentControl: FormGroup): string {
-    const address1 = parentControl.get(fields[0])?.value || '';
-    const address2 = parentControl.get(fields[1])?.value || '';
-    const city = parentControl.get(fields[2])?.value || '';
-    const state = parentControl.get(fields[3])?.value || '';
-    const zip = parentControl.get(fields[4])?.value || '';
-
-    const parts = [
-      address1,
-      address2,
-      [city, state, zip].filter(Boolean).join(', ')
-    ].filter(Boolean); // Filter out empty parts
-
-    return parts.join('<br>');
-  }
-
-  // ... other methods ...
-}
-
-------------
-
-import { AbstractControl, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, ExtendedControlOptions } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  transformValue(value: any, control: ExtendedAbstractControl | ExtendedControlOptions): any {
-    if (value === null || value === undefined) {
-      return '';
-    }
-
-    if (typeof value === 'object' && !(value instanceof Date)) {
-      if (control instanceof FormGroup) {
-        // Handle FormGroup
-        const transformedObject: any = {};
-        Object.keys(control.controls).forEach(key => {
-          transformedObject[key] = this.transformValue(value[key], control.get(key) as ExtendedAbstractControl);
-        });
-        return transformedObject;
-      } else if (Array.isArray(value)) {
-        // Handle arrays
-        return value.map(item => this.transformValue(item, control));
-      } else {
-        // Handle plain objects
-        const transformedObject: any = {};
-        Object.keys(value).forEach(key => {
-          transformedObject[key] = this.transformValue(value[key], control);
-        });
-        return transformedObject;
-      }
-    }
-
-    // Handle primitive values
-    if (control.lookupData && Array.isArray(control.lookupData)) {
-      const matchingLookup = control.lookupData.find(item => item.value === value);
-      if (matchingLookup) return matchingLookup.label;
-    }
-
-    switch (value) {
-      case 'Y':
-        return 'Yes';
-      case 'N':
-        return 'No';
-      case true:
-        return 'Yes';
-      case false:
-        return 'No';
-      default:
-        return value;
-    }
-  }
-
-  // ... other methods ...
-}
--------
-
-import { Component, OnDestroy } from '@angular/core';
-import { Subject, takeUntil } from 'rxjs';
-
-interface WidgetComponentInstance {
-  ackStatusChanged?: EventEmitter<boolean>;
-  // ... other properties
-}
-
-@Component({
-  // ... component metadata
-})
-export class PartyBuilderComponent implements OnDestroy {
-  private destroy$ = new Subject<void>();
-
-  // ... other properties and methods
-
-  loadWidget(widgetName: string) {
-    // ... existing code to load the widget
-
-    const componentInstance = componentRef.instance as WidgetComponentInstance;
-
-    if (componentInstance.ackStatusChanged) {
-      componentInstance.ackStatusChanged.pipe(
-        takeUntil(this.destroy$)
-      ).subscribe({
-        next: (ackStatus: boolean) => {
-          try {
-            this.profileBuilder.updateWidgetAckStatus(widgetName, ackStatus);
-          } catch (error) {
-            console.error(`Error updating ack status for ${widgetName}:`, error);
-            // Handle error (e.g., show user notification)
-          }
-        },
-        error: (err) => {
-          console.error(`Error in ack status stream for ${widgetName}:`, err);
-          // Handle error (e.g., show user notification)
-        }
-      });
-    }
-
-    // ... rest of the method
-  }
-
-  ngOnDestroy() {
-    this.destroy$.next();
-    this.destroy$.complete();
-  }
-}
-------
-import { AbstractControl, FormArray, FormGroup } from '@angular/forms';
-import { ExtendedAbstractControl, FieldItem, LayoutField } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods ...
-
-  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    if (!(control instanceof FormArray)) {
-      console.error(`Expected FormArray for ${baseItem.fldName}, but got:`, control);
-      return baseItem;
-    }
-
-    const arrayItem: FieldItem = {
-      ...baseItem,
-      type: 'arrayGroup',
-      isArray: true,
-      value: control.value,
-      fields: control.controls.map((ctrl, index) => {
-        if (ctrl instanceof FormGroup) {
-          // Handle nested FormGroup within the array
-          return {
-            fldName: `${baseItem.fldName}.${index}`,
-            type: 'formGroup',
-            fields: Object.keys(ctrl.controls).map(key => 
-              this.createFieldItem({
-                fldName: key,
-                type: 'field',
-                side: 'full',
-                seq: 0
-              } as LayoutField, ctrl)
-            ).filter(Boolean) as FieldItem[]
-          };
-        } else {
-          // Handle simple FormControl within the array
-          return this.createFieldItem({
-            fldName: `${baseItem.fldName}.${index}`,
-            type: 'field',
-            side: 'full',
-            seq: index
-          } as LayoutField, control, index);
-        }
-      }).filter(Boolean) as FieldItem[]
-    };
-
-    return arrayItem;
-  }
-
-  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
-    let control: AbstractControl | null;
-    
-    if (parentControl instanceof FormArray) {
-      control = parentControl.at(arrayIndex!);
-    } else {
-      control = parentControl.get(field.fldName!);
-    }
-
-    if (!control) return null;
-
-    const extendedControl = control as ExtendedAbstractControl;
-
-    let baseItem: FieldItem = {
-      ...field,
-      value: control.value,
-      isValid: control.valid,
-      errors: control.errors,
-      status: control.status,
-      touched: control.touched,
-      dirty: control.dirty
-    };
-
-    switch (field.type) {
-      case 'subHeader':
-        return { ...baseItem, isSubHeader: true };
-      case 'reqDivider':
-        return { ...baseItem, isReqDivider: true };
-      case 'divider':
-        return { ...baseItem, isDivider: true };
-      case 'staticComponent':
-        return { 
-          ...baseItem, 
-          isStaticComponent: true, 
-          staticComponentName: field.staticComponent 
-        };
-      case 'injectedComponent':
-        return this.createInjectedComponentItem(baseItem, parentControl);
-      case 'arraySimple':
-      case 'arrayGroup':
-        return this.createArrayFieldItem(baseItem, parentControl);
-      default:
-        return this.createDefaultFieldItem(baseItem, control, parentControl);
-    }
-  }
-
-  // ... other methods ...
-}
------------------------
-import { AbstractControl, FormGroup } from '@angular/forms';
-import { FieldItem, UIReadViewOptions, FormLayout } from './form-extension.types';
-
-export class FormExtensionHelpers {
-  // ... other methods remain the same
-
-  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}, formLayouts?: WeakMap<FormGroup, FormLayout>): FieldItem[] {
-    let readView: FieldItem[];
-
-    if (control instanceof FormGroup && formLayouts && formLayouts.has(control)) {
-      const layout = formLayouts.get(control)!;
-      readView = this.applyLayoutToFormGroup(control, layout);
-    } else {
-      readView = this.getBasicReadViewForControl(control);
-    }
-
-    return this.filterAndFormatReadView(readView, options);
-  }
-
-  private filterAndFormatReadView(items: FieldItem[], options: UIReadViewOptions): FieldItem[] {
-    return items.map(item => this.filterAndFormatItem(item, options)).filter(Boolean) as FieldItem[];
-  }
-
-  private filterAndFormatItem(item: FieldItem, options: UIReadViewOptions): FieldItem | null {
-    if (!this.shouldIncludeItem(item, options)) return null;
-
-    const formattedItem: FieldItem = { ...item };
-
-    if (!options.includeOldValues) {
-      delete formattedItem.oldValue;
-    }
-
-    if (!options.includeErrors) {
-      delete formattedItem.errors;
-    }
-
-    if (formattedItem.fields) {
-      formattedItem.fields = this.filterAndFormatReadView(formattedItem.fields, options);
-    }
-
-    return formattedItem;
-  }
-
-  private shouldIncludeItem(item: FieldItem, options: UIReadViewOptions): boolean {
-    if (options.includeSections && item.sectionName) {
-      return options.includeSections.includes(item.sectionName);
-    }
-    if (options.excludeSections && item.sectionName) {
-      return !options.excludeSections.includes(item.sectionName);
-    }
-    if (options.includeFields && item.fldName) {
-      return options.includeFields.includes(item.fldName);
-    }
-    if (options.excludeFields && item.fldName) {
-      return !options.excludeFields.includes(item.fldName);
-    }
-    return true;
-  }
-
-  // ... other methods remain the same
-}
-
----------------
-import { Injectable } from '@angular/core';
-import { AbstractControl, FormArray, FormBuilder, FormGroup, ValidatorFn, Validators } from '@angular/forms';
-import { ExtendedAbstractControl, ExtendedControlOptions, FieldItem, FormLayout, LayoutField, LayoutSection, UIReadViewOptions } from './form-extension.types';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class FormExtensionHelpers {
-  constructor(private fb: FormBuilder) {}
-
-  updateControlProperties(control: ExtendedAbstractControl, options: ExtendedControlOptions): boolean {
-    let changed = false;
-    Object.entries(options).forEach(([key, value]) => {
-      if (key in control) {
-        if (key === 'regex') {
-          if (!this.areRegexArraysEqual(control[key] as string[], value as string[])) {
-            (control as any)[key] = value;
-            changed = true;
-          }
-        } else if (control[key as keyof ExtendedAbstractControl] !== value) {
-          (control as any)[key] = value;
-          changed = true;
-        }
-      }
-    });
-    return changed;
-  }
-
-  areRegexArraysEqual(arr1?: string[], arr2?: string[]): boolean {
-    if (!arr1 && !arr2) return true;
-    if (!arr1 || !arr2) return false;
-    if (arr1.length !== arr2.length) return false;
-    return arr1.every((regex, index) => regex === arr2[index]);
-  }
-
-  extendNestedControls(control: FormGroup | FormArray, service: any): void {
-    if (control instanceof FormGroup) {
-      Object.values(control.controls).forEach(childControl => {
-        this.extendSingleControl(childControl, service);
-      });
-    } else if (control instanceof FormArray) {
-      control.controls.forEach(childControl => {
-        this.extendSingleControl(childControl, service);
-      });
-    }
-  }
-
-  private extendSingleControl(control: AbstractControl, service: any): void {
-    if (!this.hasExtendedProperties(control)) {
-      service.extendControl(control, {});
-    }
-    if (control instanceof FormGroup || control instanceof FormArray) {
-      this.extendNestedControls(control, service);
-    }
-  }
-
-  hasExtendedProperties(control: AbstractControl): boolean {
-    return 'label' in control || 'fldName' in control;
-  }
-
-  updateValidators(control: AbstractControl, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
-    const extendedControl = control as ExtendedAbstractControl;
-    const validators: ValidatorFn[] = [];
-
-    if (extendedControl.required) {
-      validators.push(Validators.required);
-    }
-
-    if (extendedControl.regex && extendedControl.regex.length > 0) {
-      validators.push(Validators.pattern(extendedControl.regex.join('|')));
-    }
-
-    if (extendedControl.fldMax !== undefined) {
-      validators.push(Validators.max(extendedControl.fldMax));
-    }
-
-    const customValidators = customValidatorsCache.get(control) || [];
-    validators.push(...customValidators);
-
-    control.setValidators(validators);
-    control.updateValueAndValidity();
-  }
-
-  shouldUpdateProperty<K extends keyof ExtendedControlOptions>(
-    control: ExtendedAbstractControl,
-    property: K,
-    value: ExtendedControlOptions[K]
-  ): boolean {
-    if (property === 'regex') {
-      return !this.areRegexArraysEqual(control[property] as string[], value as string[]);
-    }
-    return control[property] !== value;
-  }
-
-  sortFormLayout(layout: FormLayout): FormLayout {
-    return {
-      ...layout,
-      sections: layout.sections.map(section => ({
-        ...section,
-        fields: [...section.fields].sort((a, b) => a.seq - b.seq)
-      }))
-    };
-  }
-
-  getExtendedReadViewForControl(control: AbstractControl, formLayouts: WeakMap<FormGroup, FormLayout>): FieldItem[] {
-    if (control instanceof FormGroup) {
-      const layout = formLayouts.get(control);
-      if (layout) {
-        return this.applyLayoutToFormGroup(control, layout);
-      }
-    }
-    return this.getBasicReadViewForControl(control);
-  }
-
-  private applyLayoutToFormGroup(formGroup: FormGroup, layout: FormLayout): FieldItem[] {
-    return layout.sections.flatMap(section => this.createSectionItems(section, formGroup));
-  }
-
-  private createSectionItems(section: LayoutSection, formGroup: FormGroup): FieldItem[] {
-    if (section.type === 'divider') {
-      return [{
-        label: '',
-        fldName: `divider_${Date.now()}`,
-        type: 'divider',
-        editable: false,
-        visible: true,
-        expand: false,
-        value: null,
-        isDivider: true,
-        dividerClass: section.dividerClass
-      }];
-    }
-
-    const sectionItem: FieldItem = {
-      label: this.getSectionLabel(section),
-      fldName: `section_${section.type}`,
-      type: section.type,
-      editable: false,
-      visible: true,
-      expand: true,
-      value: null,
-      fields: [],
-      labelWidth: section.labelWidth
-    };
-
-    sectionItem.fields = section.fields.map(field => this.createFieldItem(field, formGroup)).filter(Boolean) as FieldItem[];
-    return [sectionItem];
-  }
-
-  private createFieldItem(field: LayoutField, parentControl: FormGroup | FormArray, arrayIndex?: number): FieldItem | null {
-    let control: AbstractControl | null;
-    
-    if (parentControl instanceof FormArray) {
-      control = parentControl.at(arrayIndex!);
-    } else {
-      control = parentControl.get(field.fldName!);
-    }
-
-    if (!control) return null;
-
-    const extendedControl = control as ExtendedAbstractControl;
-
-    let baseItem: FieldItem = {
-      ...field,
-      value: control.value,
-      isValid: control.valid,
-      errors: control.errors,
-      status: control.status,
-      touched: control.touched,
-      dirty: control.dirty
-    };
-
-    switch (field.type) {
-      case 'subHeader':
-        return { ...baseItem, isSubHeader: true };
-      case 'reqDivider':
-        return { ...baseItem, isReqDivider: true };
-      case 'divider':
-        return { ...baseItem, isDivider: true };
-      case 'staticComponent':
-        return { 
-          ...baseItem, 
-          isStaticComponent: true, 
-          staticComponentName: field.staticComponent 
-        };
-      case 'injectedComponent':
-        return this.createInjectedComponentItem(baseItem, parentControl);
-      case 'arraySimple':
-      case 'arrayGroup':
-        return this.createArrayFieldItem(baseItem, parentControl);
-      default:
-        return this.createDefaultFieldItem(baseItem, control, parentControl);
-    }
-  }
-
-  private createInjectedComponentItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
-    const controlValues = baseItem.injectedComponentInputs?.map(input => 
-      parentControl instanceof FormGroup ? parentControl.get(input)?.value : null
-    ) || [];
-
-    return {
-      ...baseItem,
-      type: 'injectedComponent',
-      value: controlValues,
-      isInjectedComponent: true,
-      injectedComponentName: baseItem.injectedComponent,
-      injectedComponentInputs: controlValues,
-      injectedComponentOutputs: baseItem.injectedComponentOutputs
-    };
-  }
-
-  private createArrayFieldItem(baseItem: FieldItem, parentControl: FormGroup | FormArray): FieldItem {
-    const control = parentControl instanceof FormGroup 
-      ? parentControl.get(baseItem.fldName!) as FormArray 
-      : parentControl as FormArray;
-
-    return {
-      ...baseItem,
-      type: baseItem.type as 'arraySimple' | 'arrayGroup',
-      value: control.value,
-      isArray: true,
-      fields: control.controls.map((ctrl, index) => {
-        const childLayoutField: LayoutField = {
-          fldName: `${baseItem.fldName}.${index}`,
-          seq: index,
-          side: 'full',
-          type: this.getFieldType(ctrl)
-        };
-        return this.createFieldItem(childLayoutField, control, index);
-      }).filter(Boolean) as FieldItem[]
-    };
-  }
-
-  private createDefaultFieldItem(baseItem: FieldItem, control: AbstractControl, parentControl: FormGroup | FormArray): FieldItem {
-    const extendedControl = control as ExtendedAbstractControl;
-    const rawValue = control.value;
-    const transformedValue = this.transformValue(rawValue, extendedControl);
-
-    return {
-      ...baseItem,
-      type: 'field',
-      value: transformedValue,
-      computedValue: extendedControl._customComputation ? extendedControl._customComputation(control, parentControl) : transformedValue,
-      oldValue: extendedControl._oldValue
-    };
-  }
-
-  private getFieldType(control: AbstractControl): LayoutField['type'] {
-    if (control instanceof FormGroup) {
-      return 'arrayGroup';
-    } else if (control instanceof FormArray) {
-      return 'arraySimple';
-    } else {
-      return 'field';
-    }
-  }
-
-  private getSectionLabel(section: LayoutSection): string {
-    switch (section.type) {
-      case 'leftHeader':
-      case 'leftRightHeader':
-        return section.leftHeader || '';
-      case 'commonHeader':
-        return section.commonHeader || '';
-      case 'accordion':
-      case 'accordionHeader':
-        return section.accordionHeader || '';
-      default:
-        return '';
-    }
-  }
-
-  private transformValue(value: any, control: ExtendedAbstractControl): any {
-    if (value === 'Y') return 'Yes';
-    if (value === 'N') return 'No';
-
-    if (control.lookupData && Array.isArray(control.lookupData)) {
-      const matchingLookup = control.lookupData.find(item => item.value === value);
-      if (matchingLookup) return matchingLookup.label;
-    }
-
-    return value;
-  }
-
-  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}): FieldItem[] {
-    console.log('Getting UI Read View for control:', control);
-    const readView = this.getExtendedReadViewForControl(control, new WeakMap());
-    console.log('Initial read view:', readView);
-    const filteredView = this.filterAndFormatReadView(readView, options);
-    console.log('Filtered and formatted view:', filteredView);
-    return filteredView;
-  }
-
-  private filterAndFormatReadView(items: FieldItem[], options: UIReadViewOptions): FieldItem[] {
-    return items.filter(item => this.shouldIncludeItem(item, options))
-      .map(item => this.formatItem(item, options));
-  }
-
-  private shouldIncludeItem(item: FieldItem, options: UIReadViewOptions): boolean {
-    if (options.includeSections && item.sectionName) {
-      return options.includeSections.includes(item.sectionName);
-    }
-    if (options.excludeSections && item.sectionName) {
-      return !options.excludeSections.includes(item.sectionName);
-    }
-    if (options.includeFields && item.fldName) {
-      return options.includeFields.includes(item.fldName);
-    }
-    if (options.excludeFields && item.fldName) {
-      return !options.excludeFields.includes(item.fldName);
-    }
-    return true;
-  }
-
-  private formatItem(item: FieldItem, options: UIReadViewOptions): FieldItem {
-    const formattedItem: FieldItem = { ...item };
-
-    if (!options.includeOldValues) {
-      delete formattedItem.oldValue;
-    }
-
-    if (!options.includeErrors) {
-      delete formattedItem.errors;
-    }
-
-    if (formattedItem.fields) {
-      formattedItem.fields = this.filterAndFormatReadView(formattedItem.fields, options);
-    }
-
-    return formattedItem;
-  }
-
-  applyDefaultValuesRecursive(control: AbstractControl, storeOldValue: boolean): void {
-    const extendedControl = control as ExtendedAbstractControl;
-    
-    if (control instanceof FormGroup) {
-      if (extendedControl.dfltVal !== undefined && this.isFormGroupEmpty(control)) {
-        if (storeOldValue) {
-          extendedControl._oldValue = this.getFormGroupValue(control);
-        }
-        this.setFormGroupValue(control, extendedControl.dfltVal);
-      } else {
-        Object.values(control.controls).forEach(childControl => {
-          this.applyDefaultValuesRecursive(childControl, storeOldValue);
-        });
-      }
-    } else if (control instanceof FormArray) {
-      control.controls.forEach(ctrl => {
-        this.applyDefaultValuesRecursive(ctrl, storeOldValue);
-      });
-    } else {
-      if (extendedControl.dfltVal !== undefined && control.value === null) {
-        if (storeOldValue) {
-          extendedControl._oldValue = control.value;
-        }
-        control.setValue(extendedControl.dfltVal);
-      }
-    }
-  }
-
-  private isFormGroupEmpty(group: FormGroup): boolean {
-    return Object.values(group.controls).every(control =>
-      control.value === null || control.value === '' || 
-      (control instanceof FormGroup && this.isFormGroupEmpty(control)) ||
-      (control instanceof FormArray && control.length === 0)
     );
   }
 
-  private getFormGroupValue(group: FormGroup): any {
-    const value: any = {};
-    Object.entries(group.controls).forEach(([key, control]) => {
-      if (control instanceof FormGroup) {
-        value[key] = this.getFormGroupValue(control);
-      } else if (control instanceof FormArray) {
-        value[key] = control.controls.map(ctrl => 
-          ctrl instanceof FormGroup ? this.getFormGroupValue(ctrl) : ctrl.value
-        );
-      } else {
-        value[key] = control.value;
-      }
-    });
-    return value;
+  saveParty(partyData: any, context?: string, useCase?: string): Observable<any> {
+    return this.executeApiCall('submitParty', { partyData }, context, useCase);
   }
 
-  private setFormGroupValue(group: FormGroup, value: any): void {
-    if (typeof value === 'object' && value !== null) {
-      Object.entries(value).forEach(([key, val]) => {
-        const control = group.get(key);
-        if (control) {
-          if (control instanceof FormGroup && typeof val === 'object') {
-            this.setFormGroupValue(control, val);
-          } else if (control instanceof FormArray && Array.isArray(val)) {
-            this.setFormArrayValue(control, val);
-          } else {
-            control.setValue(val);
-          }
-        }
-      });
-    }
-  }
-
-  private setFormArrayValue(array: FormArray, values: any[]): void {
-    while (array.length) {
-      array.removeAt(0);
-    }
-
-    values.forEach(value => {
-      if (typeof value === 'object' && value !== null) {
-        const group = this.fb.group({});
-        this.setFormGroupValue(group, value);
-        array.push(group);
-      } else {
-        array.push(this.fb.control(value));
-      }
-    });
-  }
-
-  getExtendedProperties(control: ExtendedAbstractControl): Partial<ExtendedControlOptions> {
-    return {
-      label: control.label,
-      fldName: control.fldName,
-      visible: control.visible,
-      editable: control.editable,
-      lookup: control.lookup,
-      lookupData: control.lookupData,
-      regex: control.regex,
-      fldMax: control.fldMax,
-      fieldType: control.fieldType,
-      dfltVal: control.dfltVal,
-      required: control.required,
-      oldValue: control._oldValue,
-      expand: control.expand,
-      sectionName: control.sectionName,
-      subSectionName: control.subSectionName,
-      reqBorder: control.reqBorder,
-      subName: control.subName,
-      align: control.align,
-      isArray: control.isArray,
-      combineFields: control.combineFields,
-      combineSeparator: control.combineSeparator,
-      customCombine: control.customCombine,
-      injectedComponent: control.injectedComponent,
-      injectedComponentInputs: control.injectedComponentInputs,
-      injectedComponentOutputs: control.injectedComponentOutputs,
-      staticComponent: control.staticComponent
-    };
-  }
-
-  addCustomValidator(control: AbstractControl, validator: ValidatorFn, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
-    const currentValidators = customValidatorsCache.get(control) || [];
-    currentValidators.push(validator);
-    customValidatorsCache.set(control, currentValidators);
-  }
-
-  removeCustomValidator(control: AbstractControl, validator: ValidatorFn, customValidatorsCache: WeakMap<AbstractControl, ValidatorFn[]>): void {
-    const currentValidators = customValidatorsCache.get(control) || [];
-    const index = currentValidators.indexOf(validator);
-    if (index > -1) {
-      currentValidators.splice(index, 1);
-      customValidatorsCache.set(control, currentValidators);
-    }
-  }
-
-  handleArrayOperation(formArray: FormArray, operation: 'add' | 'remove', index?: number): void {
-    const arrayExtendedControl = formArray as ExtendedAbstractControl;
-    
-    if (operation === 'add') {
-      if (arrayExtendedControl.fieldType === 'arrayGroup') {
-        const newGroup = this.createNewArrayGroupItem(formArray);
-        formArray.push(newGroup);
-      } else if (arrayExtendedControl.fieldType === 'arraySimple') {
-        formArray.push(this.fb.control(null));
-      }
-    } else if (operation === 'remove' && index !== undefined) {
-      formArray.removeAt(index);
-    }
-  }
-
-  private createNewArrayGroupItem(formArray: FormArray): FormGroup {
-    const template = (formArray.at(0) as FormGroup).controls;
-    const newGroup = this.fb.group({});
-    Object.entries(template).forEach(([key, control]) => {
-      newGroup.addControl(key, this.fb.control(null, control.validator));
-      // Extend the new control with the same properties as the template
-      const templateExtendedControl = control as ExtendedAbstractControl;
-      const newExtendedControl = newGroup.get(key) as ExtendedAbstractControl;
-      Object.assign(newExtendedControl, this.getExtendedProperties(templateExtendedControl));
-    });
-    return newGroup;
-  }
-
-  getBasicReadViewForControl(control: AbstractControl): FieldItem[] {
-    if (control instanceof FormGroup || control instanceof FormArray) {
-      return this.getFieldsReadViewItems(control);
-    } else {
-      const extendedControl = control as ExtendedAbstractControl;
-      return [{
-        fldName: extendedControl.fldName || '',
-        label: extendedControl.label || '',
-        value: control.value,
-        type: 'field',
-        isValid: control.valid,
-        errors: control.errors,
-        status: control.status,
-        touched: control.touched,
-        dirty: control.dirty
-      }];
-    }
-  }
-
-  private getFieldsReadViewItems(control: FormGroup | FormArray): FieldItem[] {
-    if (control instanceof FormGroup) {
-      return Object.entries(control.controls).map(([key, childControl]) => 
-        this.createFieldItem({
-          fldName: key,
-          side: 'full',
-          seq: 0,
-          type: this.getFieldType(childControl)
-        }, control)
-      ).filter((item): item is FieldItem => item !== null);
-    } else if (control instanceof FormArray) {
-      return control.controls.map((childControl, index) => 
-        this.createFieldItem({
-          fldName: index.toString(),
-          side: 'full',
-          seq: index,
-          type: this.getFieldType(childControl)
-        }, control, index)
-      ).filter((item): item is FieldItem => item !== null);
-    }
-    return [];
+  cancelParty(): Observable<boolean> {
+    // Implement cancel logic
+    return of(true);
   }
 }
 
+libs/party-builder/src/lib/button.component.ts:
 
+typescriptCopyimport { Component, Input, Output, EventEmitter, ChangeDetectionStrategy } from '@angular/core';
+import { ButtonConfig } from './context-config';
 
-
-
----------------------------------------
-import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
-import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn } from '@angular/forms';
-import { ExtendedControlOptions, ExtendedAbstractControl, FieldItem, LayoutField, FormLayout, UIReadViewOptions } from './form-extension.types';
-import { FormExtensionHelpers } from './form-extension.helpers';
-
-@Injectable({
-  providedIn: 'root'
+@Component({
+  selector: 'app-button',
+  standalone: true,
+  template: `
+    <button
+      [disabled]="config.disabled"
+      [style.display]="config.visible ? 'inline-block' : 'none'"
+      (click)="onClick()"
+      [attr.data-testid]="config.id">
+      {{ config.label }}
+    </button>
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class FormExtensionService {
-  private updateTrigger = signal(0);
-  private readViewCache = new WeakMap<AbstractControl, Signal<FieldItem[]>>();
-  private formLayouts = new WeakMap<FormGroup, FormLayout>();
-  private extendedPropertiesCache = new WeakMap<AbstractControl, ExtendedControlOptions>();
-  private customValidatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
+export class ButtonComponent {
+  @Input({ required: true }) config!: ButtonConfig;
+  @Output() action = new EventEmitter<string>();
+
+  onClick() {
+    if (this.config.requireConfirmation && !confirm(this.config.confirmationMessage || 'Are you sure?')) {
+      return;
+    }
+    this.action.emit(this.config.id);
+  }
+}
+
+libs/party-builder/src/lib/party-builder.component.ts:
+
+typescriptCopyimport { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { ContextConfigService } from './context-config.service';
+import { PartyBuilderService } from './party-builder.service';
+import { ButtonComponent } from './button.component';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-party-builder',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule, ButtonComponent],
+  template: `
+    <div>
+      <h2>Party Builder</h2>
+      <div *ngFor="let button of buttonsByLocation['header']; trackBy: trackByButtonId">
+        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+      </div>
+      
+      <form [formGroup]="partyForm" (ngSubmit)="onSubmit()">
+        <div *ngFor="let button of buttonsByLocation['form-top']; trackBy: trackByButtonId">
+          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+        </div>
+
+        <div>
+          <label for="partyId">Party ID:</label>
+          <input id="partyId" formControlName="partyId">
+        </div>
+        <div>
+          <label for="partyType">Party Type:</label>
+          <select id="partyType" formControlName="partyType">
+            <option *ngFor="let type of partyTypes" [value]="type.value">{{type.label}}</option>
+          </select>
+        </div>
+        <div>
+          <label for="name">Name:</label>
+          <input id="name" formControlName="name">
+        </div>
+
+        <div *ngFor="let button of buttonsByLocation['form-bottom']; trackBy: trackByButtonId">
+          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+        </div>
+      </form>
+
+      <div *ngFor="let button of buttonsByLocation['footer']; trackBy: trackByButtonId">
+        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+      </div>
+    </div>
+  `
+})
+export class PartyBuilderComponent implements OnInit {
+  buttonsByLocation: Record<string, ButtonConfig[]> = {};
+  partyForm: FormGroup;
+  partyTypes: { value: string; label: string }[] = [];
+  isSubmitting = false;
+  isSaving = false;
 
   constructor(
-    private fb: FormBuilder,
-    private helpers: FormExtensionHelpers
+    private contextConfigService: ContextConfigService,
+    private partyBuilderService: PartyBuilderService,
+    private fb: FormBuilder
   ) {
-    effect(() => {
-      this.updateTrigger();
-      this.clearCaches();
+    this.partyForm = this.fb.group({
+      partyId: [''],
+      partyType: [''],
+      name: ['']
     });
   }
 
-  extendControl(control: AbstractControl, options: ExtendedControlOptions): void {
-    const extendedControl = control as ExtendedAbstractControl;
-    let changed = this.helpers.updateControlProperties(extendedControl, options);
+  ngOnInit() {
+    this.contextConfigService.setContext('partyBuilder', 'existingPartyWithoutAccounts');
+    this.buttonsByLocation = this.contextConfigService.getButtonsByLocation();
+    this.partyTypes = this.contextConfigService.getLookup('partyTypes');
+    this.loadInitialData();
+  }
 
-    if (changed) {
-      if (control instanceof FormGroup || control instanceof FormArray) {
-        this.helpers.extendNestedControls(control, this);
+  async loadInitialData() {
+    const initialApiCalls = this.contextConfigService.getInitialApiCalls();
+    for (const apiCall of initialApiCalls) {
+      await this.partyBuilderService.executeApiCall(apiCall, {}).toPromise();
+    }
+  }
+
+  onButtonAction(actionId: string) {
+    switch (actionId) {
+      case 'saveParty':
+        this.saveParty();
+        break;
+      case 'submitParty':
+        this.submitParty();
+        break;
+      case 'cancelParty':
+        this.cancelParty();
+        break;
+      default:
+        console.log(`Unhandled action: ${actionId}`);
+    }
+  }
+
+  onSubmit() {
+    if (this.partyForm.valid) {
+      this.submitParty();
+    } else {
+      console.log('Form is invalid');
+    }
+  }
+
+  saveParty() {
+    console.log('Saving party...');
+    this.isSaving = true;
+    const partyData = this.partyForm.value;
+    this.partyBuilderService.saveParty( CopyRetryClaude’s response was limited as it hit the maximum length allowed at this time. Claude does not have the ability to run the code it generates yet.DScode stuck in saveParty() {EditI apologize for the interruption. Let's complete the PartyBuilderComponent with the saveParty, submitParty, and cancelParty methods, along with the supporting methods. Here's the complete PartyBuilderComponent:
+typescriptCopyimport { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { ContextConfigService } from './context-config.service';
+import { PartyBuilderService } from './party-builder.service';
+import { ButtonComponent } from './button.component';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-party-builder',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule, ButtonComponent],
+  template: `
+    <div>
+      <h2>Party Builder</h2>
+      <div *ngFor="let button of buttonsByLocation['header']; trackBy: trackByButtonId">
+        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+      </div>
+      
+      <form [formGroup]="partyForm" (ngSubmit)="onSubmit()">
+        <div *ngFor="let button of buttonsByLocation['form-top']; trackBy: trackByButtonId">
+          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+        </div>
+
+        <div>
+          <label for="partyId">Party ID:</label>
+          <input id="partyId" formControlName="partyId">
+        </div>
+        <div>
+          <label for="partyType">Party Type:</label>
+          <select id="partyType" formControlName="partyType">
+            <option *ngFor="let type of partyTypes" [value]="type.value">{{type.label}}</option>
+          </select>
+        </div>
+        <div>
+          <label for="name">Name:</label>
+          <input id="name" formControlName="name">
+        </div>
+
+        <div *ngFor="let button of buttonsByLocation['form-bottom']; trackBy: trackByButtonId">
+          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+        </div>
+      </form>
+
+      <div *ngFor="let button of buttonsByLocation['footer']; trackBy: trackByButtonId">
+        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
+      </div>
+    </div>
+  `
+})
+export class PartyBuilderComponent implements OnInit {
+  buttonsByLocation: Record<string, ButtonConfig[]> = {};
+  partyForm: FormGroup;
+  partyTypes: { value: string; label: string }[] = [];
+  isSubmitting = false;
+  isSaving = false;
+
+  constructor(
+    private contextConfigService: ContextConfigService,
+    private partyBuilderService: PartyBuilderService,
+    private fb: FormBuilder
+  ) {
+    this.partyForm = this.fb.group({
+      partyId: [''],
+      partyType: [''],
+      name: ['']
+    });
+  }
+
+  ngOnInit() {
+    this.contextConfigService.setContext('partyBuilder', 'existingPartyWithoutAccounts');
+    this.buttonsByLocation = this.contextConfigService.getButtonsByLocation();
+    this.partyTypes = this.contextConfigService.getLookup('partyTypes');
+    this.loadInitialData();
+  }
+
+  async loadInitialData() {
+    const initialApiCalls = this.contextConfigService.getInitialApiCalls();
+    for (const apiCall of initialApiCalls) {
+      await this.partyBuilderService.executeApiCall(apiCall, {}).toPromise();
+    }
+  }
+
+  onButtonAction(actionId: string) {
+    switch (actionId) {
+      case 'saveParty':
+        this.saveParty();
+        break;
+      case 'submitParty':
+        this.submitParty();
+        break;
+      case 'cancelParty':
+        this.cancelParty();
+        break;
+      default:
+        console.log(`Unhandled action: ${actionId}`);
+    }
+  }
+
+  onSubmit() {
+    if (this.partyForm.valid) {
+      this.submitParty();
+    } else {
+      console.log('Form is invalid');
+    }
+  }
+
+  saveParty() {
+    console.log('Saving party...');
+    this.isSaving = true;
+    const partyData = this.partyForm.value;
+    this.partyBuilderService.saveParty(partyData).subscribe(
+      response => {
+        console.log('Party saved successfully', response);
+        this.isSaving = false;
+        this.updateButtonStates();
+      },
+      error => {
+        console.error('Error saving party', error);
+        this.isSaving = false;
+        this.updateButtonStates();
       }
-      this.helpers.updateValidators(control, this.customValidatorsCache);
-      this.triggerUpdate();
-    }
+    );
   }
 
-  updateControlProperty<K extends keyof ExtendedControlOptions>(
-    control: AbstractControl,
-    property: K,
-    value: ExtendedControlOptions[K]
-  ): void {
-    const extendedControl = control as ExtendedAbstractControl;
-    if (this.helpers.shouldUpdateProperty(extendedControl, property, value)) {
-      (extendedControl as any)[property] = value;
-      if (property === 'required' || property === 'regex') {
-        this.helpers.updateValidators(control, this.customValidatorsCache);
+  submitParty() {
+    console.log('Submitting party...');
+    this.isSubmitting = true;
+    const partyData = this.partyForm.value;
+    this.partyBuilderService.executeApiCall('submitParty', { partyData }).subscribe(
+      response => {
+        console.log('Party submitted successfully', response);
+        this.isSubmitting = false;
+        this.updateButtonStates();
+      },
+      error => {
+        console.error('Error submitting party', error);
+        this.isSubmitting = false;
+        this.updateButtonStates();
       }
-      this.triggerUpdate();
+    );
+  }
+
+  cancelParty() {
+    console.log('Cancelling party builder...');
+    this.partyBuilderService.cancelParty().subscribe(
+      success => {
+        if (success) {
+          console.log('Party builder cancelled');
+          this.partyForm.reset();
+          this.updateButtonStates();
+        } else {
+          console.log('Failed to cancel party builder');
+        }
+      },
+      error => {
+        console.error('Error cancelling party builder', error);
+      }
+    );
+  }
+
+  trackByButtonId(index: number, button: ButtonConfig): string {
+    return button.id;
+  }
+
+  updateButtonState(button: ButtonConfig): ButtonConfig {
+    const updatedButton = { ...button };
+
+    switch (button.id) {
+      case 'saveParty':
+        updatedButton.disabled = !this.partyForm.dirty || this.isSaving || this.isSubmitting;
+        break;
+      case 'submitParty':
+        updatedButton.disabled = !this.partyForm.valid || this.isSubmitting || this.isSaving;
+        break;
+      case 'cancelParty':
+        updatedButton.visible = this.partyForm.dirty || this.isSaving || this.isSubmitting;
+        updatedButton.disabled = this.isSaving || this.isSubmitting;
+        break;
     }
+
+    return updatedButton;
   }
 
-  setFormGroupLayout(formGroup: FormGroup, layout: FormLayout): void {
-    const sortedLayout = this.helpers.sortFormLayout(layout);
-    this.formLayouts.set(formGroup, sortedLayout);
-    this.triggerUpdate();
-  }
-
-  getExtendedReadView(control: AbstractControl): Signal<FieldItem[]> {
-    if (!this.readViewCache.has(control)) {
-      const readViewSignal = computed(() => {
-        this.updateTrigger();
-        return untracked(() => this.helpers.getExtendedReadViewForControl(control, this.formLayouts));
-      });
-      this.readViewCache.set(control, readViewSignal);
-    }
-    return this.readViewCache.get(control)!;
-  }
-
-  registerCustomComputation(control: AbstractControl, computation: (control: AbstractControl, form: FormGroup) => any): void {
-    (control as ExtendedAbstractControl)._customComputation = computation;
-    this.triggerUpdate();
-  }
-
-  applyDefaultValues(control: AbstractControl, storeOldValue: boolean = false): void {
-    this.helpers.applyDefaultValuesRecursive(control, storeOldValue);
-    this.triggerUpdate();
-  }
-
-  getOldValue(control: AbstractControl): any | undefined {
-    return (control as ExtendedAbstractControl)._oldValue;
-  }
-
-  getExtendedProperties(control: AbstractControl): Partial<ExtendedControlOptions> {
-    if (!this.extendedPropertiesCache.has(control)) {
-      const properties = this.helpers.getExtendedProperties(control as ExtendedAbstractControl);
-      this.extendedPropertiesCache.set(control, properties);
-    }
-    return this.extendedPropertiesCache.get(control)!;
-  }
-
-  addCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
-    this.helpers.addCustomValidator(control, validator, this.customValidatorsCache);
-    this.helpers.updateValidators(control, this.customValidatorsCache);
-    this.triggerUpdate();
-  }
-
-  removeCustomValidator(control: AbstractControl, validator: ValidatorFn): void {
-    this.helpers.removeCustomValidator(control, validator, this.customValidatorsCache);
-    this.helpers.updateValidators(control, this.customValidatorsCache);
-    this.triggerUpdate();
-  }
-
-  handleArrayOperation(formArray: FormArray, operation: 'add' | 'remove', index?: number): void {
-    this.helpers.handleArrayOperation(formArray, operation, index);
-    this.triggerUpdate();
-  }
-
-  getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}): FieldItem[] {
-    return this.helpers.getUIReadView(control, options);
-  }
-
-  private triggerUpdate(): void {
-    this.updateTrigger.update(v => v + 1);
-  }
-
-  private clearCaches(): void {
-    this.readViewCache = new WeakMap();
-    this.extendedPropertiesCache = new WeakMap();
+  private updateButtonStates() {
+    // Force change detection to update button states
+    this.buttonsByLocation = { ...this.buttonsByLocation };
   }
 }
+Now, let's add the main AppModule to tie everything together:
 
-------------
-function parseDateAndFormat(input: string): string | null {
-  // Regular expression to match YYYY-MM-DD format
-  const dateRegex = /^(\d{4})-(\d{2})-(\d{2})$/;
-  const match = input.match(dateRegex);
+apps/your-app/src/app/app.module.ts:
 
-  if (match) {
-    const [, year, month, day] = match;
-    
-    // Validate month and day
-    const monthNum = parseInt(month, 10);
-    const dayNum = parseInt(day, 10);
-    
-    if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) {
-      return null; // Invalid month or day
+typescriptCopyimport { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+import { HttpClientModule } from '@angular/common/http';
+import { ReactiveFormsModule } from '@angular/forms';
+import { AppComponent } from './app.component';
+import { PartyBuilderComponent } from '@your-org/party-builder';
+import { CONTEXT_CONFIG, SHARED_CONFIG } from '@your-org/party-builder';
+import { contextConfigs, sharedConfigs } from './party-builder-config';
+
+@NgModule({
+  declarations: [AppComponent],
+  imports: [
+    BrowserModule,
+    HttpClientModule,
+    ReactiveFormsModule,
+    PartyBuilderComponent
+  ],
+  providers: [
+    { provide: CONTEXT_CONFIG, useValue: contextConfigs },
+    { provide: SHARED_CONFIG, useValue: sharedConfigs }
+  ],
+  bootstrap: [AppComponent]
+})
+export class AppModule { }
+
+apps/your-app/src/app/app.component.ts:
+
+typescriptCopyimport { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-root',
+  template: `
+    <h1>Party Builder App</h1>
+    <app-party-builder></app-party-builder>
+  `
+})
+export class AppComponent { }
+
+apps/your-app/src/app/party-builder-config.ts:
+
+typescriptCopyimport { ContextConfig, SharedConfig } from '@your-org/party-builder';
+
+export const contextConfigs: Record<string, ContextConfig> = {
+  partyBuilder: {
+    useCases: {
+      existingPartyWithoutAccounts: {
+        buttons: [
+          { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
+          { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
+          { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
+        ],
+        apiCalls: {
+          getPartyDetails: {
+            baseUrl: 'https://api.example.com',
+            endpoint: '/party',
+            method: 'GET',
+            inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
+          },
+          submitParty: {
+            baseUrl: 'https://api.example.com',
+            endpoint: '/submit',
+            method: 'POST',
+            inputs: ['partyData', 'metadata']
+          }
+        },
+        initialApiCalls: ['getPartyDetails']
+      }
+    },
+    lookups: {
+      partyTypes: [
+        { value: 'individual', label: 'Individual' },
+        { value: 'corporate', label: 'Corporate' }
+      ]
+    },
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
     }
-    
-    // Create a Date object to validate the date (e.g., catch invalid dates like 2023-02-31)
-    const date = new Date(parseInt(year, 10), monthNum - 1, dayNum);
-    if (
-      date.getFullYear() !== parseInt(year, 10) ||
-      date.getMonth() !== monthNum - 1 ||
-      date.getDate() !== dayNum
-    ) {
-      return null; // Invalid date
+  }
+};
+
+export const sharedConfigs: Record<string, SharedConfig> = {
+  standardPartyBuilder: {
+    useCases: {
+      basicPartyCreation: {
+        buttons: [
+          { id: 'save', label: 'Save Draft', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
+          { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
+        ],
+        apiCalls: {
+          getPartyDetails: {
+            baseUrl: 'https://api.example.com',
+            endpoint: '/party',
+            method: 'GET',
+            inputs: ['partyId', 'sourceApp']
+          }
+        },
+        initialApiCalls: []
+      }
+    },
+    lookups: {
+      partyTypes: [
+        { value: 'individual', label: 'Individual' },
+        { value: 'corporate', label: 'Corporate' }
+      ]
+    },
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
     }
-    
-    // Format as MM/DD/YYYY
-    return `${monthNum.toString().padStart(2, '0')}/${dayNum.toString().padStart(2, '0')}/${year}`;
   }
+};
+This complete implementation demonstrates:
 
-  return null; // No match found
-}
+How the context configuration is defined and provided to the application.
+How the ContextConfigService manages and provides access to the configuration.
+How the PartyBuilderService uses the context configuration to execute API calls.
+How the PartyBuilderComponent uses both services to render buttons and handle user interactions based on the context configuration.
+How form controls can be dynamically populated based on lookups from the context configuration.
+How button states are dynamically updated based on the form state and ongoing operations.
 
-// Usage example
-function processDateString(input: string): void {
-  const formattedDate = parseDateAndFormat(input);
-  if (formattedDate) {
-    console.log(`Formatted date: ${formattedDate}`);
-  } else {
-    console.log('Invalid date format or date');
-  }
-}
-
-// Test cases
-processDateString('2023-03-14'); // Should output: Formatted date: 03/14/2023
-processDateString('2023-02-28'); // Should output: Formatted date: 02/28/2023
-processDateString('2023-02-31'); // Should output: Invalid date format or date
-processDateString('2023-13-01'); // Should output: Invalid date format or date
-processDateString('not a date'); // Should output: Invalid date format or date
+This setup allows for flexible, configuration-driven behavior in your application. You can easily change the behavior of the party builder by modifying the context configuration, without having to change the component code.
