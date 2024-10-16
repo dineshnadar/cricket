@@ -1,4 +1,78 @@
+// apps/your-app/src/app/party-builder-config.ts
 
+import { ContextConfig, SharedConfig, ButtonConfig, ApiCallConfig } from '@your-org/party-builder';
+
+// Common Buttons
+const commonButtons: Record<string, ButtonConfig> = {
+  save: { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
+  submit: { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
+  cancel: { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
+};
+
+// Common API Calls
+const commonApiCalls: Record<string, ApiCallConfig> = {
+  getPartyDetails: {
+    baseUrl: 'https://api.example.com',
+    endpoint: '/party',
+    method: 'GET',
+    inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
+  },
+  submitParty: {
+    baseUrl: 'https://api.example.com',
+    endpoint: '/submit',
+    method: 'POST',
+    inputs: ['partyData', 'metadata']
+  }
+};
+
+// Common Lookups
+const commonLookups = {
+  partyTypes: [
+    { value: 'individual', label: 'Individual' },
+    { value: 'corporate', label: 'Corporate' }
+  ]
+};
+
+export const contextConfigs: Record<string, ContextConfig> = {
+  partyBuilder: {
+    useCases: {
+      existingPartyWithoutAccounts: {
+        buttons: [commonButtons.save, commonButtons.submit, commonButtons.cancel],
+        apiCalls: {
+          getPartyDetails: commonApiCalls.getPartyDetails,
+          submitParty: commonApiCalls.submitParty
+        },
+        initialApiCalls: ['getPartyDetails']
+      }
+    },
+    lookups: commonLookups,
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
+    }
+  }
+};
+
+export const sharedConfigs: Record<string, SharedConfig> = {
+  standardPartyBuilder: {
+    useCases: {
+      basicPartyCreation: {
+        buttons: [commonButtons.save, commonButtons.cancel],
+        apiCalls: {
+          getPartyDetails: commonApiCalls.getPartyDetails
+        },
+        initialApiCalls: []
+      }
+    },
+    lookups: commonLookups,
+    metadata: {
+      version: '1.0.0',
+      lastUpdated: '2023-05-20'
+    }
+  }
+};
+
+----------
 Library Structure (libs/party-builder/src/):
 
 Copylib/
