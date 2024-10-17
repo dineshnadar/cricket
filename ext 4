@@ -1,226 +1,12 @@
-// apps/your-app/src/app/party-builder-config.ts
+Party Config Demo Component (party-config-demo.component.ts)
+App Module (app.module.ts)
+Test Cases (party-config.service.spec.ts)
 
-import { ContextConfig, SharedConfig, ButtonConfig, ApiCallConfig } from '@your-org/party-builder';
+Let's start with the implementation files:
 
-// Common Buttons
-const commonButtons: Record<string, ButtonConfig> = {
-  save: { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
-  submit: { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
-  cancel: { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
-};
+context-config.ts:
 
-// Common API Calls
-const commonApiCalls: Record<string, ApiCallConfig> = {
-  getPartyDetails: {
-    baseUrl: 'https://api.example.com',
-    endpoint: '/party',
-    method: 'GET',
-    inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
-  },
-  submitParty: {
-    baseUrl: 'https://api.example.com',
-    endpoint: '/submit',
-    method: 'POST',
-    inputs: ['partyData', 'metadata']
-  }
-};
-
-// Common Lookups
-const commonLookups = {
-  partyTypes: [
-    { value: 'individual', label: 'Individual' },
-    { value: 'corporate', label: 'Corporate' }
-  ]
-};
-
-export const contextConfigs: Record<string, ContextConfig> = {
-  partyBuilder: {
-    useCases: {
-      existingPartyWithoutAccounts: {
-        buttons: [commonButtons.save, commonButtons.submit, commonButtons.cancel],
-        apiCalls: {
-          getPartyDetails: commonApiCalls.getPartyDetails,
-          submitParty: commonApiCalls.submitParty
-        },
-        initialApiCalls: ['getPartyDetails']
-      }
-    },
-    lookups: commonLookups,
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    }
-  }
-};
-
-export const sharedConfigs: Record<string, SharedConfig> = {
-  standardPartyBuilder: {
-    useCases: {
-      basicPartyCreation: {
-        buttons: [commonButtons.save, commonButtons.cancel],
-        apiCalls: {
-          getPartyDetails: commonApiCalls.getPartyDetails
-        },
-        initialApiCalls: []
-      }
-    },
-    lookups: commonLookups,
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    }
-  }
-};
-
----------------------xxxxx-----------------
-
-// libs/party-builder/src/lib/context-config.service.ts
-
-import { Injectable } from '@angular/core';
-import { ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig } from './context-config';
-import { contextConfigs, sharedConfigs } from '../../../apps/your-app/src/app/party-builder-config';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ContextConfigService {
-  private currentContext: string = '';
-  private currentUseCase: string = '';
-
-  setContext(context: string, useCase: string) {
-    this.currentContext = context;
-    this.currentUseCase = useCase;
-  }
-
-  getCurrentContext() {
-    return { context: this.currentContext, useCase: this.currentUseCase };
-  }
-
-  private getUseCaseConfig(context: string, useCase: string): UseCaseConfig | null {
-    return contextConfigs[context]?.useCases[useCase] || null;
-  }
-
-  getButtons(context?: string, useCase?: string): ButtonConfig[] {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.buttons || [];
-  }
-
-  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
-    const buttons = this.getButtons(context, useCase);
-    return buttons.reduce((acc, button) => {
-      (acc[button.location] = acc[button.location] || []).push(button);
-      return acc;
-    }, {} as Record<string, ButtonConfig[]>);
-  }
-
-  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.apiCalls[apiCallId];
-  }
-
-  getInitialApiCalls(context?: string, useCase?: string): string[] {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.initialApiCalls || [];
-  }
-
-  getLookup(lookupName: string, context?: string): any[] {
-    const relevantContext = context || this.currentContext;
-    return contextConfigs[relevantContext]?.lookups?.[lookupName] || 
-           sharedConfigs.standardPartyBuilder?.lookups?.[lookupName] || 
-           [];
-  }
-
-  getMetadata(context?: string): Record<string, any> | undefined {
-    const relevantContext = context || this.currentContext;
-    return contextConfigs[relevantContext]?.metadata || 
-           sharedConfigs.standardPartyBuilder?.metadata;
-  }
-
-  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, additionalTransforms?: ((input: any) => any)[]): Promise<any> {
-    const apiCall = this.getApiCall(apiCallName, context, useCase);
-    if (!apiCall) {
-      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
-    }
-
-    let preparedData: any = {};
-    for (const inputConfig of apiCall.inputs) {
-      if (typeof inputConfig === 'string') {
-        if (input[inputConfig] !== undefined) {
-          preparedData[inputConfig] = input[inputConfig];
-        }
-      } else {
-        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
-        if (lookupValue !== undefined) {
-          preparedData[inputConfig.name] = lookupValue;
-        }
-      }
-    }
-
-    if (apiCall.lookups) {
-      for (const lookupName of apiCall.lookups) {
-        preparedData[lookupName] = this.getLookup(lookupName, context);
-      }
-    }
-
-    const metadata = this.getMetadata(context);
-    if (metadata) {
-      preparedData.metadata = metadata;
-    }
-
-    const transforms = [
-      apiCall.transformInput,
-      ...(additionalTransforms || [])
-    ].filter(Boolean);
-
-    for (const transform of transforms) {
-      preparedData = await transform(preparedData);
-    }
-
-    return preparedData;
-  }
-
-  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
-    const lookup = this.getLookup(lookupName, context);
-    const lookupItem = lookup.find(item => item[key] === value);
-    return lookupItem ? lookupItem.value : undefined;
-  }
-
-  getSharedUseCaseConfig(useCaseName: string): UseCaseConfig | null {
-    return sharedConfigs.standardPartyBuilder?.useCases[useCaseName] || null;
-  }
-
-  mergeWithSharedConfig(contextUseCase: string, sharedUseCase: string, context?: string): UseCaseConfig {
-    const contextConfig = this.getUseCaseConfig(context || this.currentContext, contextUseCase);
-    const sharedConfig = this.getSharedUseCaseConfig(sharedUseCase);
-
-    if (!contextConfig) {
-      throw new Error(`Context use case ${contextUseCase} not found`);
-    }
-
-    if (!sharedConfig) {
-      throw new Error(`Shared use case ${sharedUseCase} not found`);
-    }
-
-    return {
-      buttons: [...(contextConfig.buttons || []), ...(sharedConfig.buttons || [])],
-      apiCalls: { ...sharedConfig.apiCalls, ...contextConfig.apiCalls },
-      initialApiCalls: [...(sharedConfig.initialApiCalls || []), ...(contextConfig.initialApiCalls || [])]
-    };
-  }
-
-  private getRelevantUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
-    if (context && useCase) {
-      return this.getUseCaseConfig(context, useCase);
-    }
-    return this.getUseCaseConfig(this.currentContext, this.currentUseCase);
-  }
-}
-
----------------xxxxx------------
-
-// libs/party-builder/src/lib/context-config.ts
-
-export interface ButtonConfig {
+typescriptCopyexport interface ButtonConfig {
   id: string;
   label: string;
   action: string;
@@ -237,8 +23,7 @@ export interface ApiCallConfig {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   inputs: Array<string | { name: string; fromLookup: string; key: string }>;
   lookups?: string[];
-  transformInput?: (input: any) => any;
-  dependsOn?: string[];
+  transformInput?: (input: any) => Promise<any>;
 }
 
 export interface UseCaseConfig {
@@ -247,10 +32,17 @@ export interface UseCaseConfig {
   initialApiCalls: string[];
 }
 
+export interface AppSettings {
+  showLeftMenu: boolean;
+  showHeader: boolean;
+}
+
 export interface ContextConfig {
   useCases: Record<string, UseCaseConfig>;
   lookups?: Record<string, any>;
   metadata?: Record<string, any>;
+  sourceAppSettings: Record<string, AppSettings>;
+  defaultSourceApp: string;
 }
 
 export interface SharedConfig {
@@ -258,734 +50,6 @@ export interface SharedConfig {
   lookups?: Record<string, any>;
   metadata?: Record<string, any>;
 }
-
-// Remove the following lines as we no longer need injection tokens
-// export const CONTEXT_CONFIG = new InjectionToken<Record<string, ContextConfig>>('CONTEXT_CONFIG');
-// export const SHARED_CONFIG = new InjectionToken<Record<string, SharedConfig>>('SHARED_CONFIG');
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-------------------xxxx----------------------xxxx-----------------------------xxxx---------
-// apps/your-app/src/app/party-builder-config.ts
-
-import { ContextConfig, SharedConfig, ButtonConfig, ApiCallConfig } from '@your-org/party-builder';
-
-// Common Buttons
-const commonButtons: Record<string, ButtonConfig> = {
-  save: { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
-  submit: { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
-  cancel: { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
-};
-
-// Common API Calls
-const commonApiCalls: Record<string, ApiCallConfig> = {
-  getPartyDetails: {
-    baseUrl: 'https://api.example.com',
-    endpoint: '/party',
-    method: 'GET',
-    inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
-  },
-  submitParty: {
-    baseUrl: 'https://api.example.com',
-    endpoint: '/submit',
-    method: 'POST',
-    inputs: ['partyData', 'metadata']
-  }
-};
-
-// Common Lookups
-const commonLookups = {
-  partyTypes: [
-    { value: 'individual', label: 'Individual' },
-    { value: 'corporate', label: 'Corporate' }
-  ]
-};
-
-export const contextConfigs: Record<string, ContextConfig> = {
-  partyBuilder: {
-    useCases: {
-      existingPartyWithoutAccounts: {
-        buttons: [commonButtons.save, commonButtons.submit, commonButtons.cancel],
-        apiCalls: {
-          getPartyDetails: commonApiCalls.getPartyDetails,
-          submitParty: commonApiCalls.submitParty
-        },
-        initialApiCalls: ['getPartyDetails']
-      }
-    },
-    lookups: commonLookups,
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    }
-  }
-};
-
-export const sharedConfigs: Record<string, SharedConfig> = {
-  standardPartyBuilder: {
-    useCases: {
-      basicPartyCreation: {
-        buttons: [commonButtons.save, commonButtons.cancel],
-        apiCalls: {
-          getPartyDetails: commonApiCalls.getPartyDetails
-        },
-        initialApiCalls: []
-      }
-    },
-    lookups: commonLookups,
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    }
-  }
-};
-
-----------
-Library Structure (libs/party-builder/src/):
-
-Copylib/
-├── button.component.ts
-├── context-config.service.ts
-├── party-builder.service.ts
-├── party-builder.component.ts
-├── context-config.ts
-index.ts
-
-libs/party-builder/src/lib/context-config.ts:
-
-typescriptCopyimport { InjectionToken } from '@angular/core';
-
-export interface ButtonConfig {
-  id: string;
-  label: string;
-  action: string;
-  location: 'header' | 'footer' | 'form-top' | 'form-bottom' | 'sidebar';
-  visible: boolean;
-  disabled: boolean;
-  requireConfirmation?: boolean;
-  confirmationMessage?: string;
-}
-
-export interface ApiCallConfig {
-  baseUrl: string;
-  endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  inputs: Array<string | { name: string; fromLookup: string; key: string }>;
-  lookups?: string[];
-  transformInput?: (input: any) => any;
-  dependsOn?: string[];
-}
-
-export interface UseCaseConfig {
-  buttons: ButtonConfig[];
-  apiCalls: Record<string, ApiCallConfig>;
-  initialApiCalls: string[];
-}
-
-export interface ContextConfig {
-  useCases: Record<string, UseCaseConfig>;
-  lookups?: Record<string, any>;
-  metadata?: Record<string, any>;
-}
-
-export interface SharedConfig {
-  useCases: Record<string, UseCaseConfig>;
-  lookups?: Record<string, any>;
-  metadata?: Record<string, any>;
-}
-
-export const CONTEXT_CONFIG = new InjectionToken<Record<string, ContextConfig>>('CONTEXT_CONFIG');
-export const SHARED_CONFIG = new InjectionToken<Record<string, SharedConfig>>('SHARED_CONFIG');
-
-libs/party-builder/src/lib/context-config.service.ts:
-
-typescriptCopyimport { Injectable, Inject } from '@angular/core';
-import { CONTEXT_CONFIG, SHARED_CONFIG, ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig } from './context-config';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ContextConfigService {
-  private currentContext: string = '';
-  private currentUseCase: string = '';
-
-  constructor(
-    @Inject(CONTEXT_CONFIG) private contextConfigs: Record<string, ContextConfig>,
-    @Inject(SHARED_CONFIG) private sharedConfigs: Record<string, SharedConfig>
-  ) {}
-
-  setContext(context: string, useCase: string) {
-    this.currentContext = context;
-    this.currentUseCase = useCase;
-  }
-
-  getCurrentContext() {
-    return { context: this.currentContext, useCase: this.currentUseCase };
-  }
-
-  private getUseCaseConfig(context: string, useCase: string): UseCaseConfig | null {
-    return this.contextConfigs[context]?.useCases[useCase] || null;
-  }
-
-  getButtons(context?: string, useCase?: string): ButtonConfig[] {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.buttons || [];
-  }
-
-  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
-    const buttons = this.getButtons(context, useCase);
-    return buttons.reduce((acc, button) => {
-      (acc[button.location] = acc[button.location] || []).push(button);
-      return acc;
-    }, {} as Record<string, ButtonConfig[]>);
-  }
-
-  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.apiCalls[apiCallId];
-  }
-
-  getInitialApiCalls(context?: string, useCase?: string): string[] {
-    const useCaseConfig = this.getRelevantUseCaseConfig(context, useCase);
-    return useCaseConfig?.initialApiCalls || [];
-  }
-
-  getLookup(lookupName: string, context?: string): any[] {
-    const relevantContext = context || this.currentContext;
-    return this.contextConfigs[relevantContext]?.lookups?.[lookupName] || 
-           this.sharedConfigs.standardPartyBuilder?.lookups?.[lookupName] || 
-           [];
-  }
-
-  getMetadata(context?: string): Record<string, any> | undefined {
-    const relevantContext = context || this.currentContext;
-    return this.contextConfigs[relevantContext]?.metadata || 
-           this.sharedConfigs.standardPartyBuilder?.metadata;
-  }
-
-  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, additionalTransforms?: ((input: any) => any)[]): Promise<any> {
-    const apiCall = this.getApiCall(apiCallName, context, useCase);
-    if (!apiCall) {
-      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
-    }
-
-    let preparedData: any = {};
-    for (const inputConfig of apiCall.inputs) {
-      if (typeof inputConfig === 'string') {
-        if (input[inputConfig] !== undefined) {
-          preparedData[inputConfig] = input[inputConfig];
-        }
-      } else {
-        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
-        if (lookupValue !== undefined) {
-          preparedData[inputConfig.name] = lookupValue;
-        }
-      }
-    }
-
-    if (apiCall.lookups) {
-      for (const lookupName of apiCall.lookups) {
-        preparedData[lookupName] = this.getLookup(lookupName, context);
-      }
-    }
-
-    const metadata = this.getMetadata(context);
-    if (metadata) {
-      preparedData.metadata = metadata;
-    }
-
-    const transforms = [
-      apiCall.transformInput,
-      ...(additionalTransforms || [])
-    ].filter(Boolean);
-
-    for (const transform of transforms) {
-      preparedData = await transform(preparedData);
-    }
-
-    return preparedData;
-  }
-
-  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
-    const lookup = this.getLookup(lookupName, context);
-    const lookupItem = lookup.find(item => item[key] === value);
-    return lookupItem ? lookupItem.value : undefined;
-  }
-
-  getSharedUseCaseConfig(useCaseName: string): UseCaseConfig | null {
-    return this.sharedConfigs.standardPartyBuilder?.useCases[useCaseName] || null;
-  }
-
-  mergeWithSharedConfig(contextUseCase: string, sharedUseCase: string, context?: string): UseCaseConfig {
-    const contextConfig = this.getUseCaseConfig(context || this.currentContext, contextUseCase);
-    const sharedConfig = this.getSharedUseCaseConfig(sharedUseCase);
-
-    if (!contextConfig) {
-      throw new Error(`Context use case ${contextUseCase} not found`);
-    }
-
-    if (!sharedConfig) {
-      throw new Error(`Shared use case ${sharedUseCase} not found`);
-    }
-
-    return {
-      buttons: [...(contextConfig.buttons || []), ...(sharedConfig.buttons || [])],
-      apiCalls: { ...sharedConfig.apiCalls, ...contextConfig.apiCalls },
-      initialApiCalls: [...(sharedConfig.initialApiCalls || []), ...(contextConfig.initialApiCalls || [])]
-    };
-  }
-
-  private getRelevantUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
-    if (context && useCase) {
-      return this.getUseCaseConfig(context, useCase);
-    }
-    return this.getUseCaseConfig(this.currentContext, this.currentUseCase);
-  }
-}
-
-libs/party-builder/src/lib/party-builder.service.ts:
-
-typescriptCopyimport { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { ContextConfigService } from './context-config.service';
-import { catchError, Observable, of } from 'rxjs';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class PartyBuilderService {
-  private http = inject(HttpClient);
-  private contextConfig = inject(ContextConfigService);
-
-  executeApiCall(apiCallName: string, input: any, context?: string, useCase?: string): Observable<any> {
-    const apiCall = this.contextConfig.getApiCall(apiCallName, context, useCase);
-    if (!apiCall) {
-      return of(null);
-    }
-
-    return this.contextConfig.prepareApiCall(apiCallName, input, context, useCase).then(preparedData => {
-      const url = `${apiCall.baseUrl}${apiCall.endpoint}`;
-      switch (apiCall.method) {
-        case 'GET':
-          return this.http.get(url, { params: preparedData });
-        case 'POST':
-          return this.http.post(url, preparedData);
-        case 'PUT':
-          return this.http.put(url, preparedData);
-        case 'DELETE':
-          return this.http.delete(url, { body: preparedData });
-        default:
-          throw new Error(`Unsupported HTTP method: ${apiCall.method}`);
-      }
-    }).pipe(
-      catchError(error => {
-        console.error(`Error in API call ${apiCallName}:`, error);
-        return of(null);
-      })
-    );
-  }
-
-  saveParty(partyData: any, context?: string, useCase?: string): Observable<any> {
-    return this.executeApiCall('submitParty', { partyData }, context, useCase);
-  }
-
-  cancelParty(): Observable<boolean> {
-    // Implement cancel logic
-    return of(true);
-  }
-}
-
-libs/party-builder/src/lib/button.component.ts:
-
-typescriptCopyimport { Component, Input, Output, EventEmitter, ChangeDetectionStrategy } from '@angular/core';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-button',
-  standalone: true,
-  template: `
-    <button
-      [disabled]="config.disabled"
-      [style.display]="config.visible ? 'inline-block' : 'none'"
-      (click)="onClick()"
-      [attr.data-testid]="config.id">
-      {{ config.label }}
-    </button>
-  `,
-  changeDetection: ChangeDetectionStrategy.OnPush
-})
-export class ButtonComponent {
-  @Input({ required: true }) config!: ButtonConfig;
-  @Output() action = new EventEmitter<string>();
-
-  onClick() {
-    if (this.config.requireConfirmation && !confirm(this.config.confirmationMessage || 'Are you sure?')) {
-      return;
-    }
-    this.action.emit(this.config.id);
-  }
-}
-
-libs/party-builder/src/lib/party-builder.component.ts:
-
-typescriptCopyimport { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ContextConfigService } from './context-config.service';
-import { PartyBuilderService } from './party-builder.service';
-import { ButtonComponent } from './button.component';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-party-builder',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, ButtonComponent],
-  template: `
-    <div>
-      <h2>Party Builder</h2>
-      <div *ngFor="let button of buttonsByLocation['header']; trackBy: trackByButtonId">
-        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-      </div>
-      
-      <form [formGroup]="partyForm" (ngSubmit)="onSubmit()">
-        <div *ngFor="let button of buttonsByLocation['form-top']; trackBy: trackByButtonId">
-          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-        </div>
-
-        <div>
-          <label for="partyId">Party ID:</label>
-          <input id="partyId" formControlName="partyId">
-        </div>
-        <div>
-          <label for="partyType">Party Type:</label>
-          <select id="partyType" formControlName="partyType">
-            <option *ngFor="let type of partyTypes" [value]="type.value">{{type.label}}</option>
-          </select>
-        </div>
-        <div>
-          <label for="name">Name:</label>
-          <input id="name" formControlName="name">
-        </div>
-
-        <div *ngFor="let button of buttonsByLocation['form-bottom']; trackBy: trackByButtonId">
-          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-        </div>
-      </form>
-
-      <div *ngFor="let button of buttonsByLocation['footer']; trackBy: trackByButtonId">
-        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-      </div>
-    </div>
-  `
-})
-export class PartyBuilderComponent implements OnInit {
-  buttonsByLocation: Record<string, ButtonConfig[]> = {};
-  partyForm: FormGroup;
-  partyTypes: { value: string; label: string }[] = [];
-  isSubmitting = false;
-  isSaving = false;
-
-  constructor(
-    private contextConfigService: ContextConfigService,
-    private partyBuilderService: PartyBuilderService,
-    private fb: FormBuilder
-  ) {
-    this.partyForm = this.fb.group({
-      partyId: [''],
-      partyType: [''],
-      name: ['']
-    });
-  }
-
-  ngOnInit() {
-    this.contextConfigService.setContext('partyBuilder', 'existingPartyWithoutAccounts');
-    this.buttonsByLocation = this.contextConfigService.getButtonsByLocation();
-    this.partyTypes = this.contextConfigService.getLookup('partyTypes');
-    this.loadInitialData();
-  }
-
-  async loadInitialData() {
-    const initialApiCalls = this.contextConfigService.getInitialApiCalls();
-    for (const apiCall of initialApiCalls) {
-      await this.partyBuilderService.executeApiCall(apiCall, {}).toPromise();
-    }
-  }
-
-  onButtonAction(actionId: string) {
-    switch (actionId) {
-      case 'saveParty':
-        this.saveParty();
-        break;
-      case 'submitParty':
-        this.submitParty();
-        break;
-      case 'cancelParty':
-        this.cancelParty();
-        break;
-      default:
-        console.log(`Unhandled action: ${actionId}`);
-    }
-  }
-
-  onSubmit() {
-    if (this.partyForm.valid) {
-      this.submitParty();
-    } else {
-      console.log('Form is invalid');
-    }
-  }
-
-  saveParty() {
-    console.log('Saving party...');
-    this.isSaving = true;
-    const partyData = this.partyForm.value;
-    this.partyBuilderService.saveParty( CopyRetryClaude’s response was limited as it hit the maximum length allowed at this time. Claude does not have the ability to run the code it generates yet.DScode stuck in saveParty() {EditI apologize for the interruption. Let's complete the PartyBuilderComponent with the saveParty, submitParty, and cancelParty methods, along with the supporting methods. Here's the complete PartyBuilderComponent:
-typescriptCopyimport { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ContextConfigService } from './context-config.service';
-import { PartyBuilderService } from './party-builder.service';
-import { ButtonComponent } from './button.component';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-party-builder',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, ButtonComponent],
-  template: `
-    <div>
-      <h2>Party Builder</h2>
-      <div *ngFor="let button of buttonsByLocation['header']; trackBy: trackByButtonId">
-        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-      </div>
-      
-      <form [formGroup]="partyForm" (ngSubmit)="onSubmit()">
-        <div *ngFor="let button of buttonsByLocation['form-top']; trackBy: trackByButtonId">
-          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-        </div>
-
-        <div>
-          <label for="partyId">Party ID:</label>
-          <input id="partyId" formControlName="partyId">
-        </div>
-        <div>
-          <label for="partyType">Party Type:</label>
-          <select id="partyType" formControlName="partyType">
-            <option *ngFor="let type of partyTypes" [value]="type.value">{{type.label}}</option>
-          </select>
-        </div>
-        <div>
-          <label for="name">Name:</label>
-          <input id="name" formControlName="name">
-        </div>
-
-        <div *ngFor="let button of buttonsByLocation['form-bottom']; trackBy: trackByButtonId">
-          <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-        </div>
-      </form>
-
-      <div *ngFor="let button of buttonsByLocation['footer']; trackBy: trackByButtonId">
-        <app-button [config]="updateButtonState(button)" (action)="onButtonAction($event)"></app-button>
-      </div>
-    </div>
-  `
-})
-export class PartyBuilderComponent implements OnInit {
-  buttonsByLocation: Record<string, ButtonConfig[]> = {};
-  partyForm: FormGroup;
-  partyTypes: { value: string; label: string }[] = [];
-  isSubmitting = false;
-  isSaving = false;
-
-  constructor(
-    private contextConfigService: ContextConfigService,
-    private partyBuilderService: PartyBuilderService,
-    private fb: FormBuilder
-  ) {
-    this.partyForm = this.fb.group({
-      partyId: [''],
-      partyType: [''],
-      name: ['']
-    });
-  }
-
-  ngOnInit() {
-    this.contextConfigService.setContext('partyBuilder', 'existingPartyWithoutAccounts');
-    this.buttonsByLocation = this.contextConfigService.getButtonsByLocation();
-    this.partyTypes = this.contextConfigService.getLookup('partyTypes');
-    this.loadInitialData();
-  }
-
-  async loadInitialData() {
-    const initialApiCalls = this.contextConfigService.getInitialApiCalls();
-    for (const apiCall of initialApiCalls) {
-      await this.partyBuilderService.executeApiCall(apiCall, {}).toPromise();
-    }
-  }
-
-  onButtonAction(actionId: string) {
-    switch (actionId) {
-      case 'saveParty':
-        this.saveParty();
-        break;
-      case 'submitParty':
-        this.submitParty();
-        break;
-      case 'cancelParty':
-        this.cancelParty();
-        break;
-      default:
-        console.log(`Unhandled action: ${actionId}`);
-    }
-  }
-
-  onSubmit() {
-    if (this.partyForm.valid) {
-      this.submitParty();
-    } else {
-      console.log('Form is invalid');
-    }
-  }
-
-  saveParty() {
-    console.log('Saving party...');
-    this.isSaving = true;
-    const partyData = this.partyForm.value;
-    this.partyBuilderService.saveParty(partyData).subscribe(
-      response => {
-        console.log('Party saved successfully', response);
-        this.isSaving = false;
-        this.updateButtonStates();
-      },
-      error => {
-        console.error('Error saving party', error);
-        this.isSaving = false;
-        this.updateButtonStates();
-      }
-    );
-  }
-
-  submitParty() {
-    console.log('Submitting party...');
-    this.isSubmitting = true;
-    const partyData = this.partyForm.value;
-    this.partyBuilderService.executeApiCall('submitParty', { partyData }).subscribe(
-      response => {
-        console.log('Party submitted successfully', response);
-        this.isSubmitting = false;
-        this.updateButtonStates();
-      },
-      error => {
-        console.error('Error submitting party', error);
-        this.isSubmitting = false;
-        this.updateButtonStates();
-      }
-    );
-  }
-
-  cancelParty() {
-    console.log('Cancelling party builder...');
-    this.partyBuilderService.cancelParty().subscribe(
-      success => {
-        if (success) {
-          console.log('Party builder cancelled');
-          this.partyForm.reset();
-          this.updateButtonStates();
-        } else {
-          console.log('Failed to cancel party builder');
-        }
-      },
-      error => {
-        console.error('Error cancelling party builder', error);
-      }
-    );
-  }
-
-  trackByButtonId(index: number, button: ButtonConfig): string {
-    return button.id;
-  }
-
-  updateButtonState(button: ButtonConfig): ButtonConfig {
-    const updatedButton = { ...button };
-
-    switch (button.id) {
-      case 'saveParty':
-        updatedButton.disabled = !this.partyForm.dirty || this.isSaving || this.isSubmitting;
-        break;
-      case 'submitParty':
-        updatedButton.disabled = !this.partyForm.valid || this.isSubmitting || this.isSaving;
-        break;
-      case 'cancelParty':
-        updatedButton.visible = this.partyForm.dirty || this.isSaving || this.isSubmitting;
-        updatedButton.disabled = this.isSaving || this.isSubmitting;
-        break;
-    }
-
-    return updatedButton;
-  }
-
-  private updateButtonStates() {
-    // Force change detection to update button states
-    this.buttonsByLocation = { ...this.buttonsByLocation };
-  }
-}
-Now, let's add the main AppModule to tie everything together:
-
-apps/your-app/src/app/app.module.ts:
-
-typescriptCopyimport { NgModule } from '@angular/core';
-import { BrowserModule } from '@angular/platform-browser';
-import { HttpClientModule } from '@angular/common/http';
-import { ReactiveFormsModule } from '@angular/forms';
-import { AppComponent } from './app.component';
-import { PartyBuilderComponent } from '@your-org/party-builder';
-import { CONTEXT_CONFIG, SHARED_CONFIG } from '@your-org/party-builder';
-import { contextConfigs, sharedConfigs } from './party-builder-config';
-
-@NgModule({
-  declarations: [AppComponent],
-  imports: [
-    BrowserModule,
-    HttpClientModule,
-    ReactiveFormsModule,
-    PartyBuilderComponent
-  ],
-  providers: [
-    { provide: CONTEXT_CONFIG, useValue: contextConfigs },
-    { provide: SHARED_CONFIG, useValue: sharedConfigs }
-  ],
-  bootstrap: [AppComponent]
-})
-export class AppModule { }
-
-apps/your-app/src/app/app.component.ts:
-
-typescriptCopyimport { Component } from '@angular/core';
-
-@Component({
-  selector: 'app-root',
-  template: `
-    <h1>Party Builder App</h1>
-    <app-party-builder></app-party-builder>
-  `
-})
-export class AppComponent { }
-
-apps/your-app/src/app/party-builder-config.ts:
-
-typescriptCopyimport { ContextConfig, SharedConfig } from '@your-org/party-builder';
 
 export const contextConfigs: Record<string, ContextConfig> = {
   partyBuilder: {
@@ -994,56 +58,31 @@ export const contextConfigs: Record<string, ContextConfig> = {
         buttons: [
           { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
           { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
-          { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
         ],
         apiCalls: {
           getPartyDetails: {
             baseUrl: 'https://api.example.com',
             endpoint: '/party',
             method: 'GET',
-            inputs: ['partyId', 'sourceApp', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
+            inputs: ['partyId', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
           },
-          submitParty: {
-            baseUrl: 'https://api.example.com',
-            endpoint: '/submit',
-            method: 'POST',
-            inputs: ['partyData', 'metadata']
-          }
         },
         initialApiCalls: ['getPartyDetails']
-      }
-    },
-    lookups: {
-      partyTypes: [
-        { value: 'individual', label: 'Individual' },
-        { value: 'corporate', label: 'Corporate' }
-      ]
-    },
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    }
-  }
-};
-
-export const sharedConfigs: Record<string, SharedConfig> = {
-  standardPartyBuilder: {
-    useCases: {
-      basicPartyCreation: {
+      },
+      newPartyCreation: {
         buttons: [
-          { id: 'save', label: 'Save Draft', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
-          { id: 'cancel', label: 'Cancel', action: 'cancelParty', location: 'header', visible: true, disabled: false }
+          { id: 'create', label: 'Create', action: 'createParty', location: 'form-bottom', visible: true, disabled: false },
         ],
         apiCalls: {
-          getPartyDetails: {
+          createParty: {
             baseUrl: 'https://api.example.com',
             endpoint: '/party',
-            method: 'GET',
-            inputs: ['partyId', 'sourceApp']
-          }
+            method: 'POST',
+            inputs: ['partyData']
+          },
         },
         initialApiCalls: []
-      }
+      },
     },
     lookups: {
       partyTypes: [
@@ -1054,16 +93,779 @@ export const sharedConfigs: Record<string, SharedConfig> = {
     metadata: {
       version: '1.0.0',
       lastUpdated: '2023-05-20'
+    },
+    sourceAppSettings: {
+      web: {
+        showLeftMenu: true,
+        showHeader: true,
+      },
+      mobile: {
+        showLeftMenu: false,
+        showHeader: true,
+      },
+      kiosk: {
+        showLeftMenu: false,
+        showHeader: false,
+      }
+    },
+    defaultSourceApp: 'web'
+  },
+};
+
+export const sharedConfigs: SharedConfig = {
+  useCases: {},
+  lookups: {},
+  metadata: {}
+};
+
+context-config.service.ts:
+
+typescriptCopyimport { Injectable } from '@angular/core';
+import { ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig, AppSettings } from './context-config';
+import { contextConfigs, sharedConfigs } from './context-config';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ContextConfigService {
+  private currentSourceApp: string = '';
+  private currentContext: string = '';
+  private currentUseCase: string = '';
+
+  setContext(context: string, useCase?: string, sourceApp?: string) {
+    this.currentContext = context;
+    this.currentUseCase = useCase || Object.keys(contextConfigs[context].useCases)[0];
+    this.currentSourceApp = sourceApp || contextConfigs[context].defaultSourceApp;
+  }
+
+  setContextByUseCaseAndSourceApp(useCase: string, sourceApp: string) {
+    const context = this.findContextByUseCaseAndSourceApp(useCase, sourceApp);
+    if (context) {
+      this.setContext(context, useCase, sourceApp);
+    } else {
+      throw new Error(`No matching context found for use case "${useCase}" and source app "${sourceApp}"`);
     }
   }
-};
-This complete implementation demonstrates:
 
-How the context configuration is defined and provided to the application.
-How the ContextConfigService manages and provides access to the configuration.
-How the PartyBuilderService uses the context configuration to execute API calls.
-How the PartyBuilderComponent uses both services to render buttons and handle user interactions based on the context configuration.
-How form controls can be dynamically populated based on lookups from the context configuration.
-How button states are dynamically updated based on the form state and ongoing operations.
+  setContextByContextAndSourceApp(context: string, sourceApp: string) {
+    if (contextConfigs[context] && contextConfigs[context].sourceAppSettings[sourceApp]) {
+      this.setContext(context, undefined, sourceApp);
+    } else {
+      throw new Error(`Invalid context "${context}" or source app "${sourceApp}"`);
+    }
+  }
 
-This setup allows for flexible, configuration-driven behavior in your application. You can easily change the behavior of the party builder by modifying the context configuration, without having to change the component code.
+  private findContextByUseCaseAndSourceApp(useCase: string, sourceApp: string): string | null {
+    for (const [context, config] of Object.entries(contextConfigs)) {
+      if (config.useCases[useCase] && config.sourceAppSettings[sourceApp]) {
+        return context;
+      }
+    }
+    return null;
+  }
+
+  getCurrentState() {
+    return {
+      sourceApp: this.currentSourceApp,
+      context: this.currentContext,
+      useCase: this.currentUseCase
+    };
+  }
+
+  getAppSettings(context?: string, sourceApp?: string): AppSettings {
+    const ctx = context || this.currentContext;
+    const app = sourceApp || this.currentSourceApp;
+    return contextConfigs[ctx]?.sourceAppSettings[app] || {};
+  }
+
+  private getUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
+    const ctx = context || this.currentContext;
+    const uc = useCase || this.currentUseCase;
+    return contextConfigs[ctx]?.useCases[uc] || null;
+  }
+
+  getButtons(context?: string, useCase?: string): ButtonConfig[] {
+    const useCaseConfig = this.getUseCaseConfig(context, useCase);
+    return useCaseConfig?.buttons || [];
+  }
+
+  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
+    const buttons = this.getButtons(context, useCase);
+    return buttons.reduce((acc, button) => {
+      (acc[button.location] = acc[button.location] || []).push(button);
+      return acc;
+    }, {} as Record<string, ButtonConfig[]>);
+  }
+
+  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
+    const useCaseConfig = this.getUseCaseConfig(context, useCase);
+    return useCaseConfig?.apiCalls[apiCallId];
+  }
+
+  getInitialApiCalls(context?: string, useCase?: string): string[] {
+    const useCaseConfig = this.getUseCaseConfig(context, useCase);
+    return useCaseConfig?.initialApiCalls || [];
+  }
+
+  getLookup(lookupName: string, context?: string): any[] {
+    const ctx = context || this.currentContext;
+    return contextConfigs[ctx]?.lookups?.[lookupName] || 
+           sharedConfigs.lookups?.[lookupName] || 
+           [];
+  }
+
+  getMetadata(context?: string): Record<string, any> | undefined {
+    const ctx = context || this.currentContext;
+    return contextConfigs[ctx]?.metadata || 
+           sharedConfigs.metadata;
+  }
+
+  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, sourceApp?: string): Promise<any> {
+    const apiCall = this.getApiCall(apiCallName, context, useCase);
+    if (!apiCall) {
+      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
+    }
+
+    let preparedData: any = {};
+    for (const inputConfig of apiCall.inputs) {
+      if (typeof inputConfig === 'string') {
+        if (input[inputConfig] !== undefined) {
+          preparedData[inputConfig] = input[inputConfig];
+        }
+      } else {
+        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
+        if (lookupValue !== undefined) {
+          preparedData[inputConfig.name] = lookupValue;
+        }
+      }
+    }
+
+    if (apiCall.lookups) {
+      for (const lookupName of apiCall.lookups) {
+        preparedData[lookupName] = this.getLookup(lookupName, context);
+      }
+    }
+
+    const metadata = this.getMetadata(context);
+    if (metadata) {
+      preparedData.metadata = metadata;
+    }
+
+    const appSettings = this.getAppSettings(context, sourceApp);
+    preparedData.appSettings = appSettings;
+
+    if (apiCall.transformInput) {
+      preparedData = await apiCall.transformInput(preparedData);
+    }
+
+    return preparedData;
+  }
+
+  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
+    const lookup = this.getLookup(lookupName, context);
+    const lookupItem = lookup.find(item => item[key] === value);
+    return lookupItem ? lookupItem.value : undefined;
+  }
+}
+
+party-config.service.ts:
+
+typescriptCopyimport { Injectable } from '@angular/core';
+import { ContextConfigService } from './context-config.service';
+import { AppSettings, ButtonConfig } from './context-config';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class PartyConfigService {
+  constructor(private contextConfigService: ContextConfigService) {}
+
+  initializeConfig(context: string, useCase?: string, sourceApp?: string) {
+    this.contextConfigService.setContext(context, useCase, sourceApp);
+  }
+
+  initializeConfigByUseCaseAndSourceApp(useCase: string, sourceApp: string) {
+    this.contextConfigService.setContextByUseCaseAndSourceApp(useCase, sourceApp);
+  }
+
+  initializeConfigByContextAndSourceApp(context: string, sourceApp: string) {
+    this.contextConfigService.setContextByContextAndSourceApp(context, sourceApp);
+  }
+
+  getAppSettings(context?: string, sourceApp?: string): AppSettings {
+    return this.contextConfigService.getAppSettings(context, sourceApp);
+  }
+
+  getButtons(context?: string, useCase?: string): ButtonConfig[] {
+    return this.contextConfigService.getButtons(context, useCase);
+  }
+
+  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
+    return this.contextConfigService.getButtonsByLocation(context, useCase);
+  }
+
+  getInitialApiCalls(context?: string, useCase?: string): string[] {
+    return this.contextConfigService.getInitialApiCalls(context, useCase);
+  }
+
+  getLookup(lookupName: string, context?: string): any[] {
+    return this.contextConfigService.getLookup(lookupName, context);
+  }
+
+  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, sourceApp?: string): Promise<any> {
+    return this.contextConfigService.prepareApiCall(apiCallName, input, context, useCase, sourceApp);
+  }
+
+  getCurrentState() {
+    return this.contextConfigService.getCurrentState();
+  }
+}
+
+button.component.ts:
+
+typescriptCopyimport { Component, Input, Output, EventEmitter } from '@angular/core';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-button',
+  template: `
+    <button 
+      [disabled]="config.disabled" 
+      [style.display]="config.visible ? 'inline-block' : 'none'"
+      (click)="onClick()">
+      {{ config.label }}
+    </button>
+  `
+})
+export class ButtonComponent {
+  @Input() config!: ButtonConfig;
+  @Output() action = new EventEmitter<string>();
+
+  onClick() {
+    if (this.config.requireConfirmation) {
+      if (confirm(this.config.confirmationMessage || 'Are you sure?')) {
+        this.action.emit(this.config.action);
+      }
+    } else {
+      this.action.emit(this.config.action);
+    }
+  }
+}
+
+party-config-demo.component.ts:
+
+typescriptCopyimport { Component } from '@angular/core';
+import { PartyConfigService } from './party-config.service';
+
+@Component({
+  selector: 'app-party-config-demo',
+  template: `
+    <h2>Party Config Demo</h2>
+    
+    <h3>Initialization</h3>
+    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
+    <button (click)="initWithAll()">Init with All</button>
+    <button (click)="initWithUseCaseAndSourceApp()">Init with Use Case and Source App</button>
+    
+    <h3>Get Configuration</h3>
+    <button (click)="getConfigWithContext()">Get with Context</button>
+    <button (click)="getConfigWithUseCase()">Get with Use Case</button>
+    <button (click)="getConfigWithSourceApp()">Get with Source App</button>
+    <button (click)="getConfigWithAll()">Get with All</button>
+    
+    <h3>Prepare API Call</h3>
+    <button (click)="prepareApiCallDefault()">Prepare API Call (Default)</button>
+    <button (click)="prepareApiCallCustom()">Prepare API Call (Custom)</button>
+    
+    <h3>Dynamic Buttons</h3>
+    <div *ngFor="let button of dynamicButtons">
+      <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
+    </div>
+    
+    <pre>{{ results | json }}</pre>
+  `
+})
+export class PartyConfigDemoComponent {
+  results: any;
+  dynamicButtons: ButtonConfig[] = [];
+
+  constructor(private partyConfigService: PartyConfigService) {}
+
+  initWithContextAndSourceApp() {
+    this.partyConfigService.initializeConfigByContextAndSourceApp('partyBuilder', 'mobile');
+    this.results = this.partyConfigService.getCurrentState();
+    this.updateDynamicButtons();
+  }
+
+  initWithAll() {
+    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    this.results = this.partyConfigService.getCurrentState();
+    this.updateDynamicButtons();
+  }
+
+  initWithUseCaseAndSourceApp() {
+    this.partyConfigService.initializeConfigByUseCaseAndSourceApp('newPartyCreation', 'kiosk');
+    this.results = this.partyConfigService.getCurrentState(); CopyRetryClaude’s response was limited as it hit the maximum length allowed at this time. Claude does not have the ability to run the code it generates yet.DScode stuck in PartyConfigDemoComponentEditI apologize for the interruption. Let's complete the PartyConfigDemoComponent and add the remaining methods:
+typescriptCopyimport { Component } from '@angular/core';
+import { PartyConfigService } from './party-config.service';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-party-config-demo',
+  template: `
+    <h2>Party Config Demo</h2>
+    
+    <h3>Initialization</h3>
+    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
+    <button (click)="initWithAll()">Init with All</button>
+    <button (click)="initWithUseCaseAndSource CopyRetryClaude does not have the ability to run the code it generates yet.DScode stuck in 'app-party-config-demo', and plz giev test case for allEditI apologize for the confusion. Let's complete the PartyConfigDemoComponent and then provide test cases for all the components and services.
+First, let's finish the PartyConfigDemoComponent:
+typescriptCopyimport { Component } from '@angular/core';
+import { PartyConfigService } from './party-config.service';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-party-config-demo',
+  template: `
+    <h2>Party Config Demo</h2>
+    
+    <h3>Initialization</h3>
+    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
+    <button (click)="initWithAll()">Init with All</button>
+    <button (click)="initWithUseCaseAndSourceApp()">Init with Use Case and Source App</button>
+    
+    <h3>Get Configuration</h3>
+    <button (click)="getConfigWithContext()">Get with Context</button>
+    <button (click)="getConfigWithUseCase()">Get with Use Case</button>
+    <button (click)="getConfigWithSourceApp()">Get with Source App</button>
+    <button (click)="getConfigWithAll()">Get with All</button>
+    
+    <h3>Prepare API Call</h3>
+    <button (click)="prepareApiCallDefault()">Prepare API Call (Default)</button>
+    <button (click)="prepareApiCallCustom()">Prepare API Call (Custom)</button>
+    
+    <h3>Dynamic Buttons</h3>
+    <div *ngFor="let button of dynamicButtons">
+      <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
+    </div>
+    
+    <pre>{{ results | json }}</pre>
+  `
+})
+export class PartyConfigDemoComponent {
+  results: any;
+  dynamicButtons: ButtonConfig[] = [];
+
+  constructor(private partyConfigService: PartyConfigService) {}
+
+  initWithContextAndSourceApp() {
+    this.partyConfigService.initializeConfigByContextAndSourceApp('partyBuilder', 'mobile');
+    this.results = this.partyConfigService.getCurrentState();
+    this.updateDynamicButtons();
+  }
+
+  initWithAll() {
+    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    this.results = this.partyConfigService.getCurrentState();
+    this.updateDynamicButtons();
+  }
+
+  initWithUseCaseAndSourceApp() {
+    this.partyConfigService.initializeConfigByUseCaseAndSourceApp('newPartyCreation', 'kiosk');
+    this.results = this.partyConfigService.getCurrentState();
+    this.updateDynamicButtons();
+  }
+
+  getConfigWithContext() {
+    this.results = {
+      appSettings: this.partyConfigService.getAppSettings('partyBuilder'),
+      buttons: this.partyConfigService.getButtons('partyBuilder'),
+      initialApiCalls: this.partyConfigService.getInitialApiCalls('partyBuilder'),
+      lookup: this.partyConfigService.getLookup('partyTypes', 'partyBuilder')
+    };
+  }
+
+  getConfigWithUseCase() {
+    this.results = {
+      buttons: this.partyConfigService.getButtons(undefined, 'newPartyCreation'),
+      initialApiCalls: this.partyConfigService.getInitialApiCalls(undefined, 'newPartyCreation')
+    };
+  }
+
+  getConfigWithSourceApp() {
+    this.results = {
+      appSettings: this.partyConfigService.getAppSettings(undefined, 'kiosk')
+    };
+  }
+
+  getConfigWithAll() {
+    this.results = {
+      appSettings: this.partyConfigService.getAppSettings('partyBuilder', 'mobile'),
+      buttons: this.partyConfigService.getButtons('partyBuilder', 'newPartyCreation'),
+      initialApiCalls: this.partyConfigService.getInitialApiCalls('partyBuilder', 'newPartyCreation'),
+      lookup: this.partyConfigService.getLookup('partyTypes', 'partyBuilder')
+    };
+  }
+
+  async prepareApiCallDefault() {
+    this.results = await this.partyConfigService.prepareApiCall('getPartyDetails', { partyId: '12345' });
+  }
+
+  async prepareApiCallCustom() {
+    this.results = await this.partyConfigService.prepareApiCall('createParty', { partyData: { name: 'John Doe' } }, 'partyBuilder', 'newPartyCreation', 'mobile');
+  }
+
+  updateDynamicButtons() {
+    this.dynamicButtons = this.partyConfigService.getButtons();
+  }
+
+  onButtonAction(action: string) {
+    this.results = { buttonAction: action };
+  }
+}
+Now, let's provide test cases for all the components and services:
+
+ContextConfigService spec:
+
+typescriptCopyimport { TestBed } from '@angular/core/testing';
+import { ContextConfigService } from './context-config.service';
+
+describe('ContextConfigService', () => {
+  let service: ContextConfigService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(ContextConfigService);
+  });
+
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
+
+  it('should set context correctly', () => {
+    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const state = service.getCurrentState();
+    expect(state).toEqual({
+      context: 'partyBuilder',
+      useCase: 'existingPartyWithoutAccounts',
+      sourceApp: 'web'
+    });
+  });
+
+  it('should get app settings', () => {
+    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const appSettings = service.getAppSettings();
+    expect(appSettings).toEqual({
+      showLeftMenu: true,
+      showHeader: true,
+    });
+  });
+
+  it('should get buttons', () => {
+    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const buttons = service.getButtons();
+    expect(buttons.length).toBe(2);
+    expect(buttons[0].id).toBe('save');
+    expect(buttons[1].id).toBe('submit');
+  });
+
+  it('should get initial API calls', () => {
+    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const initialApiCalls = service.getInitialApiCalls();
+    expect(initialApiCalls).toEqual(['getPartyDetails']);
+  });
+
+  it('should prepare API call', async () => {
+    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const preparedData = await service.prepareApiCall('getPartyDetails', { partyId: '12345' });
+    expect(preparedData.partyId).toBe('12345');
+    expect(preparedData.appSettings).toBeDefined();
+    expect(preparedData.metadata).toBeDefined();
+  });
+});
+
+PartyConfigService spec:
+
+typescriptCopyimport { TestBed } from '@angular/core/testing';
+import { PartyConfigService } from './party-config.service';
+import { ContextConfigService } from './context-config.service';
+
+describe('PartyConfigService', () => {
+  let service: PartyConfigService;
+  let contextConfigServiceSpy: jasmine.SpyObj<ContextConfigService>;
+
+  beforeEach(() => {
+    const spy = jasmine.createSpyObj('ContextConfigService', ['setContext', 'setContextByUseCaseAndSourceApp', 'setContextByContextAndSourceApp', 'getAppSettings', 'getButtons', 'getInitialApiCalls', 'getLookup', 'prepareApiCall', 'getCurrentState']);
+
+    TestBed.configureTestingModule({
+      providers: [
+        PartyConfigService,
+        { provide: ContextConfigService, useValue: spy }
+      ]
+    });
+
+    service = TestBed.inject(PartyConfigService);
+    contextConfigServiceSpy = TestBed.inject(ContextConfigService) as jasmine.SpyObj<ContextConfigService>;
+  });
+
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
+
+  it('should initialize config', () => {
+    service.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    expect(contextConfigServiceSpy.setContext).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+  });
+
+  it('should get app settings', () => {
+    service.getAppSettings('partyBuilder', 'web');
+    expect(contextConfigServiceSpy.getAppSettings).toHaveBeenCalledWith('partyBuilder', 'web');
+  });
+
+  it('should get buttons', () => {
+    service.getButtons('partyBuilder', 'existingPartyWithoutAccounts');
+    expect(contextConfigServiceSpy.getButtons).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts');
+  });
+
+  it('should prepare API call', async () => {
+    await service.prepareApiCall('getPartyDetails', { partyId: '12345' });
+    expect(contextConfigServiceSpy.prepareApiCall).toHaveBeenCalledWith('getPartyDetails', { partyId: '12345' }, undefined, undefined, undefined);
+  });
+});
+
+ButtonComponent spec:
+
+typescriptCopyimport { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ButtonComponent } from './button.component';
+
+describe('ButtonComponent', () => {
+  let component: ButtonComponent;
+  let fixture: ComponentFixture<ButtonComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [ ButtonComponent ]
+    })
+    .compileComponents();
+  });
+
+  beforeEach(() => {
+    fixture = TestBed.createComponent(ButtonComponent);
+    component = fixture.componentInstance;
+    component.config = {
+      id: 'test',
+      label: 'Test Button',
+      action: 'testAction',
+      location: 'form-bottom',
+      visible: true,
+      disabled: false
+    };
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should emit action on click', () => {
+    spyOn(component.action, 'emit');
+    const button = fixture.nativeElement.querySelector('button');
+    button.click();
+    expect(component.action.emit).toHaveBeenCalledWith('testAction');
+  });
+
+  it('should show confirmation dialog when required', () => {
+    component.config.requireConfirmation = true;
+    component.config.confirmationMessage = 'Are you sure?';
+    spyOn(window, 'confirm').and.returnValue(true);
+    spyOn(component.action, 'emit');
+    component.onClick();
+    expect(window.confirm).toHaveBeenCalledWith('Are you sure?');
+    expect(component.action.emit).toHaveBeenCalledWith('testAction');
+  });
+});
+
+PartyConfigDemoComponent spec:
+
+typescriptCopyimport { ComponentFixture, TestBed } from '@angular/core/testing';
+import { PartyConfigDemoComponent } from './party-config-demo.component';
+import { PartyConfigService } from './party-config.service';
+import { ButtonComponent } from './button.component';
+
+describe('PartyConfigDemoComponent', () => {
+  let component: PartyConfigDemoComponent;
+  let fixture: ComponentFixture<PartyConfigDemoComponent>;
+  let partyConfigServiceSpy: jasmine.SpyObj<PartyConfigService>;
+
+  beforeEach(async () => {
+    const spy = jasmine.createSpyObj('PartyConfigService', ['initializeConfigByContextAndSourceApp', 'initializeConfig', 'initializeConfigByUseCaseAndSourceApp', 'getAppSettings', 'getButtons', 'getInitialApiCalls', 'getLookup', 'prepareApiCall', 'getCurrentState']);
+
+    await TestBed.configureTestingModule({
+      declarations: [ PartyConfigDemoComponent, ButtonComponent ],
+      providers: [
+        { provide: PartyConfigService, useValue: spy }
+      ]
+    })
+    .compileComponents();
+
+    partyConfigServiceSpy = TestBed.inject(PartyConfigService) as jasmine.SpyObj<PartyConfigService>;
+  });
+
+  beforeEach(() => {
+    fixture = TestBed.createComponent(PartyConfigDemoComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should initialize with context and source app', () => {
+    component.initWithContextAndSourceApp();
+    expect(partyConfigServiceSpy.initializeConfigByContextAndSourceApp).toHaveBeenCalledWith('partyBuilder', 'mobile');
+  });
+
+  it('should initialize with all parameters', () => {
+    component.initWithAll();
+    expect(partyConfigServiceSpy.initializeConfig).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+  });
+
+  it('should get config with context', () => {
+    component.getConfigWithContext();
+    expect(partyConfigServiceSpy.getAppSettings).toHaveBeenCalledWith('partyBuilder');
+    expect(partyConfigServiceSpy.getButtons).toHaveBeenCalledWith('partyBuilder');
+    expect(partyConfigServiceSpy.getInitialApiCalls).toHaveBeenCalledWith('partyBuilder');
+    expect(partyConfigServiceSpy.getLookup).toHaveBeenCalledWith('partyTypes', 'partyBuilder');
+  });
+
+  it('should prepare API call', async () => {
+    await component.prepareApiCallDefault();
+    expect(partyConfigServiceSpy.prepareApiCall).toHaveBeenCalledWith('getPartyDetails', { partyId: '12345' });
+  });
+});
+These test cases cover the main functionalities of each component and service. They check for proper initialization, method calls, and expected behaviors. Remember to adjust imports and paths as necessary based on your project structure. CopyRetryClaude does not have the ability to run the code it generates yet.DScan u show use with only button how button can be place in any place in one single component and how we can hide / show / enable or disable for check box also , do not use method on templateEditCertainly! I'll demonstrate how to use buttons in various locations within a single component, including how to hide/show, enable/disable buttons, and how to handle checkboxes. We'll do this without using methods directly in the template.
+Here's a revised version of the PartyConfigDemoComponent that incorporates these features:
+typescriptCopyimport { Component, OnInit } from '@angular/core';
+import { PartyConfigService } from './party-config.service';
+import { ButtonConfig } from './context-config';
+
+@Component({
+  selector: 'app-party-config-demo',
+  template: `
+    <h2>Party Config Demo</h2>
+    
+    <div>
+      <h3>Header Buttons</h3>
+      <ng-container *ngFor="let button of headerButtons">
+        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
+      </ng-container>
+    </div>
+
+    <div>
+      <h3>Form Content</h3>
+      <div>
+        <label>
+          <input type="checkbox" [checked]="isAcknowledged" (change)="onAcknowledgeChange()">
+          I acknowledge the terms
+        </label>
+      </div>
+      <ng-container *ngFor="let button of formButtons">
+        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
+      </ng-container>
+    </div>
+
+    <div>
+      <h3>Footer Buttons</h3>
+      <ng-container *ngFor="let button of footerButtons">
+        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
+      </ng-container>
+    </div>
+
+    <pre>{{ results | json }}</pre>
+  `
+})
+export class PartyConfigDemoComponent implements OnInit {
+  headerButtons: ButtonConfig[] = [];
+  formButtons: ButtonConfig[] = [];
+  footerButtons: ButtonConfig[] = [];
+  results: any;
+  isAcknowledged = false;
+
+  constructor(private partyConfigService: PartyConfigService) {}
+
+  ngOnInit() {
+    this.initializeButtons();
+  }
+
+  initializeButtons() {
+    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
+    const allButtons = this.partyConfigService.getButtons();
+
+    this.headerButtons = allButtons.filter(button => button.location === 'header');
+    this.formButtons = allButtons.filter(button => button.location === 'form-bottom');
+    this.footerButtons = allButtons.filter(button => button.location === 'footer');
+
+    // Add a custom button to demonstrate dynamic visibility
+    this.formButtons.push({
+      id: 'customButton',
+      label: 'Custom Action',
+      action: 'customAction',
+      location: 'form-bottom',
+      visible: true,
+      disabled: false
+    });
+
+    // Add a footer button to demonstrate dynamic disabling
+    this.footerButtons.push({
+      id: 'submitButton',
+      label: 'Submit',
+      action: 'submit',
+      location: 'footer',
+      visible: true,
+      disabled: true
+    });
+
+    this.updateButtonStates();
+  }
+
+  onButtonAction(action: string) {
+    this.results = { buttonAction: action };
+    
+    // Simulate changing button states based on actions
+    if (action === 'customAction') {
+      this.toggleCustomButtonVisibility();
+    }
+  }
+
+  onAcknowledgeChange() {
+    this.isAcknowledged = !this.isAcknowledged;
+    this.updateButtonStates();
+  }
+
+  private updateButtonStates() {
+    // Update custom button visibility
+    const customButton = this.formButtons.find(b => b.id === 'customButton');
+    if (customButton) {
+      customButton.visible = Math.random() > 0.5; // Randomly show/hide
+    }
+
+    // Update submit button disabled state based on acknowledgement
+    const submitButton = this.footerButtons.find(b => b.id === 'submitButton');
+    if (submitButton) {
+      submitButton.disabled = !this.isAcknowledged;
+    }
+
+    // Force change detection
+    this.formButtons = [...this.formButtons];
+    this.footerButtons = [...this.footerButtons];
+  }
+
+  private toggleCustomButtonVisibility() {
+    const customButton = this.formButtons.find(b => b.id === 'customButton');
+    if (customButton) {
+      customButton.visible = !customButton.visible;
+      this.formButtons = [...this.formButtons];
+    }
+  }
+}
