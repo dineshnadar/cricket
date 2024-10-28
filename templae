@@ -1,0 +1,283 @@
+@Component({
+  selector: 'app-form-read-view',
+  template: `
+    <div class="form-read-view">
+      <ng-container *ngFor="let section of readViewData$ | async">
+        <!-- Section Container -->
+        <div [class]="['section-container', 'section-' + section.type]">
+          <!-- Section Header -->
+          <ng-container [ngSwitch]="section.type">
+            <!-- Common Header Section -->
+            <div *ngSwitchCase="'commonHeader'" class="common-header">
+              <h3 *ngIf="section.label">{{section.label}}</h3>
+            </div>
+
+            <!-- Left/Right Header Section -->
+            <div *ngSwitchCase="'leftRightHeader'" class="header-row">
+              <h3 class="left-header">{{section.leftHeader}}</h3>
+              <h3 class="right-header">{{section.rightHeader}}</h3>
+            </div>
+
+            <!-- Accordion Section -->
+            <div *ngSwitchCase="'accordion'" class="accordion">
+              <div class="accordion-header" (click)="section.expand = !section.expand">
+                <h3>{{section.label}}</h3>
+                <span class="accordion-icon">{{section.expand ? '−' : '+'}}</span>
+              </div>
+            </div>
+          </ng-container>
+
+          <!-- Section Content -->
+          <div class="section-content" [class.expanded]="section.type !== 'accordion' || section.expand">
+            <div class="fields-grid">
+              <ng-container *ngFor="let field of section.children">
+                <!-- Sub-Header Field -->
+                <ng-container *ngIf="field.isSubHeader">
+                  <div class="sub-header full-width">
+                    <h4>{{field.label}}</h4>
+                    <div class="fields-grid">
+                      <ng-container *ngFor="let subField of field.children">
+                        <div [class]="['field-container', subField.side + '-side']">
+                          <label>{{subField.label}}</label>
+                          <ng-container 
+                            *ngTemplateOutlet="fieldValue; context: { $implicit: subField }">
+                          </ng-container>
+                        </div>
+                      </ng-container>
+                    </div>
+                  </div>
+                </ng-container>
+
+                <!-- Required Divider -->
+                <div *ngIf="field.isReqDivider" class="required-divider full-width">
+                  <hr>
+                </div>
+
+                <!-- Regular Field -->
+                <ng-container *ngIf="!field.isSubHeader && !field.isReqDivider">
+                  <div [class]="['field-container', field.side + '-side']">
+                    <!-- Field Label -->
+                    <label>{{field.label}}</label>
+
+                    <!-- Field Value -->
+                    <ng-container 
+                      *ngTemplateOutlet="fieldValue; context: { $implicit: field }">
+                    </ng-container>
+
+                    <!-- Field Error -->
+                    <div *ngIf="field.errors && field.touched" class="field-error">
+                      <span *ngIf="field.errors?.['required']">This field is required</span>
+                      <span *ngIf="field.errors?.['email']">Invalid email format</span>
+                      <span *ngIf="field.errors?.['pattern']">Invalid format</span>
+                      <span *ngIf="field.errors?.['min']">Value is too low</span>
+                      <span *ngIf="field.errors?.['max']">Value is too high</span>
+                    </div>
+                  </div>
+                </ng-container>
+              </ng-container>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+    </div>
+
+    <!-- Field Value Template -->
+    <ng-template #fieldValue let-field>
+      <!-- Combined Field -->
+      <div *ngIf="field.isCombined" class="combined-value" [innerHTML]="field.value">
+      </div>
+
+      <!-- Static Component -->
+      <div *ngIf="field.isStaticComponent" [class]="'static-component'">
+        <ng-container [ngComponentOutlet]="getStaticComponent(field.staticComponentName)">
+        </ng-container>
+      </div>
+
+      <!-- Regular Field Values -->
+      <ng-container *ngIf="!field.isCombined && !field.isStaticComponent">
+        <div class="field-value" [ngSwitch]="field.fieldType">
+          <!-- Checkbox -->
+          <span *ngSwitchCase="'checkbox'" class="checkbox-value">
+            {{field.value ? 'Yes' : 'No'}}
+          </span>
+
+          <!-- Date -->
+          <span *ngSwitchCase="'date'" class="date-value">
+            {{field.value | date}}
+          </span>
+
+          <!-- Array -->
+          <ul *ngSwitchCase="'arraySimple'" class="array-value">
+            <li *ngFor="let item of field.value">{{item}}</li>
+          </ul>
+
+          <!-- Select/Lookup -->
+          <span *ngSwitchCase="'select'" class="select-value">
+            {{getLookupLabel(field)}}
+          </span>
+
+          <!-- Default Text -->
+          <span *ngSwitchDefault class="text-value">
+            {{field.value}}
+          </span>
+        </div>
+      </ng-container>
+    </ng-template>
+  `,
+  styles: [`
+    .form-read-view {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      font-family: sans-serif;
+    }
+
+    .section-container {
+      margin-bottom: 1.5rem;
+      padding: 1rem;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .fields-grid {
+      display: flex;
+      flex-wrap: wrap;
+      margin: -0.5rem;
+    }
+
+    .field-container {
+      padding: 0.5rem;
+      box-sizing: border-box;
+    }
+
+    .left-side {
+      flex: 0 0 50%;
+      max-width: 50%;
+    }
+
+    .right-side {
+      flex: 0 0 50%;
+      max-width: 50%;
+    }
+
+    .full-width {
+      flex: 0 0 100%;
+      max-width: 100%;
+    }
+
+    label {
+      display: block;
+      font-weight: 500;
+      color: #666;
+      margin-bottom: 0.25rem;
+    }
+
+    .field-value {
+      min-height: 24px;
+      padding: 0.25rem 0;
+    }
+
+    .accordion-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      padding: 0.5rem 1rem;
+      background: #f5f5f5;
+      border-radius: 4px;
+      margin: -1rem -1rem 1rem -1rem;
+    }
+
+    .accordion-icon {
+      font-size: 1.5rem;
+      line-height: 1;
+      color: #666;
+    }
+
+    .section-content {
+      display: block;
+    }
+
+    .accordion .section-content {
+      display: none;
+    }
+
+    .accordion .section-content.expanded {
+      display: block;
+    }
+
+    .sub-header {
+      margin: 1rem 0;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .required-divider {
+      margin: 1rem 0;
+      border-top: 2px dashed #e0e0e0;
+    }
+
+    .array-value {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .array-value li {
+      margin-bottom: 0.25rem;
+      padding: 0.25rem 0;
+    }
+
+    .combined-value {
+      padding: 0.25rem 0;
+    }
+
+    .field-error {
+      color: #dc3545;
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+
+    h3 {
+      margin: 0 0 1rem 0;
+      color: #333;
+      font-size: 1.25rem;
+    }
+
+    h4 {
+      margin: 0 0 0.5rem 0;
+      color: #555;
+      font-size: 1.1rem;
+    }
+
+    .checkbox-value, .date-value, .select-value, .text-value {
+      color: #333;
+    }
+
+    .static-component {
+      margin: 0.5rem 0;
+    }
+  `]
+})
+export class FormReadViewComponent {
+  @Input() readViewData$!: Signal<any[]>;
+  private staticComponents = new Map<string, any>();
+
+  getLookupLabel(field: any): string {
+    if (!field.lookupData || !Array.isArray(field.lookupData)) return field.value;
+    const lookup = field.lookupData.find((item: any) => item.value === field.value);
+    return lookup ? lookup.label : field.value;
+  }
+
+  getStaticComponent(name: string): any {
+    return this.staticComponents.get(name);
+  }
+}
