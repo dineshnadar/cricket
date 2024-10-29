@@ -1,4 +1,59 @@
+<!-- Array Field Template -->
+@if (field.isArray) {
+  <div class="array-field">
+    <label>{{field.label}}</label>
+    @if (field.value?.length) {
+      @for (item of field.value; track $index) {
+        <div class="array-item">
+          <!-- If the array field has layout -->
+          @if (field.layout) {
+            <div class="content-grid">
+              <!-- Left Fields -->
+              @if (field.layout.leftFields?.length) {
+                <div class="left-column">
+                  @for (leftField of field.layout.leftFields; track leftField.name) {
+                    <div class="field-container">
+                      <label>{{leftField.label}}</label>
+                      <div class="field-value">{{item[leftField.name]}}</div>
+                    </div>
+                  }
+                </div>
+              }
 
+              <!-- Right Fields -->
+              @if (field.layout.rightFields?.length) {
+                <div class="right-column">
+                  @for (rightField of field.layout.rightFields; track rightField.name) {
+                    <div class="field-container">
+                      <label>{{rightField.label}}</label>
+                      <div class="field-value">{{item[rightField.name]}}</div>
+                    </div>
+                  }
+                </div>
+              }
+
+              <!-- Full Width Fields -->
+              @if (field.layout.fullFields?.length) {
+                <div class="full-width">
+                  @for (fullField of field.layout.fullFields; track fullField.name) {
+                    <div class="field-container">
+                      <label>{{fullField.label}}</label>
+                      <div class="field-value">{{item[fullField.name]}}</div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+
+
+-------------
   private processLayout(items: any[]): FieldLayout {
     const layout: FieldLayout = {
       leftFields: [],
