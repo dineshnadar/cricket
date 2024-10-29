@@ -1,3 +1,84 @@
+
+  private processLayout(items: any[]): FieldLayout {
+    const layout: FieldLayout = {
+      leftFields: [],
+      rightFields: [],
+      fullFields: [],
+      nestedSections: []
+    };
+
+    let leftCount = 0;
+    let rightCount = 0;
+
+    // Assign sequence numbers if not present
+    const itemsWithSeq = items.map((item, index) => ({
+      ...item,
+      seq: item.seq ?? index
+    }));
+
+    // Apply sorting if enabled
+    const itemsToProcess = this.enableSorting() 
+      ? this.sortItems(itemsWithSeq)
+      : itemsWithSeq;
+
+    for (const item of itemsToProcess) {
+      if (this.isSection(item)) {
+        layout.nestedSections.push({
+          ...item,
+          layout: this.processLayout(item.fields || [])
+        });
+      } else {
+        // Process any nested fields first
+        const processedItem = this.processNestedFields(item);
+        
+        // Determine side placement with balanced distribution
+        const side = this.determineFieldSide(processedItem, leftCount, rightCount);
+        
+        switch (side) {
+          case 'left':
+            leftCount++;
+            layout.leftFields.push(processedItem);
+            break;
+          case 'right':
+            rightCount++;
+            layout.rightFields.push(processedItem);
+            break;
+          case 'full':
+            layout.fullFields.push(processedItem);
+            break;
+        }
+      }
+    }
+
+    return layout;
+  }
+
+  private processNestedFields(item: any): any {
+    if (!item) return item;
+
+    // Handle array fields
+    if (item.isArray) {
+      return {
+        ...item,
+        layout: item.fields?.length ? this.processLayout(item.fields) : undefined
+      };
+    }
+
+    // Handle regular fields with nested fields
+    if (item.fields?.length) {
+      return {
+        ...item,
+        layout: this.processLayout(item.fields)
+      };
+    }
+
+    return item;
+  }
+
+
+
+
+----------x-
 // common-read-view.component.ts
 import { Component, computed, input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
