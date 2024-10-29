@@ -1,302 +1,658 @@
-import { ChangeDetectionStrategy, Component, Input, signal, computed } from '@angular/core';
+// common-read-view.component.ts
+import { Component, computed, input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormExtensionService } from './form-extension.service';
 
-interface Field {
-  label: string;
-  value: any;
-  type: 'field';
-  visible: boolean;
-  side: 'left' | 'right';
-  fieldType: string;
-}
-
-interface Section {
-  label: string;
-  type: 'section';
-  visible: boolean;
-  expand: boolean;
-  fields: (Field | Section)[];
-}
-
-interface ProcessedSection extends Section {
-  leftFields: Field[];
-  rightFields: Field[];
-  subsections: Section[];
+interface FieldLayout {
+  leftFields: any[];
+  rightFields: any[];
+  fullFields: any[];
+  nestedSections: any[];
 }
 
 @Component({
-  selector: 'app-read-view',
+  selector: 'app-common-read-view',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="read-view" role="region" aria-label="Read View">
-      <ng-container *ngFor="let section of processedSections(); trackBy: trackByLabel">
-        <ng-container 
-          *ngTemplateOutlet="sectionTemplate; 
-          context: { $implicit: section, level: 0 }">
-        </ng-container>
-      </ng-container>
-    </div>
-
-    <ng-template #sectionTemplate let-section let-level="level">
-      <section 
-        class="section" 
-        [class.section-collapsed]="!expandedSections()[section.label]"
-        [class.section-nested]="level > 0"
-        [attr.aria-expanded]="expandedSections()[section.label]">
-        
-        <!-- Section Header -->
-        <div class="section-header" (click)="toggleSection(section.label)">
-          <h2 [class.nested-header]="level > 0">{{ section.label }}</h2>
-          <button 
-            class="expand-button"
-            [attr.aria-label]="(expandedSections()[section.label] ? 'Collapse ' : 'Expand ') + section.label"
-          >
-            <span class="expand-icon" [class.expanded]="expandedSections()[section.label]">
-              ▼
-            </span>
+    <div class="read-view-container">
+      @if (showControls()) {
+        <div class="expand-controls">
+          <button class="control-btn" (click)="toggleAll(true)">
+            <span class="icon">+</span> Expand All
+          </button>
+          <button class="control-btn" (click)="toggleAll(false)">
+            <span class="icon">−</span> Collapse All
           </button>
         </div>
+      }
 
-        <!-- Section Content -->
-        <div class="section-content" [class.hidden]="!expandedSections()[section.label]">
-          <!-- Fields Grid -->
-          <div class="fields-grid" *ngIf="section.leftFields.length || section.rightFields.length">
-            <!-- Left Column -->
-            <div class="fields-column">
-              <ng-container *ngFor="let field of section.leftFields; trackBy: trackByLabel">
-                <ng-container 
-                  *ngTemplateOutlet="fieldTemplate; 
-                  context: { $implicit: field }">
-                </ng-container>
-              </ng-container>
+      @for (section of processedSections(); track section.fldName) {
+        <section class="section-wrapper" [ngClass]="section.type">
+          <!-- Section Header -->
+          <ng-container [ngTemplateOutlet]="headerTemplate"
+                       [ngTemplateOutletContext]="{ $implicit: section }"/>
+
+          <!-- Section Content -->
+          @if (!section.isDivider) {
+            <div class="section-content" [class.expanded]="section.expand">
+              <div class="content-grid">
+                @if (section.layout.leftFields.length) {
+                  <div class="left-column">
+                    @for (field of section.layout.leftFields; track field.fldName) {
+                      <ng-container [ngTemplateOutlet]="fieldTemplate"
+                                  [ngTemplateOutletContext]="{ $implicit: field }"/>
+                    }
+                  </div>
+                }
+
+                @if (section.layout.rightFields.length) {
+                  <div class="right-column">
+                    @for (field of section.layout.rightFields; track field.fldName) {
+                      <ng-container [ngTemplateOutlet]="fieldTemplate"
+                                  [ngTemplateOutletContext]="{ $implicit: field }"/>
+                    }
+                  </div>
+                }
+
+                @if (section.layout.fullFields.length) {
+                  <div class="full-width">
+                    @for (field of section.layout.fullFields; track field.fldName) {
+                      <ng-container [ngTemplateOutlet]="fieldTemplate"
+                                  [ngTemplateOutletContext]="{ $implicit: field }"/>
+                    }
+                  </div>
+                }
+
+                @if (section.layout.nestedSections.length) {
+                  <div class="nested-sections">
+                    @for (nestedSection of section.layout.nestedSections; track nestedSection.fldName) {
+                      <section class="nested-section">
+                        <ng-container [ngTemplateOutlet]="sectionTemplate"
+                                    [ngTemplateOutletContext]="{ $implicit: nestedSection }"/>
+                      </section>
+                    }
+                  </div>
+                }
+              </div>
             </div>
+          }
+        </section>
+      }
+    </div>
 
-            <!-- Right Column -->
-            <div class="fields-column">
-              <ng-container *ngFor="let field of section.rightFields; trackBy: trackByLabel">
-                <ng-container 
-                  *ngTemplateOutlet="fieldTemplate; 
-                  context: { $implicit: field }">
-                </ng-container>
-              </ng-container>
+    <!-- Header Template -->
+    <ng-template #headerTemplate let-section>
+      @switch (section.type) {
+        @case ('leftHeader') {
+          <div class="header single-header" [style.width]="section.labelWidth">
+            <div class="header-content">
+              <h3>{{section.leftHeader}}</h3>
+              @if (isExpandable(section)) {
+                <button class="expand-btn" (click)="toggleSection(section)">
+                  {{section.expand ? '−' : '+'}}
+                </button>
+              }
             </div>
           </div>
-
-          <!-- Nested Sections -->
-          <div class="nested-sections" *ngIf="section.subsections.length">
-            <ng-container *ngFor="let subsection of section.subsections; trackBy: trackByLabel">
-              <ng-container 
-                *ngTemplateOutlet="sectionTemplate; 
-                context: { $implicit: subsection, level: level + 1 }">
-              </ng-container>
-            </ng-container>
+        }
+        @case ('leftRightHeader') {
+          <div class="header dual-header">
+            <div class="header-content">
+              <div class="header-sides">
+                <h3 class="left">{{section.leftHeader}}</h3>
+                <h3 class="right">{{section.rightHeader}}</h3>
+              </div>
+              @if (isExpandable(section)) {
+                <button class="expand-btn" (click)="toggleSection(section)">
+                  {{section.expand ? '−' : '+'}}
+                </button>
+              }
+            </div>
           </div>
-        </div>
-      </section>
+        }
+        @case ('commonHeader') {
+          <div class="header common-header">
+            <div class="header-content">
+              <h3>{{section.commonHeader}}</h3>
+              @if (isExpandable(section)) {
+                <button class="expand-btn" (click)="toggleSection(section)">
+                  {{section.expand ? '−' : '+'}}
+                </button>
+              }
+            </div>
+          </div>
+        }
+        @case ('accordion') {
+          <div class="header accordion-header"
+               [class.expanded]="section.expand"
+               (click)="toggleSection(section)">
+            <div class="header-content">
+              <h3>{{section.accordionHeader}}</h3>
+              <span class="expand-icon">{{section.expand ? '−' : '+'}}</span>
+            </div>
+          </div>
+        }
+        @case ('divider') {
+          <div class="divider" [class]="section.dividerClass"></div>
+        }
+      }
     </ng-template>
 
-    <ng-template #fieldTemplate let-field>
-      <div class="field" role="group" [attr.aria-label]="field.label">
-        <label class="field-label">{{ field.label }}</label>
-        <div [ngSwitch]="field.fieldType" class="field-value">
-          <ng-container *ngSwitchCase="'date'">
-            {{ field.value | date }}
-          </ng-container>
-          <ng-container *ngSwitchCase="'boolean'">
-            {{ field.value ? 'Yes' : 'No' }}
-          </ng-container>
-          <ng-container *ngSwitchCase="'currency'">
-            {{ field.value | currency }}
-          </ng-container>
-          <ng-container *ngSwitchCase="'percentage'">
-            {{ field.value | percent }}
-          </ng-container>
-          <ng-container *ngSwitchDefault>
-            {{ field.value }}
-          </ng-container>
+    <!-- Section Template -->
+    <ng-template #sectionTemplate let-section>
+      <ng-container [ngTemplateOutlet]="headerTemplate"
+                   [ngTemplateOutletContext]="{ $implicit: section }"/>
+      
+      @if (!section.isDivider) {
+        <div class="section-content nested-content" [class.expanded]="section.expand">
+          <div class="content-grid">
+            <ng-container [ngTemplateOutlet]="contentTemplate"
+                         [ngTemplateOutletContext]="{ $implicit: section }"/>
+          </div>
         </div>
-      </div>
+      }
+    </ng-template>
+
+    <!-- Content Template -->
+    <ng-template #contentTemplate let-section>
+      @if (section.layout.leftFields.length) {
+        <div class="left-column">
+          @for (field of section.layout.leftFields; track field.fldName) {
+            <ng-container [ngTemplateOutlet]="fieldTemplate"
+                         [ngTemplateOutletContext]="{ $implicit: field }"/>
+          }
+        </div>
+      }
+
+      @if (section.layout.rightFields.length) {
+        <div class="right-column">
+          @for (field of section.layout.rightFields; track field.fldName) {
+            <ng-container [ngTemplateOutlet]="fieldTemplate"
+                         [ngTemplateOutletContext]="{ $implicit: field }"/>
+          }
+        </div>
+      }
+
+      @if (section.layout.fullFields.length) {
+        <div class="full-width">
+          @for (field of section.layout.fullFields; track field.fldName) {
+            <ng-container [ngTemplateOutlet]="fieldTemplate"
+                         [ngTemplateOutletContext]="{ $implicit: field }"/>
+          }
+        </div>
+      }
+    </ng-template>
+
+    <!-- Field Template -->
+    <ng-template #fieldTemplate let-field>
+      @if (field.isSubHeader) {
+        <div class="sub-header">
+          <h4>{{field.label}}</h4>
+        </div>
+      } @else if (field.isReqDivider) {
+        <div class="req-divider">
+          <span class="req-text">Required Information</span>
+        </div>
+      } @else if (field.isArray) {
+        <div class="array-field">
+          <label>{{field.label}}</label>
+          @if (field.value?.length) {
+            @for (item of field.value; track $index) {
+              <div class="array-item">
+                <div class="array-grid">
+                  @for (childField of field.children; track childField.fldName) {
+                    <div class="array-field-item" [class]="'array-' + childField.side">
+                      <label>{{childField.label}}</label>
+                      <div class="field-value">{{item[childField.name]}}</div>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          }
+        </div>
+      } @else {
+        <div class="field-container" [class.required]="field.required">
+          <label>{{field.label}}</label>
+          <div class="field-value" [class.invalid]="!field.isValid">
+            @if (field.useHtml) {
+              <div [innerHTML]="field.computedValue || field.value"></div>
+            } @else {
+              {{field.computedValue || field.value}}
+            }
+          </div>
+          @if (field.errors) {
+            <div class="field-error">{{field.errors | json}}</div>
+          }
+        </div>
+      }
     </ng-template>
   `,
-  styles: [`
-    :host {
-      display: block;
-      width: 100%;
-    }
-
-    .read-view {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 1rem;
-    }
-
-    .section {
-      background: white;
-      border: 1px solid #e5e7eb;
-      border-radius: 0.5rem;
-      margin-bottom: 1rem;
-      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    }
-
-    .section-nested {
-      margin-left: 1.5rem;
-    }
-
-    .section-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1rem;
-      cursor: pointer;
-      background: #f9fafb;
-      border-radius: 0.5rem 0.5rem 0 0;
-      transition: background-color 0.2s;
-    }
-
-    .section-header:hover {
-      background: #f3f4f6;
-    }
-
-    .nested-header {
-      font-size: 1.1rem;
-      color: #4b5563;
-    }
-
-    .expand-button {
-      padding: 0.5rem;
-      border-radius: 9999px;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      transition: background-color 0.2s;
-    }
-
-    .expand-button:hover {
-      background: rgba(0, 0, 0, 0.05);
-    }
-
-    .expand-button:focus {
-      outline: 2px solid #3b82f6;
-      outline-offset: 2px;
-    }
-
-    .expand-icon {
-      display: inline-block;
-      color: #6b7280;
-      transform: rotate(-90deg);
-      transition: transform 0.2s;
-    }
-
-    .expand-icon.expanded {
-      transform: rotate(0);
-    }
-
-    .section-content {
-      padding: 1rem;
-      border-top: 1px solid #e5e7eb;
-    }
-
-    .hidden {
-      display: none;
-    }
-
-    .fields-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 2rem;
-    }
-
-    .fields-column {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .field {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-
-    .field-label {
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: #374151;
-    }
-
-    .field-value {
-      font-size: 1rem;
-      color: #111827;
-    }
-
-    .nested-sections {
-      margin-top: 1rem;
-    }
-
-    @media (max-width: 768px) {
-      .fields-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .section-nested {
-        margin-left: 0.75rem;
-      }
-    }
-  `],
-  changeDetection: ChangeDetectionStrategy.OnPush
+  styleUrls: ['./common-read-view.component.scss']
 })
-export class ReadViewComponent {
-  private sectionsSignal = signal<Section[]>([]);
-  private expandedSectionsState = signal<Record<string, boolean>>({});
+export class CommonReadViewComponent {
+  private formExtension = inject(FormExtensionService);
 
-  @Input()
-  set data(value: Section[]) {
-    this.sectionsSignal.set(value);
-    // Initialize expanded state
-    const expandedState: Record<string, boolean> = {};
-    this.initializeExpandedState(value, expandedState);
-    this.expandedSectionsState.set(expandedState);
-  }
+  // Inputs
+  readView = input.required<any[]>();
+  containerClass = input('');
+  showControls = input(true);
+  enableSorting = input(true);
 
-  protected processedSections = computed(() => {
-    return this.sectionsSignal()
-      .filter(section => section.visible)
-      .map(section => this.processSection(section));
+  // Computed sections with processed layout
+  processedSections = computed(() => {
+    return this.readView().map(section => ({
+      ...section,
+      layout: this.processLayout(section.fields || [])
+    }));
   });
 
-  protected expandedSections = computed(() => this.expandedSectionsState());
-
-  private initializeExpandedState(sections: Section[], state: Record<string, boolean>) {
-    sections.forEach(section => {
-      state[section.label] = section.expand;
-      const subsections = section.fields.filter((f): f is Section => f.type === 'section');
-      this.initializeExpandedState(subsections, state);
-    });
-  }
-
-  private processSection(section: Section): ProcessedSection {
-    const fields = section.fields.filter((f): f is Field => f.type === 'field' && f.visible);
-    const subsections = section.fields
-      .filter((f): f is Section => f.type === 'section' && f.visible)
-      .map(subsection => this.processSection(subsection));
-
-    return {
-      ...section,
-      leftFields: fields.filter(f => f.side === 'left'),
-      rightFields: fields.filter(f => f.side === 'right'),
-      subsections
+  private processLayout(items: any[]): FieldLayout {
+    const layout: FieldLayout = {
+      leftFields: [],
+      rightFields: [],
+      fullFields: [],
+      nestedSections: []
     };
-  }
 
-  protected toggleSection(label: string): void {
-    this.expandedSectionsState.update(state => ({
-      ...state,
-      [label]: !state[label]
+    let leftCount = 0;
+    let rightCount = 0;
+
+    // Assign sequence numbers based on index if not present
+    const itemsWithSeq = items.map((item, index) => ({
+      ...item,
+      seq: item.seq ?? index
     }));
+
+    // Apply sorting if enabled
+    const itemsToProcess = this.enableSorting() 
+      ? this.sortItems(itemsWithSeq)
+      : itemsWithSeq;
+
+    for (const item of itemsToProcess) {
+      if (this.isSection(item)) {
+        layout.nestedSections.push({
+          ...item,
+          layout: this.processLayout(item.fields || [])
+        });
+      } else {
+        // Determine side placement with balanced distribution
+        const side = this.determineFieldSide(item, leftCount, rightCount);
+        
+        switch (side) {
+          case 'left':
+            leftCount++;
+            layout.leftFields.push(item);
+            break;
+          case 'right':
+            rightCount++;
+            layout.rightFields.push(item);
+            break;
+          case 'full':
+            layout.fullFields.push(item);
+            break;
+        }
+      }
+    }
+
+    return layout;
   }
 
-  protected trackByLabel(index: number, item: Section | Field): string {
-    return item.label;
+  private determineFieldSide(field: any, leftCount: number, rightCount: number): 'left' | 'right' | 'full' {
+    // First check if field has valid side value
+    if (field.side && ['left', 'right', 'full'].includes(field.side)) {
+      return field.side;
+    }
+
+    // If no valid side, distribute evenly between left and right
+    return leftCount <= rightCount ? 'left' : 'right';
   }
+
+  private sortItems(items: any[]): any[] {
+    return [...items].sort((a, b) => a.seq - b.seq);
+  }
+
+  private isSection(item: any): boolean {
+    return item.type && [
+      'commonHeader',
+      'leftHeader',
+      'leftRightHeader',
+      'accordion'
+    ].includes(item.type);
+  }
+
+  isExpandable(section: any): boolean {
+    return section.type !== 'divider' && 
+           (section.type === 'accordion' || section.fields?.length > 0);
+  }
+
+  toggleSection(section: any): void {
+    this.formExtension.updateControlProperty(section, 'expand', !section.expand);
+  }
+
+  toggleAll(expand: boolean): void {
+    const processSection = (section: any) => {
+      if (this.isExpandable(section)) {
+        this.formExtension.updateControlProperty(section, 'expand', expand);
+      }
+      
+      if (section.fields) {
+        section.fields.forEach((field: any) => {
+          if (this.isSection(field)) {
+            processSection(field);
+          }
+        });
+      }
+
+      if (section.layout?.nestedSections) {
+        section.layout.nestedSections.forEach((nestedSection: any) => {
+          processSection(nestedSection);
+        });
+      }
+    };
+
+    this.readView().forEach(processSection);
+  }
+
+
+-----
+// common-read-view.component.scss
+
+:host {
+  display: block;
+  width: 100%;
+}
+
+.read-view-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.expand-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #e9ecef;
+  }
+}
+
+.section-wrapper {
+  margin-bottom: 1rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+}
+
+.header-sides {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.expand-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.5rem;
+  color: #666;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.section-content {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: all 0.3s ease-out;
+
+  &.expanded {
+    max-height: 2000px;
+    opacity: 1;
+    transition: all 0.5s ease-in;
+  }
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.nested-section {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.field-container {
+  margin-bottom: 1rem;
+
+  label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: #666;
+  }
+
+  &.required label::after {
+    content: "*";
+    color: #dc3545;
+    margin-left: 4px;
+  }
+}
+
+.field-value {
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+  min-height: 1.5rem;
+
+  &.invalid {
+    border: 1px solid #dc3545;
+  }
+}
+
+.field-error {
+  color: #dc3545;
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+}
+
+.array-field {
+  margin-bottom: 1.5rem;
+
+  label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+}
+
+.array-item {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: white;
+  border-radius: 4px;
+  border-left: 3px solid #0d6efd;
+}
+
+.array-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+
+  .array-field-item {
+    &.array-full {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      font-weight: normal;
+      color: #666;
+    }
+  }
+}
+
+.sub-header {
+  grid-column: 1 / -1;
+  margin: 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e9ecef;
+
+  h4 {
+    margin: 0;
+    color: #495057;
+  }
+}
+
+.req-divider {
+  grid-column: 1 / -1;
+  text-align: center;
+  margin: 1rem 0;
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: #dee2e6;
+    z-index: 0;
+  }
+
+  .req-text {
+    background: white;
+    padding: 0 1rem;
+    color: #666;
+    position: relative;
+    z-index: 1;
+  }
+}
+
+.divider {
+  height: 1px;
+  background: #dee2e6;
+  margin: 2rem 0;
+
+  &.thick {
+    height: 2px;
+  }
+
+  &.dashed {
+    border-top: 1px dashed #dee2e6;
+    background: none;
+  }
+}
+
+.header {
+  &.common-header,
+  &.single-header,
+  &.dual-header {
+    border-bottom: 1px solid #dee2e6;
+  }
+
+  h3 {
+    margin: 0;
+    color: #212529;
+    font-size: 1.25rem;
+    font-weight: 500;
+  }
+}
+
+.accordion-header {
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: #f8f9fa;
+  }
+
+  &.expanded {
+    background-color: #e9ecef;
+  }
+
+  .expand-icon {
+    font-size: 1.5rem;
+    color: #666;
+    transition: transform 0.3s;
+  }
+
+  &.expanded .expand-icon {
+    transform: rotate(180deg);
+  }
+}
+
+.nested-sections {
+  grid-column: 1 / -1;
+  
+  .nested-section + .nested-section {
+    margin-top: 1rem;
+  }
+}
+
+.nested-content {
+  padding: 0;
+
+  &.expanded {
+    padding: 1rem 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .array-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .left-column,
+  .right-column {
+    grid-column: 1 / -1;
+  }
+
+  .header-sides {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .expand-controls {
+    flex-direction: column;
+  }
+}
 }
