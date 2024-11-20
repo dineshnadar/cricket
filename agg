@@ -1,15 +1,316 @@
+// parallel-api.service.ts
+import { Injectable, inject } from '@angular/core';
+import { ApiService } from './api.service';
+import { Observable, forkJoin, of, throwError } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
 
+interface User {
+  id: string;
+  name: string;
+}
 
+interface OrgStats {
+  total: number;
+  active: number;
+}
 
+interface OrganizationData {
+  users?: User[];
+  totalUsers?: number;
+  activeUsers?: number;
+  errors?: {
+    users?: string;
+    stats?: string;
+  };
+  hasErrors: boolean;
+}
 
+@Injectable({
+  providedIn: 'root'
+})
+export class ParallelApiService {
+  private api = inject(ApiService);
 
+  // Approach 1: Handle each failure separately and return partial data
+  getOrganizationData(orgId: string): Observable<OrganizationData> {
+    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
+      catchError(error => {
+        console.error('Failed to fetch users:', error);
+        return of(null);
+      })
+    );
 
+    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
+      catchError(error => {
+        console.error('Failed to fetch stats:', error);
+        return of(null);
+      })
+    );
 
+    return forkJoin({
+      users: usersRequest,
+      stats: statsRequest
+    }).pipe(
+      map(({ users, stats }) => {
+        const result: OrganizationData = {
+          hasErrors: false,
+          errors: {}
+        };
 
+        // Handle users data
+        if (users === null) {
+          result.hasErrors = true;
+          result.errors!.users = 'Failed to load users';
+        } else {
+          result.users = users;
+        }
 
+        // Handle stats data
+        if (stats === null) {
+          result.hasErrors = true;
+          result.errors!.stats = 'Failed to load statistics';
+        } else {
+          result.totalUsers = stats.total;
+          result.activeUsers = stats.active;
+        }
 
+        return result;
+      })
+    );
+  }
 
+  // Approach 2: Fail if critical data is missing, return partial data for non-critical
+  getOrganizationDataStrict(orgId: string): Observable<OrganizationData> {
+    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
+      catchError(error => {
+        // Consider users data critical - throw error
+        return throwError(() => new Error('Failed to load users: Critical data missing'));
+      })
+    );
 
+    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
+      catchError(error => {
+        // Consider stats non-critical - return null
+        console.warn('Failed to load stats:', error);
+        return of(null);
+      })
+    );
+
+    return forkJoin({
+      users: usersRequest,
+      stats: statsRequest
+    }).pipe(
+      map(({ users, stats }) => ({
+        users,
+        totalUsers: stats?.total,
+        activeUsers: stats?.active,
+        hasErrors: !stats,
+        errors: stats ? undefined : { stats: 'Statistics temporarily unavailable' }
+      }))
+    );
+  }
+
+  // Approach 3: Detailed error handling with retry options
+  getOrganizationDataWithRetry(orgId: string): Observable<OrganizationData> {
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+
+    const handleRetry = (error: any, source: string) => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        console.warn(`Retrying ${source} request (${retryCount}/${MAX_RETRIES})`);
+        return of(null);
+      }
+      return of({ error: error.message || `Failed to load ${source}` });
+    };
+
+    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
+      catchError(error => handleRetry(error, 'users'))
+    );
+
+    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
+      catchError(error => handleRetry(error, 'stats'))
+    );
+
+    return forkJoin({
+      users: usersRequest,
+      stats: statsRequest
+    }).pipe(
+      map(({ users, stats }) => {
+        const result: OrganizationData = {
+          hasErrors: false,
+          errors: {}
+        };
+
+        // Handle users response
+        if (users === null || 'error' in users) {
+          result.hasErrors = true;
+          result.errors!.users = typeof users === 'object' ? users.error : 'Failed to load users';
+        } else {
+          result.users = users;
+        }
+
+        // Handle stats response
+        if (stats === null || 'error' in stats) {
+          result.hasErrors = true;
+          result.errors!.stats = typeof stats === 'object' ? stats.error : 'Failed to load statistics';
+        } else {
+          result.totalUsers = stats.total;
+          result.activeUsers = stats.active;
+        }
+
+        return result;
+      })
+    );
+  }
+}
+
+------------------------
+
+// organization-dashboard.component.ts
+import { Component, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ParallelApiService } from './parallel-api.service';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+
+@Component({
+  selector: 'app-organization-dashboard',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    @if (loading()) {
+      <div class="loading">Loading organization data...</div>
+    }
+
+    @if (error()) {
+      <div class="error-container">
+        <h3>Error Loading Data</h3>
+        <p>{{ error() }}</p>
+        <button (click)="loadData()">Retry</button>
+      </div>
+    }
+
+    @if (orgData()) {
+      <div class="dashboard">
+        @if (orgData()?.hasErrors) {
+          <div class="warning-banner">
+            <h4>Some data couldn't be loaded:</h4>
+            @if (orgData()?.errors?.users) {
+              <p>Users: {{ orgData()?.errors?.users }}</p>
+            }
+            @if (orgData()?.errors?.stats) {
+              <p>Statistics: {{ orgData()?.errors?.stats }}</p>
+            }
+            <button (click)="loadData()">Retry Loading Data</button>
+          </div>
+        }
+
+        @if (orgData()?.users) {
+          <div class="users-section">
+            <h3>Organization Users</h3>
+            <ul>
+              @for (user of orgData()?.users; track user.id) {
+                <li>{{ user.name }}</li>
+              }
+            </ul>
+          </div>
+        }
+
+        @if (orgData()?.totalUsers !== undefined) {
+          <div class="stats-section">
+            <h3>Organization Statistics</h3>
+            <p>Total Users: {{ orgData()?.totalUsers }}</p>
+            <p>Active Users: {{ orgData()?.activeUsers }}</p>
+          </div>
+        }
+      </div>
+    }
+  `,
+  styles: [`
+    .warning-banner {
+      background-color: #fff3cd;
+      border: 1px solid #ffeeba;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-radius: 4px;
+    }
+
+    .error-container {
+      background-color: #f8d7da;
+      border: 1px solid #f5c6cb;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-radius: 4px;
+    }
+  `]
+})
+export class OrganizationDashboardComponent {
+  private parallelApi = inject(ParallelApiService);
+  private destroyRef = inject(DestroyRef);
+
+  loading = signal(false);
+  error = signal<string | null>(null);
+  orgData = signal<OrganizationData | null>(null);
+
+  ngOnInit() {
+    this.loadData();
+  }
+
+  loadData() {
+    this.loading.set(true);
+    this.error.set(null);
+
+    // Using Approach 3 with retry
+    this.parallelApi.getOrganizationDataWithRetry('org123')
+      .pipe(
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe({
+        next: (data) => {
+          this.orgData.set(data);
+          this.loading.set(false);
+
+          // Log partial failures for monitoring
+          if (data.hasErrors) {
+            console.warn('Partial data load failure:', data.errors);
+          }
+        },
+        error: (err) => {
+          this.error.set('Failed to load organization data. Please try again.');
+          this.loading.set(false);
+          console.error('Complete load failure:', err);
+        }
+      });
+  }
+
+  // Alternative approach using strict version
+  loadDataStrict() {
+    this.loading.set(true);
+    this.error.set(null);
+
+    this.parallelApi.getOrganizationDataStrict('org123')
+      .pipe(
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe({
+        next: (data) => {
+          this.orgData.set(data);
+          this.loading.set(false);
+
+          if (data.hasErrors) {
+            // Show warning for non-critical failures
+            console.warn('Non-critical data missing:', data.errors);
+          }
+        },
+        error: (err) => {
+          // Critical failure - show error
+          this.error.set('Critical data could not be loaded. Please try again.');
+          this.loading.set(false);
+          console.error('Critical data load failure:', err);
+        }
+      });
+  }
+}
 
 
 
