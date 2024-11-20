@@ -1,645 +1,582 @@
-export interface ProcessedField extends LayoutField {
-  controlName: string;
-  groupPath?: string;
-  isNested: boolean;
-  invalid?: boolean;
-  errors?: ValidationErrors | null;
-  touched?: boolean;
-  dirty?: boolean;
-  status?: string;
-  formattedValue?: any;
-  cssClass?: string;
+// example.service.ts
+import { Injectable, inject } from '@angular/core';
+import { ApiService } from './api.service';
+
+interface UserProfile {
+  id: string;
+  name: string;
+  // ... other properties
 }
 
-export interface ProcessedSection extends LayoutSection {
-  processedFields?: ProcessedField[];
-  nestedGroups?: {
-    groupName: string;
-    fields: ProcessedField[];
-    isArray?: boolean;
-  }[];
+interface UserPreferences {
+  theme: string;
+  notifications: boolean;
+  // ... other properties
 }
-
-export interface ReadViewModel {
-  sections: ProcessedSection[];
-}
-
-------
-
-// syn-form-extension.service.ts
-import { Injectable, signal, effect } from '@angular/core';
-import { FormGroup, FormArray, AbstractControl, ValidatorFn, Validators } from '@angular/forms';
-import { FormLayout, LayoutSection, LayoutField, ProcessedSection, ProcessedField, ReadViewModel } from './syn-form-extension.types';
 
 @Injectable({
   providedIn: 'root'
 })
-export class SynFormExtensionService {
-  private formCache = new WeakMap<AbstractControl, ReadViewModel>();
-  private layoutCache = new WeakMap<FormGroup, FormLayout>();
-  private processedLayoutCache = new WeakMap<FormGroup, ProcessedSection[]>();
-  private validatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
-  
-  private triggerUpdate = signal(0);
-  private readonly updateDebounceTime = 100;
-  private updateTimer: any;
+export class ExampleService {
+  private apiService = inject(ApiService);
 
-  constructor() {
-    effect(() => {
-      this.triggerUpdate();
-      this.clearCaches();
-    });
-  }
+  // Method 1: Using async/await
+  async getUserData(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences }> {
+    try {
+      const profile = await this.apiService.get<UserProfile>('getUserProfile', { userId });
+      const preferences = await this.apiService.get<UserPreferences>('getUserPreferences', { userId });
 
-  getFieldClass(field: LayoutField): string {
-    const classes = ['field-container'];
-    
-    // Column span
-    classes.push(field.side === 'full' ? 'col-span-2' : 'col-span-1');
-    
-    // Alignment
-    if (field.align) {
-      classes.push(`text-${field.align}`);
-    }
-
-    // Required styling
-    if (field.required) {
-      classes.push('required-field');
-    }
-
-    // Field type
-    if (field.fieldType) {
-      classes.push(`field-type-${field.fieldType}`);
-    }
-
-    // Label position
-    if (field.labelPosition) {
-      classes.push(`label-${field.labelPosition}`);
-    }
-
-    // Custom class
-    if (field.customClass) {
-      classes.push(field.customClass);
-    }
-
-    return classes.join(' ');
-  }
-
-  setFormGroupLayout(formGroup: FormGroup, layout: FormLayout): void {
-    this.layoutCache.set(formGroup, layout);
-    this.processLayout(formGroup, layout);
-    this.debouncedTriggerUpdate();
-  }
-
-  private processLayout(formGroup: FormGroup, layout: FormLayout) {
-    const processedSections = layout.sections
-      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
-      .map(section => this.processSection(section, formGroup));
-    
-    this.processedLayoutCache.set(formGroup, processedSections);
-  }
-
-  private processSection(section: LayoutSection, formGroup: FormGroup): ProcessedSection {
-    return section.type === 'accordion' 
-      ? this.processAccordionSection(section, formGroup)
-      : this.processRegularSection(section, formGroup);
-  }
-
-  private processAccordionSection(section: LayoutSection, formGroup: FormGroup): ProcessedSection {
-    const groupedFields = this.groupFieldsByParentWithSequence(section.fields);
-    
-    return {
-      ...section,
-      nestedGroups: Object.entries(groupedFields).map(([groupName, fields]) => ({
-        groupName,
-        fields: fields.map(field => this.processField(field, formGroup, groupName)),
-        isArray: formGroup.get(groupName) instanceof FormArray
-      }))
-    };
-  }
-
-  private processRegularSection(section: LayoutSection, formGroup: FormGroup): ProcessedSection {
-    return {
-      ...section,
-      processedFields: this.sortFieldsBySequence(section.fields)
-        .map(field => this.processField(field, formGroup))
-    };
-  }
-
-  private processField(field: LayoutField, formGroup: FormGroup, parentGroup?: string): ProcessedField {
-    const pathParts = field.fldName.split('.');
-    const controlName = pathParts[pathParts.length - 1];
-    const groupPath = parentGroup || (pathParts.length > 1 ? pathParts[0] : '');
-    const control = this.getControl(formGroup, field.fldName);
-
-    return {
-      ...field,
-      controlName,
-      groupPath,
-      isNested: pathParts.length > 1 || !!parentGroup,
-      invalid: control?.invalid,
-      errors: control?.errors,
-      touched: control?.touched,
-      dirty: control?.dirty,
-      status: control?.status,
-      formattedValue: this.getFormattedValue(control, field),
-      cssClass: this.getFieldClass(field)
-    };
-  }
-
-  private getFormattedValue(control: AbstractControl | null, field: LayoutField): any {
-    if (!control?.value) return '';
-
-    switch (field.fieldType) {
-      case 'select':
-        return this.getLookupValue(control.value, field.lookupData);
-      case 'checkbox':
-        return control.value ? 'Yes' : 'No';
-      case 'date':
-        return control.value ? new Date(control.value).toLocaleDateString() : '';
-      default:
-        return control.value;
+      return { profile, preferences };
+    } catch (error) {
+      throw new Error('Failed to fetch user data: ' + (error as Error).message);
     }
   }
 
-  private groupFieldsByParentWithSequence(fields: LayoutField[]): { [key: string]: LayoutField[] } {
-    const groups = fields.reduce((acc, field) => {
-      const pathParts = field.fldName.split('.');
-      const parentGroup = pathParts.length > 1 ? pathParts[0] : '';
-      
-      if (!acc[parentGroup]) {
-        acc[parentGroup] = [];
+  // Method 2: Using Promise.all() when calls can be parallel
+  async getUserDataParallel(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences }> {
+    try {
+      const [profile, preferences] = await Promise.all([
+        this.apiService.get<UserProfile>('getUserProfile', { userId }),
+        this.apiService.get<UserPreferences>('getUserPreferences', { userId })
+      ]);
+
+      return { profile, preferences };
+    } catch (error) {
+      throw new Error('Failed to fetch user data: ' + (error as Error).message);
+    }
+  }
+
+  // Method 3: Sequential calls where second call depends on first call's data
+  async updateUserWithValidation(userId: string, updates: Partial<UserProfile>): Promise<UserProfile> {
+    try {
+      // First API call: Validate updates
+      const validationResult = await this.apiService.post<{ isValid: boolean; errors?: string[] }>(
+        'validateUserUpdates',
+        { updates }
+      );
+
+      if (!validationResult.isValid) {
+        throw new Error(`Validation failed: ${validationResult.errors?.join(', ')}`);
       }
-      acc[parentGroup].push(field);
-      return acc;
-    }, {} as { [key: string]: LayoutField[] });
 
-    Object.keys(groups).forEach(key => {
-      groups[key] = this.sortFieldsBySequence(groups[key]);
-    });
-
-    return groups;
-  }
-
-  private sortFieldsBySequence(fields: LayoutField[]): LayoutField[] {
-    return [...fields].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  }
-
-  private getLookupValue(value: any, lookupData?: Array<{ label: string; value: any }>): string {
-    if (!lookupData) return value;
-    const lookup = lookupData.find(item => item.value === value);
-    return lookup ? lookup.label : value;
-  }
-
-  private getControl(formGroup: FormGroup, path: string): AbstractControl | null {
-    return formGroup.get(path);
-  }
-
-  private debouncedTriggerUpdate(): void {
-    if (this.updateTimer) {
-      clearTimeout(this.updateTimer);
-    }
-    this.updateTimer = setTimeout(() => {
-      this.triggerUpdate.update(v => v + 1);
-    }, this.updateDebounceTime);
-  }
-
-  private clearCaches(): void {
-    this.formCache = new WeakMap();
-    this.processedLayoutCache = new WeakMap();
-  }
-
-  // Public methods for form manipulation
-  updateFieldValue(formGroup: FormGroup, fieldPath: string, value: any): void {
-    const control = this.getControl(formGroup, fieldPath);
-    if (control) {
-      control.setValue(value);
-      this.debouncedTriggerUpdate();
-    }
-  }
-
-  toggleFieldEditability(formGroup: FormGroup, fieldPath: string): void {
-    const control = this.getControl(formGroup, fieldPath);
-    if (control) {
-      const currentEditability = this.getExtendedProperty(control, 'editable');
-      this.updateControlProperty(control, 'editable', !currentEditability);
-      this.debouncedTriggerUpdate();
-    }
-  }
-
-  getExtendedProperty<K extends keyof ExtendedControlOptions>(
-    control: AbstractControl,
-    property: K
-  ): ExtendedControlOptions[K] | undefined {
-    return (control as any)[property];
-  }
-
-  updateControlProperty<K extends keyof ExtendedControlOptions>(
-    control: AbstractControl,
-    property: K,
-    value: ExtendedControlOptions[K]
-  ): void {
-    (control as any)[property] = value;
-    this.debouncedTriggerUpdate();
-  }
-
-  addArrayItem(formArray: FormArray, template?: any): void {
-    if (template) {
-      formArray.push(this.createFormGroupFromTemplate(template));
-    } else {
-      formArray.push(new FormControl(null));
-    }
-    this.debouncedTriggerUpdate();
-  }
-
-  private createFormGroupFromTemplate(template: any): FormGroup {
-    const group = new FormGroup({});
-    Object.keys(template).forEach(key => {
-      const value = template[key];
-      if (value instanceof FormGroup) {
-        group.addControl(key, this.createFormGroupFromTemplate(value.controls));
-      } else if (value instanceof FormArray) {
-        group.addControl(key, new FormArray([]));
-      } else {
-        group.addControl(key, new FormControl(null));
+      // Second API call: Apply updates
+      return await this.apiService.put<UserProfile>('updateUserProfile', updates, { userId });
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error; // Re-throw validation errors
       }
-    });
-    return group;
+      throw new Error('Failed to update user profile: ' + (error as Error).message);
+    }
+  }
+
+  // Method 4: Complex sequential calls with different error handling
+  async completeUserRegistration(userData: any): Promise<{ success: boolean; userId?: string; error?: string }> {
+    try {
+      // Step 1: Create user
+      const user = await this.apiService.post<{ userId: string }>('createUser', userData);
+
+      try {
+        // Step 2: Set up user preferences
+        await this.apiService.post('createUserPreferences', {
+          userId: user.userId,
+          defaultPreferences: true
+        });
+
+        try {
+          // Step 3: Send welcome email
+          await this.apiService.post('sendWelcomeEmail', { userId: user.userId });
+          
+          return { success: true, userId: user.userId };
+        } catch (emailError) {
+          // Non-critical error: Log but don't fail the registration
+          console.warn('Failed to send welcome email:', emailError);
+          return { success: true, userId: user.userId };
+        }
+      } catch (prefError) {
+        // Critical error: Clean up and fail
+        await this.apiService.delete('deleteUser', { userId: user.userId })
+          .catch(deleteError => console.error('Cleanup failed:', deleteError));
+        
+        throw new Error('Failed to set up user preferences');
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Registration failed: ${(error as Error).message}`
+      };
+    }
+  }
+
+  // Method 5: Sequential calls with rollback
+  async transferFunds(fromAccount: string, toAccount: string, amount: number): Promise<boolean> {
+    try {
+      // Step 1: Check balance
+      const balance = await this.apiService.get<{ amount: number }>(
+        'getAccountBalance',
+        { accountId: fromAccount }
+      );
+
+      if (balance.amount < amount) {
+        throw new Error('Insufficient funds');
+      }
+
+      // Step 2: Debit from account
+      const debitResult = await this.apiService.post('debitAccount', {
+        accountId: fromAccount,
+        amount
+      });
+
+      try {
+        // Step 3: Credit to account
+        await this.apiService.post('creditAccount', {
+          accountId: toAccount,
+          amount
+        });
+
+        return true;
+      } catch (creditError) {
+        // Rollback the debit if credit fails
+        try {
+          await this.apiService.post('creditAccount', {
+            accountId: fromAccount,
+            amount
+          });
+        } catch (rollbackError) {
+          throw new Error('Critical: Failed to rollback transaction. Please contact support.');
+        }
+        throw new Error('Transfer failed during credit step');
+      }
+    } catch (error) {
+      throw new Error(`Transfer failed: ${(error as Error).message}`);
+    }
   }
 }
 
+------------x----
+@Component({
+  selector: 'app-user-profile',
+  template: `
+    @if (loading) {
+      <div>Loading...</div>
+    } @else if (error) {
+      <div class="error">{{ error }}</div>
+    } @else {
+      <div>{{ userData | json }}</div>
+    }
+  `
+})
+export class UserProfileComponent implements OnInit {
+  loading = false;
+  error: string | null = null;
+  userData: any = null;
 
-------
-// syn-form-template.component.ts
-import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
-import { FormGroup, FormArray } from '@angular/forms';
-import { ProcessedSection } from './syn-form-extension.types';
-import { SynFormExtensionService } from './syn-form-extension.service';
+  constructor(private exampleService: ExampleService) {}
+
+  async ngOnInit() {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      this.userData = await this.exampleService.getUserData('123');
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async handleComplexOperation() {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      const result = await this.exampleService.completeUserRegistration({
+        // user data
+      });
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      // Handle success
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
+    } finally {
+      this.loading = false;
+    }
+  }
+}
+
+--------------x--------------
 
 @Component({
-  selector: 'app-syn-form',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './syn-form-template.component.html',
-  styleUrls: ['./syn-form-template.component.scss']
+  selector: 'app-user-profile',
+  template: `
+    @if (loading) {
+      <div>Loading...</div>
+    } @else if (error) {
+      <div class="error">{{ error }}</div>
+    } @else {
+      <div>{{ userData | json }}</div>
+    }
+  `
 })
-export class SynFormTemplateComponent {
-  @Input() formGroup!: FormGroup;
-  @Input() sections: ProcessedSection[] = [];
+export class UserProfileComponent implements OnInit {
+  loading = false;
+  error: string | null = null;
+  userData: any = null;
 
-  constructor(private formService: SynFormExtensionService) {}
+  constructor(private exampleService: ExampleService) {}
 
-  toggleAccordion(section: ProcessedSection): void {
-    section.expanded = !section.expanded;
+  async ngOnInit() {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      this.userData = await this.exampleService.getUserData('123');
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
+    } finally {
+      this.loading = false;
+    }
   }
 
-  addArrayItem(arrayName: string): void {
-    const array = this.formGroup.get(arrayName) as FormArray;
-    if (array) {
-      this.formService.addArrayItem(array);
+  async handleComplexOperation() {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      const result = await this.exampleService.completeUserRegistration({
+        // user data
+      });
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      // Handle success
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
+    } finally {
+      this.loading = false;
     }
   }
 }
 
-----
+-----------xxxx------
 
-<!-- syn-form-template.component.html -->
-<form [formGroup]="formGroup" class="syn-form">
-  <ng-container *ngFor="let section of sections">
-    <ng-container [ngSwitch]="section.type">
-      
-      <!-- Regular Section -->
-      <div *ngSwitchCase="'leftHeader'" 
-           class="section-container" 
-           [class.hidden]="!section.visible">
-        <div class="section-header">
-          <h2>{{section.leftHeader}}</h2>
-        </div>
-        
-        <div class="grid-layout">
-          <ng-container *ngFor="let field of section.processedFields">
-            <div [class]="field.cssClass">
-              <ng-container *ngTemplateOutlet="fieldTemplate; 
-                            context: { $implicit: field }">
-              </ng-container>
-            </div>
-          </ng-container>
+// user-dashboard.component.ts
+import { Component, OnInit, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ExampleService } from './example.service';
+
+interface UserData {
+  profile: UserProfile;
+  preferences: UserPreferences;
+}
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface UserPreferences {
+  theme: string;
+  notifications: boolean;
+}
+
+@Component({
+  selector: 'app-user-dashboard',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    @if (loading()) {
+      <div class="loading-container">
+        <app-loading-spinner />
+      </div>
+    }
+
+    @if (error()) {
+      <div class="error-container">
+        <div class="error-message">
+          {{ error() }}
+          <button (click)="retryLoad()" class="retry-button">
+            Retry
+          </button>
         </div>
       </div>
+    }
 
-      <!-- Accordion Section -->
-      <div *ngSwitchCase="'accordion'" 
-           class="accordion-section" 
-           [class.hidden]="!section.visible">
-        <div class="accordion-header"
-             (click)="toggleAccordion(section)">
-          <h3>{{section.accordionHeader}}</h3>
-          <i class="accordion-icon"
-             [class.expanded]="section.expanded"></i>
+    @if (userData()) {
+      <div class="dashboard-container">
+        <!-- Profile Section -->
+        <div class="profile-section">
+          <h2>Profile</h2>
+          <div class="profile-details">
+            <p>Name: {{ userData()?.profile.name }}</p>
+            <p>Email: {{ userData()?.profile.email }}</p>
+          </div>
         </div>
 
-        <div class="accordion-content" 
-             [class.expanded]="section.expanded">
-          <ng-container *ngFor="let group of section.nestedGroups">
-            <div [formGroupName]="group.groupName" 
-                 class="nested-group">
-              <div class="grid-layout">
-                <ng-container *ngFor="let field of group.fields">
-                  <div [class]="field.cssClass">
-                    <ng-container *ngTemplateOutlet="fieldTemplate; 
-                                  context: { $implicit: field }">
-                    </ng-container>
-                  </div>
-                </ng-container>
-              </div>
+        <!-- Preferences Section -->
+        <div class="preferences-section">
+          <h2>Preferences</h2>
+          <div class="preferences-details">
+            <p>Theme: {{ userData()?.preferences.theme }}</p>
+            <p>Notifications: {{ userData()?.preferences.notifications ? 'Enabled' : 'Disabled' }}</p>
+          </div>
+        </div>
 
-              <div *ngIf="group.isArray" class="array-controls">
-                <button type="button" 
-                        (click)="addArrayItem(group.groupName)">
-                  Add Item
-                </button>
-              </div>
-            </div>
-          </ng-container>
+        <!-- Actions Section -->
+        <div class="actions-section">
+          <button (click)="refreshData()" 
+                  [disabled]="loading()"
+                  class="refresh-button">
+            Refresh Data
+          </button>
         </div>
       </div>
-
-    </ng-container>
-  </ng-container>
-</form>
-
-<!-- Field Template -->
-<ng-template #fieldTemplate let-field>
-  <div class="field-wrapper" [class.hidden]="!field.visible">
-    <ng-container *ngIf="field.editable; else readOnlyTpl">
-      <ng-container [ngSwitch]="field.fieldType">
-        <!-- Text Input -->
-        <ng-container *ngSwitchCase="'text'">
-          <label [for]="field.fldName" 
-                 [class.required]="field.required">
-            {{field.label}}
-          </label>
-          <input [id]="field.fldName"
-                 [formControlName]="field.controlName"
-                 type="text"
-                 class="form-input"
-                 [class.error]="field.invalid">
-          <div *ngIf="field.helpText" class="help-text">
-            {{field.helpText}}
-          </div>
-          <div *ngIf="field.invalid && field.errors" class="error-message">
-            <ng-container *ngIf="field.errors['required']">
-              {{field.label}} is required
-            </ng-container>
-            <ng-container *ngIf="field.errors['pattern']">
-              Invalid format
-            </ng-container>
-          </div>
-        </ng-container>
-
-        <!-- Select Input -->
-        <ng-container *ngSwitchCase="'select'">
-          <label [for]="field.fldName"
-                 [class.required]="field.required">
-            {{field.label}}
-          </label>
-          <select [id]="field.fldName"
-                  [formControlName]="field.controlName"
-                  class="form-select"
-                  [class.error]="field.invalid">
-            <option value="">-None-</option>
-            <option *ngFor="let opt of field.lookupData"
-                    [value]="opt.value">
-              {{opt.label}}
-            </option>
-          </select>
-          <div *ngIf="field.invalid && field.errors" class="error-message">
-            <ng-container *ngIf="field.errors['required']">
-              Please select {{field.label}}
-            </ng-container>
-          </div>
-        </ng-container>
-
-        <!-- Checkbox Input -->
-        <ng-container *ngSwitchCase="'checkbox'">
-          <div class="checkbox-wrapper">
-            <input [id]="field.fldName"
-                   [formControlName]="field.controlName"
-                   type="checkbox"
-                   class="form-checkbox">
-            <label [for]="field.fldName">
-              {{field.label}}
-            </label>
-          </div>
-        </ng-container>
-
-        <!-- Date Input -->
-        <ng-container *ngSwitchCase="'date'">
-          <label [for]="field.fldName"
-                 [class.required]="field.required">
-            {{field.label}}
-          </label>
-          <input [id]="field.fldName"
-                 [formControlName]="field.controlName"
-                 type="date"
-                 class="form-input"
-                 [class.error]="field.invalid">
-          <div *ngIf="field.invalid && field.errors" class="error-message">
-            <ng-container *ngIf="field.errors['required']">
-              Please select a date
-            </ng-container>
-          </div>
-        </ng-container>
-      </ng-container>
-    </ng-container>
-  </div>
-</ng-template>
-
-<!-- Read Only Template -->
-<ng-template #readOnlyTpl>
-  <div class="read-only-field">
-    <label>{{field.label}}</label>
-    <div class="field-value" [innerHTML]="field.formattedValue || '-'">
-    </div>
-    <div *ngIf="field.helpText" class="help-text">
-      {{field.helpText}}
-    </div>
-  </div>
-</ng-template>
-
------
-
-// syn-form-template.component.scss
-.syn-form {
-  @apply max-w-7xl mx-auto;
-
-  .section-container {
-    @apply bg-white rounded-lg shadow-sm p-6 mb-6;
-
-    .section-header {
-      @apply mb-6;
-      
-      h2 {
-        @apply text-xl font-semibold text-gray-800;
-      }
     }
-  }
-
-  .accordion-section {
-    @apply mb-4;
-
-    .accordion-header {
-      @apply p-4 bg-gray-50 rounded-t-lg border flex justify-between 
-             items-center cursor-pointer;
-
-      h3 {
-        @apply text-lg font-medium;
-      }
-
-      .accordion-icon {
-        @apply transition-transform duration-200;
-        
-        &:not(.expanded) {
-          @apply rotate-0;
-        }
-        
-        &.expanded {
-          @apply rotate-180;
-        }
-      }
+  `,
+  styles: [`
+    .dashboard-container {
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
     }
 
-    .accordion-content {
-      @apply bg-white border-x border-b rounded-b-lg overflow-hidden 
-             transition-all duration-200;
-      
-      &:not(.expanded) {
-        @apply max-h-0;
-      }
-      
-      &.expanded {
-        @apply max-h-[1000px] p-4;
-      }
-    }
-  }
-
-  .grid-layout {
-    @apply grid grid-cols-1 md:grid-cols-2 gap-4;
-  }
-
-  .field-wrapper {
-    @apply mb-4;
-
-    label {
-      @apply block text-sm font-medium text-gray-700 mb-1;
-      
-      &.required:after {
-        content: "*";
-        @apply text-red-500 ml-1;
-      }
+    .loading-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 200px;
     }
 
-    .form-input,
-    .form-select {
-      @apply block w-full rounded-md border-gray-300 shadow-sm 
-             focus:border-blue-500 focus:ring-blue-500 sm:text-sm;
-
-      &.error {
-        @apply border-red-500 focus:border-red-500 focus:ring-red-500;
-      }
-    }
-
-    .checkbox-wrapper {
-      @apply flex items-center;
-
-      input {
-        @apply h-4 w-4 text-blue-600 rounded border-gray-300 
-               focus:ring-blue-500;
-      }
-
-      label {
-        @apply ml-2 mb-0;
-      }
+    .error-container {
+      padding: 20px;
+      background-color: #fff3f3;
+      border: 1px solid #ff8080;
+      border-radius: 4px;
+      margin: 20px;
     }
 
     .error-message {
-      @apply mt-1 text-sm text-red-600;
+      color: #d63031;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
-    .help-text {
-      @apply mt-1 text-sm text-gray-500;
+    .retry-button {
+      background-color: #ff7675;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .profile-section,
+    .preferences-section {
+      background-color: white;
+      padding: 20px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .actions-section {
+      display: flex;
+      justify-content: flex-end;
+      padding: 20px 0;
+    }
+
+    .refresh-button {
+      background-color: #74b9ff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .refresh-button:disabled {
+      background-color: #ddd;
+      cursor: not-allowed;
+    }
+  `]
+})
+export class UserDashboardComponent implements OnInit {
+  private exampleService = inject(ExampleService);
+
+  // Signals for state management
+  loading = signal(false);
+  error = signal<string | null>(null);
+  userData = signal<UserData | null>(null);
+
+  ngOnInit() {
+    this.loadUserData();
+  }
+
+  async loadUserData(showLoading = true): Promise<void> {
+    if (showLoading) {
+      this.loading.set(true);
+    }
+    this.error.set(null);
+
+    try {
+      // Using parallel data fetching
+      const userData = await this.exampleService.getUserDataParallel('123'); // Replace with actual user ID
+      this.userData.set(userData);
+    } catch (err) {
+      this.error.set(this.getErrorMessage(err));
+      this.userData.set(null);
+    } finally {
+      this.loading.set(false);
     }
   }
 
-  .read-only-field {
-    @apply mb-4;
+  // Silent refresh without showing loading indicator
+  async refreshData(): Promise<void> {
+    await this.loadUserData(false);
+  }
 
-    label {
-      @apply block text-sm font-medium text-gray-700 mb-1;
+  async retryLoad(): Promise<void> {
+    await this.loadUserData();
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
     }
+    return 'An unexpected error occurred';
+  }
+}
 
-    .field-value {
-      @apply mt-1 p-2 bg-gray-50 rounded border border-gray-200 
-             text-sm text-gray-700;
+// Usage with optimistic updates:
+@Component({
+  selector: 'app-user-settings',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <div class="settings-container">
+      @if (userData()) {
+        <div class="settings-form">
+          <!-- Theme Toggle -->
+          <div class="setting-item">
+            <label>Theme</label>
+            <select 
+              [value]="userData()?.preferences.theme"
+              (change)="updateTheme($event)"
+              [disabled]="updating()"
+            >
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+
+          <!-- Notifications Toggle -->
+          <div class="setting-item">
+            <label>
+              <input 
+                type="checkbox"
+                [checked]="userData()?.preferences.notifications"
+                (change)="updateNotifications($event)"
+                [disabled]="updating()"
+              >
+              Enable Notifications
+            </label>
+          </div>
+        </div>
+
+        @if (error()) {
+          <div class="error-message">
+            {{ error() }}
+          </div>
+        }
+      }
+    </div>
+  `
+})
+export class UserSettingsComponent implements OnInit {
+  private exampleService = inject(ExampleService);
+
+  userData = signal<UserData | null>(null);
+  updating = signal(false);
+  error = signal<string | null>(null);
+
+  ngOnInit() {
+    this.loadData();
+  }
+
+  async loadData(): Promise<void> {
+    try {
+      const data = await this.exampleService.getUserDataParallel('123');
+      this.userData.set(data);
+    } catch (err) {
+      this.error.set(this.getErrorMessage(err));
     }
   }
 
-  .array-controls {
-    @apply mt-4 flex justify-end;
+  async updateTheme(event: Event): Promise<void> {
+    const select = event.target as HTMLSelectElement;
+    const newTheme = select.value;
 
-    button {
-      @apply px-4 py-2 text-sm font-medium text-blue-700 bg-blue-100 
-             rounded-md hover:bg-blue-200 focus:outline-none focus:ring-2 
-             focus:ring-offset-2 focus:ring-blue-500;
+    // Optimistic update
+    this.updateLocalState({ theme: newTheme });
+
+    try {
+      this.updating.set(true);
+      await this.exampleService.updateUserWithValidation('123', {
+        preferences: { theme: newTheme }
+      });
+    } catch (err) {
+      // Rollback on error
+      await this.loadData();
+      this.error.set(this.getErrorMessage(err));
+    } finally {
+      this.updating.set(false);
     }
   }
 
-  // Column span utilities
-  .col-span-1 {
-    @apply col-span-1;
-  }
+  async updateNotifications(event: Event): Promise<void> {
+    const checkbox = event.target as HTMLInputElement;
+    const enabled = checkbox.checked;
 
-  .col-span-2 {
-    @apply col-span-2;
-  }
+    // Optimistic update
+    this.updateLocalState({ notifications: enabled });
 
-  // Alignment utilities
-  .text-left {
-    @apply text-left;
-  }
-
-  .text-center {
-    @apply text-center;
-  }
-
-  .text-right {
-    @apply text-right;
-  }
-
-  // Field type specific styles
-  .field-type-text {
-    // Add specific styles for text fields
-  }
-
-  .field-type-select {
-    // Add specific styles for select fields
-  }
-
-  // Label position variants
-  .label-top {
-    @apply flex flex-col;
-  }
-
-  .label-left {
-    @apply flex flex-row items-center;
-    
-    label {
-      @apply mr-4 mb-0 w-1/3;
+    try {
+      this.updating.set(true);
+      await this.exampleService.updateUserWithValidation('123', {
+        preferences: { notifications: enabled }
+      });
+    } catch (err) {
+      // Rollback on error
+      await this.loadData();
+      this.error.set(this.getErrorMessage(err));
+    } finally {
+      this.updating.set(false);
     }
   }
 
-  .label-hidden {
-    label {
-      @apply sr-only;
-    }
+  private updateLocalState(update: Partial<UserPreferences>): void {
+    this.userData.update(data => {
+      if (data) {
+        return {
+          ...data,
+          preferences: {
+            ...data.preferences,
+            ...update
+          }
+        };
+      }
+      return data;
+    });
+  }
+
+  private getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'An unexpected error occurred';
   }
 }
