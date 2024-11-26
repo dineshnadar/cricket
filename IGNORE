@@ -1,3 +1,32 @@
+private getFormValues(control: AbstractControl, path: string = ''): any {
+    if (this.shouldIgnoreControl(path)) {
+      return undefined;
+    }
+
+    if (control instanceof FormGroup) {
+      const values: Record<string, any> = {};
+      Object.keys(control.controls).forEach(key => {
+        const childPath = path ? `${path}.${key}` : key;
+        if (!this.shouldIgnoreControl(childPath)) {
+          const childValue = this.getFormValues(control.get(key)!, childPath);
+          if (childValue !== undefined) {
+            values[key] = childValue;
+          }
+        }
+      });
+      return Object.keys(values).length > 0 ? values : undefined;
+    } 
+    else if (control instanceof FormArray) {
+      const values = control.controls.map((ctrl, index) => 
+        this.getFormValues(ctrl, `${path}[${index}]`)
+      ).filter(value => value !== undefined);
+      return values.length > 0 ? values : undefined;
+    }
+    return control.value;
+  }
+
+
+
 // form-change.service.ts
 
 private shouldIgnoreControl(path: string, control?: AbstractControl): boolean {
