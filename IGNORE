@@ -1,4 +1,38 @@
+/ Utility function to filter object to keep only keys present in reference object
+export function filterObjectToMatchKeys(sourceObj: any, referenceObj: any): any {
+    if (!sourceObj || !referenceObj) {
+        return sourceObj;
+    }
 
+    // Handle arrays
+    if (Array.isArray(referenceObj)) {
+        if (!Array.isArray(sourceObj)) {
+            return sourceObj;
+        }
+        return sourceObj.map((item, index) => 
+            index < referenceObj.length ? 
+                filterObjectToMatchKeys(item, referenceObj[index]) : 
+                item
+        );
+    }
+
+    // Handle objects
+    if (typeof referenceObj === 'object' && typeof sourceObj === 'object') {
+        const filteredObj: any = {};
+        
+        // Only keep keys that exist in referenceObj
+        Object.keys(referenceObj).forEach(key => {
+            if (key in sourceObj) {
+                filteredObj[key] = filterObjectToMatchKeys(sourceObj[key], referenceObj[key]);
+            }
+        });
+        
+        return filteredObj;
+    }
+
+    // Return primitive values as is
+    return sourceObj;
+}
 
 private getFormValues(control: AbstractControl, path: string = ''): any {
     if (this.shouldIgnoreControl(path)) {
