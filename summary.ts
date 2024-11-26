@@ -1,254 +1,413 @@
-// form-extension.service.ts
-import { Injectable } from '@angular/core';
-import { AbstractControl, FormArray, FormGroup, FormControl } from '@angular/forms';
-import { SynFormExtensionService } from './syn-form-extension.service';
-import { ExtendedControlOptions, ExtendedAbstractControl } from './syn-form-extension.type';
-
-interface ChangeItem {
+// types.ts
+export interface ChangeItem {
   label: string;
-  old?: any;
-  new?: any;
-  path?: string;
+  formControlName: string;
+  path: string;
+  old: any;
+  new: any;
+  status: ChangeStatus;
   sectionName?: string;
 }
 
+export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'unmodified';
+
+export interface ChangeSummary {
+  changes: ChangeItem[];
+  hasChanges: boolean;
+  addedCount: number;
+  modifiedCount: number;
+  deletedCount: number;
+  sections: { [key: string]: ChangeItem[] };
+}
+
+export interface ExtendedControlOptions extends Record<string, any> {
+  label?: string;
+  formControlName?: string;
+  _oldValue?: any;
+  hasChanges?: boolean;
+  changeType?: ChangeStatus;
+  sectionName?: string;
+}
+
+export interface ExtendedAbstractControl extends AbstractControl {
+  label?: string;
+  formControlName?: string;
+  _oldValue?: any;
+  hasChanges?: boolean;
+  changeType?: ChangeStatus;
+  sectionName?: string;
+}
+
+// form-change.service.ts
 @Injectable({
   providedIn: 'root'
 })
-export class FormExtensionService {
-  private formLabels: { [key: string]: string } = {};
-  private oldValueMap = new Map<string, any>();
-
-  constructor(private synFormExtension: SynFormExtensionService) {}
+export class FormChangeService {
+  private readonly PRIMITIVE_TYPES = ['string', 'number', 'boolean'];
+  
+  constructor(
+    private synFormExtension: SynFormExtensionService,
+    private errorHandler: ErrorHandler
+  ) {}
 
   /**
-   * Set old values from JSON and extend form controls
+   * Initialize form with old values
    */
-  initializeFormWithOldValues(form: FormGroup, oldJson: any): void {
-    this.setOldValuesRecursively(form, oldJson);
+  initializeFormWithOldValues(form: FormGroup, oldValues: any): void {
+    try {
+      this.setOldValuesRecursively(form, oldValues);
+    } catch (error) {
+      this.handleError('Error initializing form values', error);
+    }
   }
 
   /**
-   * Get changes between current form state and old values
+   * Get change summary for form
    */
-  getChangeSummary(form: FormGroup): ChangeItem[] {
-    const currentValues = this.getFormValues(form);
-    const oldValues = this.getOldValues(form);
-    const changes = this.compareStates(oldValues, currentValues);
-    return this.flattenChanges(changes);
+  getChangeSummary(form: FormGroup): ChangeSummary {
+    try {
+      const currentValues = this.getFormValues(form);
+      const oldValues = this.getOldValues(form);
+      const changes = this.compareStates(oldValues, currentValues, '', form);
+      const flattenedChanges = this.flattenChanges(changes);
+
+      // Update control change status
+      this.updateControlChangeStatus(form, flattenedChanges);
+
+      return this.createChangeSummary(flattenedChanges);
+    } catch (error) {
+      this.handleError('Error getting change summary', error);
+      return this.createEmptyChangeSummary();
+    }
   }
 
   /**
-   * Recursively set old values and extend form controls
+   * Reset form to old values
    */
-  private setOldValuesRecursively(control: AbstractControl, oldValue: any, path: string = ''): void {
+  resetForm(form: FormGroup): void {
+    try {
+      this.resetFormRecursively(form);
+      this.resetControlChangeStatus(form);
+    } catch (error) {
+      this.handleError('Error resetting form', error);
+    }
+  }
+
+  /**
+   * Check if form has any changes
+   */
+  hasFormChanges(form: FormGroup): boolean {
+    return (form as ExtendedAbstractControl).hasChanges || false;
+  }
+
+  /**
+   * Check if specific control has changes
+   */
+  hasControlChanges(form: FormGroup, path: string): boolean {
+    const control = this.getControlByPath(form, path);
+    return control ? (control as ExtendedAbstractControl).hasChanges : false;
+  }
+
+  /**
+   * Private helper methods
+   */
+  private setOldValuesRecursively(
+    control: AbstractControl, 
+    oldValue: any, 
+    path: string = ''
+  ): void {
+    if (!control) return;
+
     if (control instanceof FormGroup) {
-      Object.keys(control.controls).forEach(key => {
-        const childPath = path ? `${path}.${key}` : key;
-        const childControl = control.get(key);
-        const childOldValue = oldValue?.[key];
-
-        if (childControl) {
-          this.setOldValuesRecursively(childControl, childOldValue, childPath);
-        }
-      });
+      this.handleFormGroupOldValues(control, oldValue, path);
     } 
     else if (control instanceof FormArray) {
-      const arrayOldValue = Array.isArray(oldValue) ? oldValue : [];
-      control.controls.forEach((childControl, index) => {
-        const childPath = `${path}[${index}]`;
-        this.setOldValuesRecursively(childControl, arrayOldValue[index], childPath);
-      });
+      this.handleFormArrayOldValues(control, oldValue, path);
     } 
     else {
-      // Store old value in map
-      this.oldValueMap.set(path, oldValue);
+      this.handleFormControlOldValues(control, oldValue, path);
+    }
+  }
 
-      // Extend control with old value property
-      this.synFormExtension.extendControl(control, {
-        _oldValue: oldValue,
-        fldName: path,
-        label: this.getControlLabel(path)
-      } as ExtendedControlOptions);
+  private handleFormGroupOldValues(
+    group: FormGroup, 
+    oldValue: any, 
+    path: string
+  ): void {
+    // Extend FormGroup
+    this.extendControlWithValues(group, oldValue, path);
 
-      // Store label if available
-      const extendedControl = control as ExtendedAbstractControl;
-      if (extendedControl.label) {
-        this.formLabels[path] = extendedControl.label;
+    // Process child controls
+    Object.keys(group.controls).forEach(key => {
+      const childPath = path ? `${path}.${key}` : key;
+      const childControl = group.get(key);
+      const childOldValue = oldValue?.[key];
+
+      if (childControl) {
+        this.setOldValuesRecursively(childControl, childOldValue, childPath);
       }
-    }
+    });
   }
 
-  /**
-   * Get current form values
-   */
-  private getFormValues(control: AbstractControl): any {
-    if (control instanceof FormGroup) {
-      const values: any = {};
-      Object.keys(control.controls).forEach(key => {
-        const childControl = control.get(key);
-        if (childControl) {
-          values[key] = this.getFormValues(childControl);
-        }
-      });
-      return values;
-    } 
-    else if (control instanceof FormArray) {
-      return control.controls.map(c => this.getFormValues(c));
-    } 
-    else {
-      return control.value;
-    }
+  private handleFormArrayOldValues(
+    array: FormArray, 
+    oldValue: any, 
+    path: string
+  ): void {
+    // Extend FormArray
+    this.extendControlWithValues(array, oldValue, path);
+
+    // Process array items
+    const arrayOldValue = Array.isArray(oldValue) ? oldValue : [];
+    array.controls.forEach((control, index) => {
+      const childPath = `${path}[${index}]`;
+      this.setOldValuesRecursively(control, arrayOldValue[index], childPath);
+    });
   }
 
-  /**
-   * Get stored old values
-   */
-  private getOldValues(control: AbstractControl, path: string = ''): any {
-    if (control instanceof FormGroup) {
-      const values: any = {};
-      Object.keys(control.controls).forEach(key => {
-        const childPath = path ? `${path}.${key}` : key;
-        const childControl = control.get(key);
-        if (childControl) {
-          values[key] = this.getOldValues(childControl, childPath);
-        }
-      });
-      return values;
-    } 
-    else if (control instanceof FormArray) {
-      return control.controls.map((c, i) => 
-        this.getOldValues(c, `${path}[${i}]`)
-      );
-    } 
-    else {
-      return this.oldValueMap.get(path);
-    }
+  private handleFormControlOldValues(
+    control: AbstractControl, 
+    oldValue: any, 
+    path: string
+  ): void {
+    this.extendControlWithValues(control, oldValue, path);
   }
 
-  /**
-   * Compare states and generate change summary
-   */
-  private compareStates(initial: any, current: any, path: string = ''): any {
-    // Handle null/undefined cases
-    if (initial === current) return {};
-    if (!initial && current) return { 
-      label: this.getLabel(path), 
-      old: initial, 
-      new: current,
-      path 
-    };
-    if (initial && !current) return { 
-      label: this.getLabel(path), 
-      old: initial, 
-      new: current,
-      path 
+  private extendControlWithValues(
+    control: AbstractControl, 
+    oldValue: any, 
+    path: string
+  ): void {
+    const options: ExtendedControlOptions = {
+      _oldValue: oldValue,
+      hasChanges: false,
+      changeType: 'unmodified',
+      label: this.getControlLabel(control, path),
+      formControlName: this.getFormControlName(path),
+      sectionName: this.getSectionName(path)
     };
 
-    // Handle arrays
-    if (Array.isArray(initial) && Array.isArray(current)) {
-      const changes: any = {};
+    this.synFormExtension.extendControl(control, options);
+  }
+
+  private compareStates(
+    initial: any, 
+    current: any, 
+    path: string,
+    control?: AbstractControl
+  ): Partial<ChangeItem> {
+    try {
+      if (this.areValuesEqual(initial, current)) return {};
+
+      if (Array.isArray(initial) && Array.isArray(current)) {
+        return this.compareArrays(initial, current, path, control as FormArray);
+      }
+
+      if (this.isObject(initial) && this.isObject(current)) {
+        return this.compareObjects(initial, current, path, control as FormGroup);
+      }
+
+      return this.createChangeItem({
+        path,
+        label: this.getControlLabel(control, path),
+        status: this.determineChangeStatus(initial, current)
+      }, initial, current);
+    } catch (error) {
+      this.handleError(`Error comparing states at path: ${path}`, error);
+      return {};
+    }
+  }
+
+  private compareArrays(
+    initial: any[], 
+    current: any[], 
+    path: string,
+    control?: FormArray
+  ): Record<string, any> {
+    const changes: Record<string, any> = {};
+    let arrayStatus: ChangeStatus = 'unmodified';
+
+    try {
       const maxLength = Math.max(initial.length, current.length);
-      
+
       for (let i = 0; i < maxLength; i++) {
+        const itemPath = `${path}[${i}]`;
+        const itemControl = control?.at(i);
+
         if (i >= current.length) {
-          changes[i] = { 
-            label: this.getLabel(`${path}[${i}]`), 
-            old: initial[i], 
-            new: undefined,
-            path: `${path}[${i}]` 
-          };
+          changes[i] = this.createArrayItemChange(
+            itemPath, 
+            itemControl, 
+            initial[i], 
+            undefined, 
+            'deleted'
+          );
+          arrayStatus = 'modified';
         } 
         else if (i >= initial.length) {
-          changes[i] = { 
-            label: this.getLabel(`${path}[${i}]`), 
-            old: undefined, 
-            new: current[i],
-            path: `${path}[${i}]` 
-          };
+          changes[i] = this.createArrayItemChange(
+            itemPath, 
+            itemControl, 
+            undefined, 
+            current[i], 
+            'added'
+          );
+          arrayStatus = 'modified';
         } 
         else {
           const itemChanges = this.compareStates(
             initial[i], 
             current[i], 
-            `${path}[${i}]`
+            itemPath,
+            itemControl
           );
+          
           if (Object.keys(itemChanges).length > 0) {
             changes[i] = itemChanges;
+            arrayStatus = 'modified';
           }
         }
       }
 
-      if (initial.length !== current.length) {
-        changes.arrayChanges = { 
-          label: 'Array Length', 
-          old: initial.length, 
-          new: current.length,
-          path 
-        };
+      if (Object.keys(changes).length > 0) {
+        changes.status = arrayStatus;
       }
 
       return changes;
+    } catch (error) {
+      this.handleError(`Error comparing arrays at path: ${path}`, error);
+      return changes;
     }
+  }
 
-    // Handle objects
-    if (typeof initial === 'object' && initial !== null && 
-        typeof current === 'object' && current !== null) {
-      const changes: any = {};
+  private compareObjects(
+    initial: Record<string, any>, 
+    current: Record<string, any>,
+    path: string,
+    control?: FormGroup
+  ): Record<string, any> {
+    const changes: Record<string, any> = {};
+    let objectStatus: ChangeStatus = 'unmodified';
+
+    try {
       const allKeys = new Set([...Object.keys(initial), ...Object.keys(current)]);
 
       for (const key of allKeys) {
-        const newPath = path ? `${path}.${key}` : key;
-        const itemChanges = this.compareStates(
-          initial[key], 
-          current[key], 
-          newPath
-        );
-        
-        if (Object.keys(itemChanges).length > 0) {
-          changes[key] = {
-            label: this.getLabel(newPath),
-            ...itemChanges,
-            path: newPath
-          };
+        const propertyPath = path ? `${path}.${key}` : key;
+        const propertyControl = control?.get(key);
+
+        if (!(key in current)) {
+          changes[key] = this.createObjectPropertyChange(
+            propertyPath, 
+            propertyControl, 
+            initial[key], 
+            undefined, 
+            'deleted'
+          );
+          objectStatus = 'modified';
+        } 
+        else if (!(key in initial)) {
+          changes[key] = this.createObjectPropertyChange(
+            propertyPath, 
+            propertyControl, 
+            undefined, 
+            current[key], 
+            'added'
+          );
+          objectStatus = 'modified';
+        } 
+        else {
+          const propertyChanges = this.compareStates(
+            initial[key],
+            current[key],
+            propertyPath,
+            propertyControl
+          );
+
+          if (Object.keys(propertyChanges).length > 0) {
+            changes[key] = propertyChanges;
+            objectStatus = 'modified';
+          }
         }
       }
 
+      if (Object.keys(changes).length > 0) {
+        changes.status = objectStatus;
+      }
+
+      return changes;
+    } catch (error) {
+      this.handleError(`Error comparing objects at path: ${path}`, error);
       return changes;
     }
-
-    // Handle primitive values
-    if (initial !== current) {
-      return { 
-        label: this.getLabel(path), 
-        old: initial, 
-        new: current,
-        path 
-      };
-    }
-
-    return {};
   }
 
-  /**
-   * Flatten nested changes into array
-   */
-  private flattenChanges(changes: any): ChangeItem[] {
+ // Continuing form-change.service.ts...
+
+  private createChangeItem(
+    metadata: { path: string; label: string; status: ChangeStatus },
+    oldValue: any,
+    newValue: any
+  ): Partial<ChangeItem> {
+    return {
+      label: metadata.label,
+      formControlName: this.getFormControlName(metadata.path),
+      old: oldValue,
+      new: newValue,
+      status: metadata.status,
+      path: metadata.path,
+      sectionName: this.getSectionName(metadata.path)
+    };
+  }
+
+  private createArrayItemChange(
+    path: string,
+    control: AbstractControl | null,
+    oldValue: any,
+    newValue: any,
+    status: ChangeStatus
+  ): Partial<ChangeItem> {
+    return this.createChangeItem(
+      {
+        path,
+        label: this.getControlLabel(control, path),
+        status
+      },
+      oldValue,
+      newValue
+    );
+  }
+
+  private createObjectPropertyChange(
+    path: string,
+    control: AbstractControl | null,
+    oldValue: any,
+    newValue: any,
+    status: ChangeStatus
+  ): Partial<ChangeItem> {
+    return this.createChangeItem(
+      {
+        path,
+        label: this.getControlLabel(control, path),
+        status
+      },
+      oldValue,
+      newValue
+    );
+  }
+
+  private flattenChanges(changes: Record<string, any>): ChangeItem[] {
     const flattened: ChangeItem[] = [];
 
-    const processChanges = (obj: any) => {
+    const processChanges = (obj: Record<string, any>, parentPath: string = '') => {
       for (const [key, value] of Object.entries(obj)) {
-        if (value && typeof value === 'object') {
-          if ('old' in value || 'new' in value) {
-            // Extract section name from path if available
-            const sectionName = this.extractSectionName(value.path);
-            flattened.push({
-              ...value,
-              sectionName
-            });
-          } else {
-            processChanges(value);
-          }
+        if (this.isChangeItem(value)) {
+          flattened.push(value as ChangeItem);
+        } else if (this.isObject(value) && key !== 'status') {
+          processChanges(
+            value,
+            parentPath ? `${parentPath}.${key}` : key
+          );
         }
       }
     };
@@ -257,117 +416,215 @@ export class FormExtensionService {
     return flattened;
   }
 
-  /**
-   * Get label for path
-   */
-  private getLabel(path: string): string {
-    return this.formLabels[path] || this.getControlLabel(path);
+  private createChangeSummary(changes: ChangeItem[]): ChangeSummary {
+    const sections: { [key: string]: ChangeItem[] } = {};
+
+    // Group changes by section
+    changes.forEach(change => {
+      const sectionName = change.sectionName || 'other';
+      if (!sections[sectionName]) {
+        sections[sectionName] = [];
+      }
+      sections[sectionName].push(change);
+    });
+
+    return {
+      changes,
+      hasChanges: changes.length > 0,
+      addedCount: changes.filter(c => c.status === 'added').length,
+      modifiedCount: changes.filter(c => c.status === 'modified').length,
+      deletedCount: changes.filter(c => c.status === 'deleted').length,
+      sections
+    };
   }
 
-  /**
-   * Generate control label from path
-   */
-  private getControlLabel(path: string): string {
+  private createEmptyChangeSummary(): ChangeSummary {
+    return {
+      changes: [],
+      hasChanges: false,
+      addedCount: 0,
+      modifiedCount: 0,
+      deletedCount: 0,
+      sections: {}
+    };
+  }
+
+  private updateControlChangeStatus(form: FormGroup, changes: ChangeItem[]): void {
+    // Reset all controls first
+    this.resetControlChangeStatus(form);
+
+    // Update status for changed controls
+    changes.forEach(change => {
+      const control = this.getControlByPath(form, change.path);
+      if (control) {
+        this.synFormExtension.extendControl(control, {
+          hasChanges: true,
+          changeType: change.status
+        } as ExtendedControlOptions);
+
+        // Update parent controls
+        this.updateParentControlStatus(control);
+      }
+    });
+  }
+
+  private resetControlChangeStatus(control: AbstractControl): void {
+    this.synFormExtension.extendControl(control, {
+      hasChanges: false,
+      changeType: 'unmodified'
+    } as ExtendedControlOptions);
+
+    if (control instanceof FormGroup) {
+      Object.values(control.controls).forEach(child => {
+        this.resetControlChangeStatus(child);
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(child => {
+        this.resetControlChangeStatus(child);
+      });
+    }
+  }
+
+  private updateParentControlStatus(control: AbstractControl): void {
+    let parent = control.parent;
+    while (parent) {
+      this.synFormExtension.extendControl(parent, {
+        hasChanges: true,
+        changeType: 'modified'
+      } as ExtendedControlOptions);
+      parent = parent.parent;
+    }
+  }
+
+  private getFormValues(control: AbstractControl): any {
+    if (control instanceof FormGroup) {
+      return this.getFormGroupValues(control);
+    } else if (control instanceof FormArray) {
+      return this.getFormArrayValues(control);
+    }
+    return control.value;
+  }
+
+  private getFormGroupValues(group: FormGroup): Record<string, any> {
+    return Object.keys(group.controls).reduce((values, key) => {
+      values[key] = this.getFormValues(group.get(key)!);
+      return values;
+    }, {} as Record<string, any>);
+  }
+
+  private getFormArrayValues(array: FormArray): any[] {
+    return array.controls.map(control => this.getFormValues(control));
+  }
+
+  private getOldValues(control: AbstractControl): any {
+    if (control instanceof FormGroup) {
+      return this.getOldFormGroupValues(control);
+    } else if (control instanceof FormArray) {
+      return this.getOldFormArrayValues(control);
+    }
+    return (control as ExtendedAbstractControl)._oldValue;
+  }
+
+  private getOldFormGroupValues(group: FormGroup): Record<string, any> {
+    return Object.keys(group.controls).reduce((values, key) => {
+      values[key] = this.getOldValues(group.get(key)!);
+      return values;
+    }, {} as Record<string, any>);
+  }
+
+  private getOldFormArrayValues(array: FormArray): any[] {
+    return array.controls.map(control => this.getOldValues(control));
+  }
+
+  private resetFormRecursively(control: AbstractControl): void {
+    const extendedControl = control as ExtendedAbstractControl;
+    
+    if (control instanceof FormGroup) {
+      Object.values(control.controls).forEach(child => {
+        this.resetFormRecursively(child);
+      });
+    } else if (control instanceof FormArray) {
+      control.controls.forEach(child => {
+        this.resetFormRecursively(child);
+      });
+    } else if (extendedControl._oldValue !== undefined) {
+      control.setValue(extendedControl._oldValue);
+    }
+  }
+
+  private getControlByPath(form: FormGroup, path: string): AbstractControl | null {
+    if (!path) return null;
+    
+    const parts = path.split(/[.\[\]]+/).filter(Boolean);
+    let current: AbstractControl = form;
+
+    for (const part of parts) {
+      if (current instanceof FormGroup) {
+        current = current.get(part)!;
+      } else if (current instanceof FormArray) {
+        current = current.at(parseInt(part));
+      }
+
+      if (!current) return null;
+    }
+
+    return current;
+  }
+
+  private getControlLabel(control?: AbstractControl, fallbackPath?: string): string {
+    if (control) {
+      const extendedControl = control as ExtendedAbstractControl;
+      if (extendedControl.label) {
+        return extendedControl.label;
+      }
+    }
+    return this.generateLabelFromPath(fallbackPath || '');
+  }
+
+  private generateLabelFromPath(path: string): string {
     const parts = path.split(/[.\[\]]+/).filter(Boolean);
     return parts[parts.length - 1] || path;
   }
 
-  /**
-   * Extract section name from path
-   */
-  private extractSectionName(path: string = ''): string {
-    const parts = path.split('.');
-    return parts[0] || '';
+  private getFormControlName(path: string): string {
+    return path.replace(/\[\d+\]/g, '');
   }
 
-  /**
-   * Clear stored data
-   */
-  clear(): void {
-    this.formLabels = {};
-    this.oldValueMap.clear();
-  }
-}
-
-// Example usage:
-@Component({
-  template: `
-    <div>
-      <app-form-actions
-        [isEditMode]="isEditMode()"
-        [isValid]="form.valid"
-        (continueClicked)="handleContinue()"
-      ></app-form-actions>
-
-      <app-common-form
-        [formGroup]="form"
-        [readViewData]="readViewData()"
-        [isEditMode]="isEditMode()"
-      ></app-common-form>
-
-      <!-- Changes Dialog -->
-      <app-changes-dialog
-        *ngIf="showChanges()"
-        [changes]="formChanges()"
-        (confirmed)="submitForm()"
-        (cancelled)="cancelChanges()"
-      ></app-changes-dialog>
-    </div>
-  `
-})
-export class ParentComponent implements OnInit {
-  form: FormGroup;
-  isEditMode = signal(false);
-  showChanges = signal(false);
-  formChanges = signal<ChangeItem[]>([]);
-
-  constructor(
-    private fb: FormBuilder,
-    private formExtension: FormExtensionService
-  ) {
-    this.form = this.fb.group({
-      // ... form controls
-    });
+  private getSectionName(path: string): string {
+    return path.split('.')[0];
   }
 
-  ngOnInit() {
-    // Example old JSON data
-    const oldData = {
-      name: 'John Doe',
-      address: {
-        street: '123 Main St',
-        city: 'Example City'
-      },
-      phones: [
-        { type: 'home', number: '555-1234' },
-        { type: 'work', number: '555-5678' }
-      ]
-    };
-
-    // Initialize form with old values
-    this.formExtension.initializeFormWithOldValues(this.form, oldData);
+  private determineChangeStatus(oldValue: any, newValue: any): ChangeStatus {
+    if (oldValue === undefined || oldValue === null) return 'added';
+    if (newValue === undefined || newValue === null) return 'deleted';
+    return 'modified';
   }
 
-  handleContinue() {
-    if (this.form.valid) {
-      const changes = this.formExtension.getChangeSummary(this.form);
-      if (changes.length > 0) {
-        this.formChanges.set(changes);
-        this.showChanges.set(true);
-      } else {
-        this.submitForm();
-      }
+  private areValuesEqual(a: any, b: any): boolean {
+    if (a === b) return true;
+    if (a === null || b === null) return false;
+    if (typeof a !== typeof b) return false;
+    
+    if (this.PRIMITIVE_TYPES.includes(typeof a)) {
+      return a === b;
     }
+    
+    return JSON.stringify(a) === JSON.stringify(b);
   }
 
-  submitForm() {
-    // Handle form submission
-    console.log('Form submitted:', this.form.value);
-    this.showChanges.set(false);
-    this.isEditMode.set(false);
+  private isObject(value: any): boolean {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
-  cancelChanges() {
-    this.showChanges.set(false);
+  private isChangeItem(value: any): boolean {
+    return this.isObject(value) && 
+           'old' in value && 
+           'new' in value && 
+           'status' in value;
+  }
+
+  private handleError(message: string, error: any): void {
+    console.error(message, error);
+    this.errorHandler.handleError(error);
   }
 }
