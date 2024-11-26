@@ -1,0 +1,241 @@
+// form-change.service.ts
+
+private shouldIgnoreControl(path: string, control?: AbstractControl): boolean {
+  // Check if the path itself contains 'oldValues'
+  if (path.includes('oldValues')) return true;
+
+  // Check if any parent path segment is 'oldValues'
+  const pathSegments = path.split(/[.\[\]]+/).filter(Boolean);
+  if (pathSegments.some(segment => segment === 'oldValues')) return true;
+
+  // Check for control name in FormGroup
+  if (control?.parent instanceof FormGroup) {
+    const controlName = Object.keys(control.parent.controls).find(
+      key => control.parent?.get(key) === control
+    );
+    if (controlName === 'oldValues') return true;
+  }
+
+  return false;
+}
+
+private setOldValuesRecursively(
+  control: AbstractControl, 
+  oldValue: any, 
+  path: string = ''
+): void {
+  if (!control) return;
+
+  if (control instanceof FormGroup) {
+    // Check if this FormGroup is named 'oldValues'
+    if (this.shouldIgnoreControl(path, control)) return;
+
+    // Process FormGroup
+    this.handleFormGroupOldValues(control, oldValue, path);
+  } 
+  else if (control instanceof FormArray) {
+    // Check if this FormArray is named 'oldValues'
+    if (this.shouldIgnoreControl(path, control)) return;
+
+    // Process FormArray
+    this.handleFormArrayOldValues(control, oldValue, path);
+  } 
+  else {
+    // Check if this FormControl is named 'oldValues'
+    if (this.shouldIgnoreControl(path, control)) return;
+
+    // Process FormControl
+    this.handleFormControlOldValues(control, oldValue, path);
+  }
+}
+
+private handleFormGroupOldValues(
+  group: FormGroup, 
+  oldValue: any, 
+  path: string
+): void {
+  // Extend FormGroup if not ignored
+  if (!this.shouldIgnoreControl(path, group)) {
+    this.extendControlWithValues(group, oldValue, path);
+
+    // Process child controls
+    Object.keys(group.controls).forEach(key => {
+      const childPath = path ? `${path}.${key}` : key;
+      const childControl = group.get(key);
+      const childOldValue = oldValue?.[key];
+
+      if (childControl && !this.shouldIgnoreControl(childPath, childControl)) {
+        this.setOldValuesRecursively(childControl, childOldValue, childPath);
+      }
+    });
+  }
+}
+
+private handleFormArrayOldValues(
+  array: FormArray, 
+  oldValue: any, 
+  path: string
+): void {
+  // Extend FormArray if not ignored
+  if (!this.shouldIgnoreControl(path, array)) {
+    this.extendControlWithValues(array, oldValue, path);
+
+    // Process array items
+    const arrayOldValue = Array.isArray(oldValue) ? oldValue : [];
+    array.controls.forEach((control, index) => {
+      const childPath = `${path}[${index}]`;
+      if (!this.shouldIgnoreControl(childPath, control)) {
+        this.setOldValuesRecursively(control, arrayOldValue[index], childPath);
+      }
+    });
+  }
+}
+
+private compareStates(
+  initial: any, 
+  current: any, 
+  path: string,
+  control?: AbstractControl
+): Partial<ChangeItem> {
+  try {
+    // Ignore check for the control and its path
+    if (this.shouldIgnoreControl(path, control)) return {};
+
+    if (this.areValuesEqual(initial, current)) return {};
+
+    if (Array.isArray(initial) && Array.isArray(current)) {
+      return this.compareArrays(initial, current, path, control as FormArray);
+    }
+
+    if (this.isObject(initial) && this.isObject(current)) {
+      return this.compareObjects(initial, current, path, control as FormGroup);
+    }
+
+    return this.createChangeItem({
+      path,
+      label: this.getControlLabel(control, path),
+      status: this.determineChangeStatus(initial, current)
+    }, initial, current);
+  } catch (error) {
+    this.handleError(`Error comparing states at path: ${path}`, error);
+    return {};
+  }
+}
+
+// Example usage with different scenarios:
+const form = this.fb.group({
+  // Scenario 1: oldValues as FormControl
+  oldValues: [''],
+
+  // Scenario 2: oldValues as FormGroup
+  oldValues: this.fb.group({
+    value1: [''],
+    value2: ['']
+  }),
+
+  // Scenario 3: oldValues in nested FormGroup
+  personalInfo: this.fb.group({
+    oldValues: [''],
+    name: ['']
+  }),
+
+  // Scenario 4: oldValues in FormArray
+  items: this.fb.array([
+    this.fb.group({
+      oldValues: [''],
+      value: ['']
+    })
+  ]),
+
+  // Scenario 5: FormArray named oldValues
+  oldValues: this.fb.array([
+    this.fb.control(''),
+    this.fb.control('')
+  ]),
+
+  // Regular fields that should be tracked
+  name: [''],
+  email: [''],
+  addresses: this.fb.array([
+    this.fb.group({
+      street: [''],
+      city: ['']
+    })
+  ])
+});
+
+// Complex example with nested structures
+const complexForm = this.fb.group({
+  personalInfo: this.fb.group({
+    basicInfo: this.fb.group({
+      name: [''],
+      oldValues: this.fb.group({  // This group will be ignored
+        previous: [''],
+        current: ['']
+      })
+    }),
+    contact: this.fb.group({
+      email: [''],
+      phones: this.fb.array([
+        this.fb.group({
+          number: [''],
+          oldValues: ['']  // This control will be ignored
+        })
+      ])
+    })
+  }),
+  experience: this.fb.array([
+    this.fb.group({
+      company: [''],
+      oldValues: this.fb.array([  // This array will be ignored
+        this.fb.control('')
+      ]),
+      details: this.fb.group({
+        position: [''],
+        oldValues: ['']  // This control will be ignored
+      })
+    })
+  ])
+});
+
+@Component({
+  template: `
+    <form [formGroup]="form">
+      <!-- Example showing all scenarios -->
+      <ng-container formGroupName="personalInfo">
+        <input formControlName="name">
+        <!-- oldValues control ignored -->
+        <input formControlName="oldValues">
+        
+        <ng-container formGroupName="basicInfo">
+          <!-- oldValues group ignored -->
+          <div formGroupName="oldValues">
+            <input formControlName="previous">
+            <input formControlName="current">
+          </div>
+        </ng-container>
+      </ng-container>
+
+      <div formArrayName="experience">
+        <div *ngFor="let exp of experienceArray.controls; let i=index" 
+             [formGroupName]="i">
+          <input formControlName="company">
+          <!-- oldValues array ignored -->
+          <div formArrayName="oldValues">
+            <input *ngFor="let old of getOldValues(i).controls; let j=index" 
+                   [formControlName]="j">
+          </div>
+        </div>
+      </div>
+    </form>
+  `
+})
+export class ExampleComponent {
+  constructor(
+    private formChangeService: FormChangeService
+  ) {
+    // All oldValues controls/groups/arrays will be ignored in change detection
+    const summary = this.formChangeService.getChangeSummary(this.complexForm);
+    console.log('Changes:', summary);
+  }
+}
