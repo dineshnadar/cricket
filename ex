@@ -1,4 +1,4 @@
-import { Injectable, signal, computed, Signal, effect, untraced } from '@angular/core';
+import { Injectable, signal, computed, Signal, effect, untracked } from '@angular/core';
 import { FormBuilder, FormGroup, FormArray, AbstractControl, ValidatorFn } from '@angular/forms';
 import { ExtendedControlOptions, ExtendedAbstractControl, FieldItem, LayoutField, FormLayout, UIReadViewOptions } from './syn-form-extension.type';
 import { CcoFormExtensionHelpers } from './syn-form-extension.helpers';
@@ -10,9 +10,9 @@ import { CCO_STATIC_COMPONENTS } from './syn-form-extension.constans';
 export class SynFormExtensionService {
     private updateTrigger = signal(0);
     private readViewCache = new WeakMap<AbstractControl, Signal<FieldItem[]>>();
-    private formLayouts = new Map<string, FormLayout>();  // Changed to Map with string keys
-    private formGroupIds = new WeakMap<FormGroup, string>();  // Added to track form group IDs
-    private nextFormId = 0;  // Counter for generating unique form IDs
+    private formLayouts = new Map<string, FormLayout>();
+    private formGroupIds = new WeakMap<FormGroup, string>();
+    private nextFormId = 0;
     private extendedPropertiesCache = new WeakMap<AbstractControl, ExtendedControlOptions>();
     private customValidatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
 
@@ -26,51 +26,39 @@ export class SynFormExtensionService {
         });
     }
 
-    // New method to generate or retrieve form ID
-    private getFormGroupId(formGroup: FormGroup): string {
-        let formId = this.formGroupIds.get(formGroup);
-        if (!formId) {
-            formId = `form_${this.nextFormId++}`;
-            this.formGroupIds.set(formGroup, formId);
+    setFormGroupLayout(formGroup: FormGroup, layout: FormLayout, uniqueId?: string): void {
+        let formId: string;
+        
+        if (uniqueId) {
+            // Use the uniqueId directly
+            formId = uniqueId;
+        } else {
+            // If no uniqueId, use existing or generate new
+            formId = this.formGroupIds.get(formGroup) || `form_${this.nextFormId++}`;
         }
-        return formId;
-    }
 
-    // Updated setFormGroupLayout method
-    setFormGroupLayout(formGroup: FormGroup, layout: FormLayout): void {
-        const formId = this.getFormGroupId(formGroup);
+        // Update the mappings
+        this.formGroupIds.set(formGroup, formId);
         const sortedLayout = this.helpers.sortFormLayout(layout);
         this.formLayouts.set(formId, sortedLayout);
         this.triggerUpdate();
     }
 
-    // Updated getExtendedReadView method
-    getExtendedReadView(control: AbstractControl): Signal<FieldItem[]> {
-        if (!this.readViewCache.has(control)) {
-            const readViewSignal = computed(() => {
-                this.updateTrigger();
-                return untracked(() => {
-                    if (control instanceof FormGroup) {
-                        const formId = this.getFormGroupId(control);
-                        const layout = this.formLayouts.get(formId);
-                        if (layout) {
-                            return this.helpers.applyLayoutToFormGroup(control, layout);
-                        }
-                    }
-                    return this.helpers.getBasicReadViewForControl(control);
-                });
-            });
-            this.readViewCache.set(control, readViewSignal);
-        }
-        return this.readViewCache.get(control)!;
-    }
-
-    // Updated getUIReadView method
-    getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}): FieldItem[] {
+    getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}, uniqueId?: string): FieldItem[] {
         let readView: FieldItem[];
         if (control instanceof FormGroup) {
-            const formId = this.getFormGroupId(control);
-            const layout = this.formLayouts.get(formId);
+            // First try to get layout using provided uniqueId
+            let layout: FormLayout | undefined;
+            if (uniqueId) {
+                layout = this.formLayouts.get(uniqueId);
+            }
+            
+            // If no layout found and no uniqueId provided, try FormGroup's stored ID
+            if (!layout && !uniqueId) {
+                const formId = this.formGroupIds.get(control);
+                layout = formId ? this.formLayouts.get(formId) : undefined;
+            }
+
             if (layout) {
                 readView = this.helpers.applyLayoutToFormGroup(control, layout);
             } else {
@@ -82,21 +70,23 @@ export class SynFormExtensionService {
         return this.helpers.filterAndFormatReadView(readView, options);
     }
 
-    // Updated clearCaches method
+    clearFormGroupLayout(formGroup: FormGroup, uniqueId?: string): void {
+        if (uniqueId) {
+            this.formLayouts.delete(uniqueId);
+        } else {
+            const formId = this.formGroupIds.get(formGroup);
+            if (formId) {
+                this.formLayouts.delete(formId);
+                this.formGroupIds.delete(formGroup);
+            }
+        }
+        this.triggerUpdate();
+    }
+
     private clearCaches(): void {
         this.readViewCache = new WeakMap();
         this.extendedPropertiesCache = new WeakMap();
-        // Note: We don't clear formLayouts or formGroupIds here as they need to persist
-    }
-
-    // Method to clear layout for a specific form group
-    clearFormGroupLayout(formGroup: FormGroup): void {
-        const formId = this.formGroupIds.get(formGroup);
-        if (formId) {
-            this.formLayouts.delete(formId);
-            this.formGroupIds.delete(formGroup);
-            this.triggerUpdate();
-        }
+        // Don't clear formLayouts or formGroupIds as they need to persist
     }
 
     // Rest of the service implementation remains the same...
