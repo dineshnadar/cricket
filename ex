@@ -11,7 +11,6 @@ export class SynFormExtensionService {
     private updateTrigger = signal(0);
     private readViewCache = new WeakMap<AbstractControl, Signal<FieldItem[]>>();
     private formLayouts = new Map<string, FormLayout>();
-    private formGroupIds = new WeakMap<FormGroup, string>();
     private nextFormId = 0;
     private extendedPropertiesCache = new WeakMap<AbstractControl, ExtendedControlOptions>();
     private customValidatorsCache = new WeakMap<AbstractControl, ValidatorFn[]>();
@@ -27,18 +26,7 @@ export class SynFormExtensionService {
     }
 
     setFormGroupLayout(formGroup: FormGroup, layout: FormLayout, uniqueId?: string): void {
-        let formId: string;
-        
-        if (uniqueId) {
-            // Use the uniqueId directly
-            formId = uniqueId;
-        } else {
-            // If no uniqueId, use existing or generate new
-            formId = this.formGroupIds.get(formGroup) || `form_${this.nextFormId++}`;
-        }
-
-        // Update the mappings
-        this.formGroupIds.set(formGroup, formId);
+        const formId = uniqueId || `form_${this.nextFormId++}`;
         const sortedLayout = this.helpers.sortFormLayout(layout);
         this.formLayouts.set(formId, sortedLayout);
         this.triggerUpdate();
@@ -46,19 +34,8 @@ export class SynFormExtensionService {
 
     getUIReadView(control: AbstractControl, options: UIReadViewOptions = {}, uniqueId?: string): FieldItem[] {
         let readView: FieldItem[];
-        if (control instanceof FormGroup) {
-            // First try to get layout using provided uniqueId
-            let layout: FormLayout | undefined;
-            if (uniqueId) {
-                layout = this.formLayouts.get(uniqueId);
-            }
-            
-            // If no layout found and no uniqueId provided, try FormGroup's stored ID
-            if (!layout && !uniqueId) {
-                const formId = this.formGroupIds.get(control);
-                layout = formId ? this.formLayouts.get(formId) : undefined;
-            }
-
+        if (control instanceof FormGroup && uniqueId) {
+            const layout = this.formLayouts.get(uniqueId);
             if (layout) {
                 readView = this.helpers.applyLayoutToFormGroup(control, layout);
             } else {
@@ -70,23 +47,36 @@ export class SynFormExtensionService {
         return this.helpers.filterAndFormatReadView(readView, options);
     }
 
-    clearFormGroupLayout(formGroup: FormGroup, uniqueId?: string): void {
+    getExtendedReadView(control: AbstractControl, uniqueId?: string): Signal<FieldItem[]> {
+        const cacheKey = uniqueId ? `${control.id}_${uniqueId}` : control;
+        if (!this.readViewCache.has(cacheKey)) {
+            const readViewSignal = computed(() => {
+                this.updateTrigger();
+                return untracked(() => {
+                    if (control instanceof FormGroup && uniqueId) {
+                        const layout = this.formLayouts.get(uniqueId);
+                        if (layout) {
+                            return this.helpers.applyLayoutToFormGroup(control, layout);
+                        }
+                    }
+                    return this.helpers.getBasicReadViewForControl(control);
+                });
+            });
+            this.readViewCache.set(cacheKey, readViewSignal);
+        }
+        return this.readViewCache.get(cacheKey)!;
+    }
+
+    clearFormGroupLayout(uniqueId: string): void {
         if (uniqueId) {
             this.formLayouts.delete(uniqueId);
-        } else {
-            const formId = this.formGroupIds.get(formGroup);
-            if (formId) {
-                this.formLayouts.delete(formId);
-                this.formGroupIds.delete(formGroup);
-            }
+            this.triggerUpdate();
         }
-        this.triggerUpdate();
     }
 
     private clearCaches(): void {
         this.readViewCache = new WeakMap();
         this.extendedPropertiesCache = new WeakMap();
-        // Don't clear formLayouts or formGroupIds as they need to persist
     }
 
     // Rest of the service implementation remains the same...
