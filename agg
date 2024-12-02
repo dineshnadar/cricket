@@ -1,3 +1,47 @@
+import { FormGroup, FormArray, AbstractControl } from '@angular/forms';
+
+function moveFormControls(
+  sourceGroup: FormGroup | FormArray,
+  targetGroup: FormGroup | FormArray,
+  removeFromSource: boolean = true
+): void {
+  Object.keys(sourceGroup.controls).forEach(controlName => {
+    const control = sourceGroup.get(controlName);
+    if (control) {
+      if (control instanceof FormGroup) {
+        // Handle nested FormGroup
+        const nestedTarget = targetGroup.get(controlName) as FormGroup;
+        if (!nestedTarget) {
+          targetGroup.addControl(controlName, new FormGroup({}));
+        }
+        moveFormControls(
+          control,
+          targetGroup.get(controlName) as FormGroup,
+          removeFromSource
+        );
+      } else if (control instanceof FormArray) {
+        // Handle nested FormArray
+        const nestedTarget = targetGroup.get(controlName) as FormArray;
+        if (!nestedTarget) {
+          targetGroup.addControl(controlName, new FormArray([]));
+        }
+        moveFormControls(
+          control,
+          targetGroup.get(controlName) as FormArray,
+          removeFromSource
+        );
+      } else {
+        // For standard controls
+        if (removeFromSource) {
+          sourceGroup.removeControl(controlName);
+        }
+        targetGroup.addControl(controlName, control);
+      }
+    }
+  });
+}
+
+
 // parallel-api.service.ts
 import { Injectable, inject } from '@angular/core';
 import { ApiService } from './api.service';
