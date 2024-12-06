@@ -1,3 +1,34 @@
+private updateControlChangeStatus(control: AbstractControl, changes: ChangeItem[]): void {
+  // First reset all controls
+  this.resetControlChangeStatus(control);
+
+  // Update status for changed controls
+  changes.forEach(change => {
+    // Handle array paths like '[0]', '[1]', etc.
+    const arrayPath = change.path.replace(/^\[(\d+)\]$/, '$1');
+    let targetControl: AbstractControl | null = null;
+
+    if (control instanceof FormArray) {
+      // Direct array access using index
+      targetControl = control.at(parseInt(arrayPath));
+    } else {
+      // Get nested control using path
+      targetControl = control.get(arrayPath);
+    }
+
+    if (targetControl) {
+      // Update the control status
+      this.synFormExtension.extendControl(targetControl, {
+        hasChanges: true,
+        changeType: change.status
+      } as ExtendedControlOptions);
+
+      // Update parent controls
+      this.updateParentControlStatus(targetControl);
+    }
+  });
+}
+
 // types.ts
 export interface ChangeItem {
   label: string;
