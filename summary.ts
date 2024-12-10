@@ -1,3 +1,33 @@
+private getControlByPath(control: AbstractControl, path: string): AbstractControl | null {
+  if (!path) return null;
+  
+  // Handle array paths like '[0]', '[1].partyname.username.firstName'
+  const segments = path
+    .replace(/\[(\d+)\]/g, '.$1') // Convert [0] to .0
+    .split('.')
+    .filter(Boolean);
+
+  let currentControl: AbstractControl | null = control;
+
+  for (const segment of segments) {
+    if (!currentControl) return null;
+
+    if (currentControl instanceof FormGroup) {
+      currentControl = currentControl.get(segment);
+    } 
+    else if (currentControl instanceof FormArray) {
+      const index = parseInt(segment);
+      if (isNaN(index)) return null;
+      currentControl = currentControl.at(index);
+    } 
+    else {
+      return null;
+    }
+  }
+
+  return currentControl;
+}
+
 // Updated updateControlChangeStatus to handle deep nesting
 private updateControlChangeStatus(control: AbstractControl, changes: ChangeItem[]): void {
   // First reset all controls recursively
