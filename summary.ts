@@ -1,3 +1,71 @@
+// Updated updateControlChangeStatus to handle deep nesting
+private updateControlChangeStatus(control: AbstractControl, changes: ChangeItem[]): void {
+  // First reset all controls recursively
+  this.resetControlChangeStatus(control);
+
+  // Update status for changed controls
+  changes.forEach(change => {
+    // Get the control at the path
+    const targetControl = this.getControlByPath(control, change.path);
+    
+    if (targetControl) {
+      // Update the control and all its parents
+      this.updateControlAndParentStatus(targetControl, change.status);
+    }
+  });
+}
+
+private updateControlAndParentStatus(control: AbstractControl, status: ChangeStatus): void {
+  // Update current control
+  this.synFormExtension.extendControl(control, {
+    hasChanges: true,
+    changeType: status
+  } as ExtendedControlOptions);
+
+  // If control is a FormGroup or FormArray, update all child controls
+  if (control instanceof FormGroup || control instanceof FormArray) {
+    this.updateChildrenStatus(control, status);
+  }
+
+  // Update all parent controls
+  let parent = control.parent;
+  while (parent) {
+    this.synFormExtension.extendControl(parent, {
+      hasChanges: true,
+      changeType: 'modified'
+    } as ExtendedControlOptions);
+    parent = parent.parent;
+  }
+}
+
+private updateChildrenStatus(control: AbstractControl, status: ChangeStatus): void {
+  if (control instanceof FormGroup) {
+    Object.values(control.controls).forEach(childControl => {
+      this.synFormExtension.extendControl(childControl, {
+        hasChanges: true,
+        changeType: status
+      } as ExtendedControlOptions);
+
+      // Recursively update children
+      if (childControl instanceof FormGroup || childControl instanceof FormArray) {
+        this.updateChildrenStatus(childControl, status);
+      }
+    });
+  } else if (control instanceof FormArray) {
+    control.controls.forEach(childControl => {
+      this.synFormExtension.extendControl(childControl, {
+        hasChanges: true,
+        changeType: status
+      } as ExtendedControlOptions);
+
+      // Recursively update children
+      if (childControl instanceof FormGroup || childControl instanceof FormArray) {
+        this.updateChildrenStatus(childControl, status);
+      }
+    });
+  }
+}
+-------------
 private updateControlChangeStatus(control: AbstractControl, changes: ChangeItem[]): void {
   // First reset all controls
   this.resetControlChangeStatus(control);
