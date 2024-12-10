@@ -1,4 +1,108 @@
+private compareArrays(
+  initial: any[], 
+  current: any[], 
+  path: string,
+  control?: FormArray
+): Record<string, any> {
+  const changes: Record<string, any> = {};
+  let arrayStatus: ChangeStatus = 'unmodified';
 
+  // Handle null/empty initial case
+  if (!initial || initial.length === 0) {
+    // Process each item in current array
+    current?.forEach((value, index) => {
+      const itemPath = `${path}[${index}]`;
+      const arrayControl = control?.at(index);
+
+      if (arrayControl instanceof FormGroup) {
+        // Handle nested form group
+        const nestedChanges = this.compareObjects(
+          null,
+          value,
+          itemPath,
+          arrayControl
+        );
+        if (Object.keys(nestedChanges).length > 0) {
+          changes[index] = nestedChanges;
+          arrayStatus = 'modified';
+        }
+      } else if (arrayControl instanceof FormArray) {
+        // Handle nested form array
+        const nestedChanges = this.compareArrays(
+          null,
+          value,
+          itemPath,
+          arrayControl
+        );
+        if (Object.keys(nestedChanges).length > 0) {
+          changes[index] = nestedChanges;
+          arrayStatus = 'modified';
+        }
+      } else {
+        // Handle simple values
+        changes[index] = this.createArrayItemChange(
+          itemPath,
+          arrayControl,
+          null,
+          value,
+          'added'
+        );
+        arrayStatus = 'modified';
+      }
+    });
+
+    if (Object.keys(changes).length > 0) {
+      changes.status = arrayStatus;
+    }
+    return changes;
+  }
+
+  // Rest of the existing comparison logic for when initial values exist
+  const maxLength = Math.max(initial.length, current.length);
+
+  for (let i = 0; i < maxLength; i++) {
+    const itemPath = `${path}[${i}]`;
+    const itemControl = control?.at(i);
+
+    if (i >= current.length) {
+      changes[i] = this.createArrayItemChange(
+        itemPath,
+        itemControl,
+        initial[i],
+        undefined,
+        'deleted'
+      );
+      arrayStatus = 'modified';
+    } else if (i >= initial.length) {
+      changes[i] = this.createArrayItemChange(
+        itemPath,
+        itemControl,
+        undefined,
+        current[i],
+        'added'
+      );
+      arrayStatus = 'modified';
+    } else {
+      const itemChanges = this.compareStates(
+        initial[i],
+        current[i],
+        itemPath,
+        itemControl
+      );
+      
+      if (Object.keys(itemChanges).length > 0) {
+        changes[i] = itemChanges;
+        arrayStatus = 'modified';
+      }
+    }
+  }
+
+  if (Object.keys(changes).length > 0) {
+    changes.status = arrayStatus;
+  }
+
+  return changes;
+}
 
 
 private compareObjects(
