@@ -1,21 +1,32 @@
 private compareObjects(
-  initial: Record<string, any>, 
-  current: Record<string, any>,
+  initial: Record<string, any> | null, 
+  current: Record<string, any> | null,
   path: string,
   control?: FormGroup
 ): Record<string, any> {
   const changes: Record<string, any> = {};
   let objectStatus: ChangeStatus = 'unmodified';
 
+  // Safety check for both initial and current
+  const initialObj = initial || {};
+  const currentObj = current || {};
+
+  // Handle case when both are null/undefined
+  if (!initial && !current) {
+    return {};
+  }
+
   // Handle null/empty initial case
-  if (!initial || Object.keys(initial).length === 0) {
-    Object.keys(current || {}).forEach(key => {
+  if (!initial) {
+    // Get all controls from the FormGroup
+    const controls = control?.controls || {};
+    
+    Object.keys(controls).forEach(key => {
       const propertyPath = path ? `${path}.${key}` : key;
-      const propertyControl = control?.get(key);
-      const currentValue = current[key];
+      const propertyControl = controls[key];
+      const currentValue = currentObj[key];
 
       if (propertyControl instanceof FormArray) {
-        // Handle FormArray specially
         const arrayChanges = this.compareArrays(
           null,
           currentValue,
@@ -28,7 +39,6 @@ private compareObjects(
         }
       }
       else if (propertyControl instanceof FormGroup) {
-        // Handle nested FormGroup
         const nestedChanges = this.compareObjects(
           null,
           currentValue,
@@ -41,7 +51,6 @@ private compareObjects(
         }
       }
       else {
-        // Handle simple form controls
         changes[key] = this.createObjectPropertyChange(
           propertyPath,
           propertyControl,
@@ -59,7 +68,56 @@ private compareObjects(
     return changes;
   }
 
-  // Rest of the existing comparison logic...
+  // Normal comparison when initial exists
+  const allKeys = new Set([
+    ...Object.keys(initialObj),
+    ...Object.keys(currentObj)
+  ]);
+
+  for (const key of allKeys) {
+    const propertyPath = path ? `${path}.${key}` : key;
+    const propertyControl = control?.get(key);
+
+    if (!(key in currentObj)) {
+      changes[key] = this.createObjectPropertyChange(
+        propertyPath,
+        propertyControl,
+        initialObj[key],
+        undefined,
+        'deleted'
+      );
+      objectStatus = 'modified';
+    }
+    else if (!(key in initialObj)) {
+      changes[key] = this.createObjectPropertyChange(
+        propertyPath,
+        propertyControl,
+        undefined,
+        currentObj[key],
+        'added'
+      );
+      objectStatus = 'modified';
+    }
+    else {
+      const propertyChanges = this.compareStates(
+        initialObj[key],
+        currentObj[key],
+        propertyPath,
+        propertyControl
+      );
+
+      if (Object.keys(propertyChanges).length > 0) {
+        changes[key] = propertyChanges;
+        objectStatus = 'modified';
+      }
+    }
+  }
+
+  if (Object.keys(changes).length > 0) {
+    changes.status = objectStatus;
+  }
+
+  return changes;
 }
 
 
