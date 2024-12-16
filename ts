@@ -1,3 +1,72 @@
+private compareObjects(
+  initial: Record<string, any>, 
+  current: Record<string, any>,
+  path: string,
+  control?: FormGroup
+): Record<string, any> {
+  const changes: Record<string, any> = {};
+  let objectStatus: ChangeStatus = 'unmodified';
+
+  // Handle null/empty initial case
+  if (!initial || Object.keys(initial).length === 0) {
+    Object.keys(current || {}).forEach(key => {
+      const propertyPath = path ? `${path}.${key}` : key;
+      const propertyControl = control?.get(key);
+      const currentValue = current[key];
+
+      if (propertyControl instanceof FormArray) {
+        // Handle FormArray specially
+        const arrayChanges = this.compareArrays(
+          null,
+          currentValue,
+          propertyPath,
+          propertyControl
+        );
+        if (Object.keys(arrayChanges).length > 0) {
+          changes[key] = arrayChanges;
+          objectStatus = 'modified';
+        }
+      }
+      else if (propertyControl instanceof FormGroup) {
+        // Handle nested FormGroup
+        const nestedChanges = this.compareObjects(
+          null,
+          currentValue,
+          propertyPath,
+          propertyControl
+        );
+        if (Object.keys(nestedChanges).length > 0) {
+          changes[key] = nestedChanges;
+          objectStatus = 'modified';
+        }
+      }
+      else {
+        // Handle simple form controls
+        changes[key] = this.createObjectPropertyChange(
+          propertyPath,
+          propertyControl,
+          null,
+          currentValue,
+          'added'
+        );
+        objectStatus = 'modified';
+      }
+    });
+
+    if (Object.keys(changes).length > 0) {
+      changes.status = objectStatus;
+    }
+    return changes;
+  }
+
+  // Rest of the existing comparison logic...
+}
+
+
+
+
+
+------------------x---------
 private compareArrays(
   initial: any[], 
   current: any[], 
