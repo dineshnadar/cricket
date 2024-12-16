@@ -8,86 +8,133 @@ private compareObjects(
 
   if (!control) return {};
 
-  // Helper function to process any type of control
-  const processControl = (ctrl: AbstractControl, ctrlPath: string) => {
-    if (ctrl instanceof FormControl) {
-      changes[ctrlPath] = {
-        label: this.getControlLabel(ctrl, ctrlPath),
-        formControlName: ctrlPath,
-        path: ctrlPath,
-        old: null,
-        new: ctrl.value,
-        status: 'added',
-        sectionName: this.getSectionName(path)
-      };
-    }
-    else if (ctrl instanceof FormGroup) {
-      Object.keys(ctrl.controls).forEach(key => {
-        const childPath = ctrlPath ? `${ctrlPath}.${key}` : key;
-        processControl(ctrl.get(key), childPath);
-      });
-    }
-    else if (ctrl instanceof FormArray) {
-      ctrl.controls.forEach((arrayControl, index) => {
-        processControl(arrayControl, `${ctrlPath}[${index}]`);
-      });
-    }
-  };
-
-  // For null initial values, traverse the form structure
+  // For null/empty initial case, get control level changes
   if (!initial) {
-    processControl(control, path);
+    // Use recursion to get to the control level
+    const getControlChanges = (ctrl: AbstractControl, currentPath: string) => {
+      if (ctrl instanceof FormControl) {
+        // For leaf nodes (actual form controls)
+        changes[currentPath] = {
+          label: this.getControlLabel(ctrl, currentPath),
+          formControlName: currentPath,
+          path: currentPath,
+          old: null,
+          new: ctrl.value,
+          status: 'added',
+          sectionName: this.getSectionName(currentPath)
+        };
+      } 
+      else if (ctrl instanceof FormGroup) {
+        // Recurse through FormGroup
+        Object.keys(ctrl.controls).forEach(key => {
+          const nextPath = currentPath ? `${currentPath}.${key}` : key;
+          getControlChanges(ctrl.get(key), nextPath);
+        });
+      } 
+      else if (ctrl instanceof FormArray) {
+        // Recurse through FormArray
+        ctrl.controls.forEach((arrayCtrl, index) => {
+          if (arrayCtrl instanceof FormGroup) {
+            // If array contains FormGroup, recurse through its controls
+            Object.keys(arrayCtrl.controls).forEach(key => {
+              const nextPath = `${currentPath}[${index}].${key}`;
+              getControlChanges(arrayCtrl.get(key), nextPath);
+            });
+          } else {
+            // For simple array controls
+            const nextPath = `${currentPath}[${index}]`;
+            getControlChanges(arrayCtrl, nextPath);
+          }
+        });
+      }
+    };
+
+    getControlChanges(control, path);
     return changes;
   }
 
-  // For existing values, compare normally
-  const allKeys = new Set([...Object.keys(initial), ...Object.keys(current || {})]);
-
-  allKeys.forEach(key => {
-    const childPath = path ? `${path}.${key}` : key;
+  // For existing values
+  Object.keys(control.controls).forEach(key => {
     const childControl = control.get(key);
+    const childPath = path ? `${path}.${key}` : key;
 
-    if (!childControl) return;
-
-    if (!(key in current)) {
-      changes[childPath] = {
-        label: this.getControlLabel(childControl, childPath),
-        formControlName: childPath,
-        path: childPath,
-        old: initial[key],
-        new: undefined,
-        status: 'deleted',
-        sectionName: this.getSectionName(path)
-      };
+    if (childControl instanceof FormControl) {
+      if (!this.areValuesEqual(initial[key], current?.[key])) {
+        changes[key] = {
+          label: this.getControlLabel(childControl, childPath),
+          formControlName: childPath,
+          path: childPath,
+          old: initial[key],
+          new: current?.[key],
+          status: this.getChangeStatus(initial[key], current?.[key]),
+          sectionName: this.getSectionName(childPath)
+        };
+      }
+    } 
+    else if (childControl instanceof FormGroup) {
+      const groupChanges = this.compareObjects(
+        initial[key],
+        current?.[key],
+        childPath,
+        childControl
+      );
+      if (Object.keys(groupChanges).length > 0) {
+        Object.assign(changes, groupChanges);
+      }
     }
-    else if (!(key in initial)) {
-      changes[childPath] = {
-        label: this.getControlLabel(childControl, childPath),
-        formControlName: childPath,
-        path: childPath,
-        old: undefined,
-        new: current[key],
-        status: 'added',
-        sectionName: this.getSectionName(path)
-      };
-    }
-    else if (!this.areValuesEqual(initial[key], current[key])) {
-      changes[childPath] = {
-        label: this.getControlLabel(childControl, childPath),
-        formControlName: childPath,
-        path: childPath,
-        old: initial[key],
-        new: current[key],
-        status: 'modified',
-        sectionName: this.getSectionName(path)
-      };
+    else if (childControl instanceof FormArray) {
+      // Handle array within form group
+      const arrayChanges = {};
+      const oldArray = Array.isArray(initial[key]) ? initial[key] : [];
+      const newArray = Array.isArray(current?.[key]) ? current[key] : [];
+      
+      childControl.controls.forEach((arrayCtrl, index) => {
+        if (arrayCtrl instanceof FormGroup) {
+          // For FormGroup within array
+          Object.keys(arrayCtrl.controls).forEach(groupKey => {
+            const fieldControl = arrayCtrl.get(groupKey);
+            const fieldPath = `${childPath}[${index}].${groupKey}`;
+            
+            arrayChanges[fieldPath] = {
+              label: this.getControlLabel(fieldControl, fieldPath),
+              formControlName: fieldPath,
+              path: fieldPath,
+              old: oldArray[index]?.[groupKey],
+              new: newArray[index]?.[groupKey],
+              status: this.getChangeStatus(
+                oldArray[index]?.[groupKey],
+                newArray[index]?.[groupKey]
+              ),
+              sectionName: this.getSectionName(childPath)
+            };
+          });
+        } else {
+          // For simple controls in array
+          const arrayPath = `${childPath}[${index}]`;
+          arrayChanges[arrayPath] = {
+            label: this.getControlLabel(arrayCtrl, arrayPath),
+            formControlName: arrayPath,
+            path: arrayPath,
+            old: oldArray[index],
+            new: newArray[index],
+            status: this.getChangeStatus(oldArray[index], newArray[index]),
+            sectionName: this.getSectionName(childPath)
+          };
+        }
+      });
+      
+      Object.assign(changes, arrayChanges);
     }
   });
 
   return changes;
 }
 
-// No need for separate compareArrays method as arrays are handled in processControl
+private getChangeStatus(oldValue: any, newValue: any): ChangeStatus {
+  if (oldValue === undefined || oldValue === null) return 'added';
+  if (newValue === undefined || newValue === null) return 'deleted';
+  return 'modified';
+}
 
 
 
