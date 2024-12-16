@@ -4,159 +4,104 @@ private compareObjects(
   path: string,
   control?: FormGroup
 ): Record<string, any> {
-  // Early returns and validations
-  if (!control) {
-    return {};
-  }
-
-  if (this.formIgnoreService.shouldIgnoreControl(control, path)) {
-    return {};
-  }
-
   const changes: Record<string, any> = {};
-  let objectStatus: ChangeStatus = 'unmodified';
 
-  // Handle null/undefined initial case
+  // Early return if no control
+  if (!control) return {};
+
+  // When initial is null, get individual field changes
   if (!initial) {
-    // Use form structure to track changes instead of recursion
-    const leafControls = this.getLeafControls(control, path);
-    
-    leafControls.forEach(({ control: ctrl, path: ctrlPath }) => {
-      const change = {
-        label: this.getControlLabel(ctrl, ctrlPath),
-        formControlName: ctrlPath,
-        path: ctrlPath,
-        old: null,
-        new: ctrl.value,
-        status: 'added',
-        sectionName: this.getSectionName(path)
-      };
+    Object.keys(control.controls).forEach(key => {
+      const childControl = control.get(key);
+      const childPath = path ? `${path}.${key}` : key;
 
-      changes[ctrlPath] = change;
-      objectStatus = 'modified';
+      if (childControl instanceof FormControl) {
+        // Handle simple control
+        changes[key] = {
+          label: this.getControlLabel(childControl, childPath),
+          formControlName: childPath,
+          path: childPath,
+          old: null,
+          new: childControl.value,
+          status: 'added',
+          sectionName: this.getSectionName(path)
+        };
+      } 
+      else if (childControl instanceof FormArray) {
+        // Handle form array
+        const arrayChanges = this.compareArrays(
+          null, 
+          childControl.value,
+          childPath,
+          childControl
+        );
+        if (Object.keys(arrayChanges).length > 0) {
+          Object.assign(changes, arrayChanges);
+        }
+      }
+      else if (childControl instanceof FormGroup) {
+        // Handle nested form group
+        const groupChanges = this.compareObjects(
+          null,
+          childControl.value,
+          childPath,
+          childControl
+        );
+        if (Object.keys(groupChanges).length > 0) {
+          Object.assign(changes, groupChanges);
+        }
+      }
     });
 
     return changes;
   }
 
-  // For existing values, use Map for better performance
-  const initialKeys = new Set(Object.keys(initial));
-  const currentKeys = new Set(Object.keys(current || {}));
-  const allKeys = new Set([...initialKeys, ...currentKeys]);
+  // Normal comparison for non-null case
+  const allKeys = new Set([...Object.keys(initial), ...Object.keys(current || {})]);
 
-  // Process each key
-  for (const key of allKeys) {
-    const propertyPath = path ? `${path}.${key}` : key;
-    const propertyControl = control.get(key);
+  allKeys.forEach(key => {
+    const childPath = path ? `${path}.${key}` : key;
+    const childControl = control.get(key);
 
-    // Skip if control should be ignored
-    if (!propertyControl || this.formIgnoreService.shouldIgnoreControl(propertyControl, propertyPath)) {
-      continue;
+    if (!(key in current)) {
+      // Handle deleted field
+      changes[key] = {
+        label: this.getControlLabel(childControl, childPath),
+        formControlName: childPath,
+        path: childPath,
+        old: initial[key],
+        new: undefined,
+        status: 'deleted',
+        sectionName: this.getSectionName(path)
+      };
     }
-
-    // Determine change type
-    if (!currentKeys.has(key)) {
-      changes[key] = this.createChange(
-        propertyPath,
-        propertyControl,
-        initial[key],
-        undefined,
-        'deleted'
-      );
-      objectStatus = 'modified';
+    else if (!(key in initial)) {
+      // Handle added field
+      changes[key] = {
+        label: this.getControlLabel(childControl, childPath),
+        formControlName: childPath,
+        path: childPath,
+        old: undefined,
+        new: current[key],
+        status: 'added',
+        sectionName: this.getSectionName(path)
+      };
     }
-    else if (!initialKeys.has(key)) {
-      changes[key] = this.createChange(
-        propertyPath,
-        propertyControl,
-        undefined,
-        current[key],
-        'added'
-      );
-      objectStatus = 'modified';
+    else if (!this.areValuesEqual(initial[key], current[key])) {
+      // Handle modified field
+      changes[key] = {
+        label: this.getControlLabel(childControl, childPath),
+        formControlName: childPath,
+        path: childPath,
+        old: initial[key],
+        new: current[key],
+        status: 'modified',
+        sectionName: this.getSectionName(path)
+      };
     }
-    else {
-      const valueChanges = this.compareValues(
-        initial[key],
-        current[key],
-        propertyPath,
-        propertyControl
-      );
+  });
 
-      if (valueChanges && Object.keys(valueChanges).length > 0) {
-        changes[key] = valueChanges;
-        objectStatus = 'modified';
-      }
-    }
-  }
-
-  return Object.keys(changes).length > 0 ? { ...changes, status: objectStatus } : {};
-}
-
-// Helper method to get leaf controls (actual form controls, not groups/arrays)
-private getLeafControls(control: AbstractControl, basePath: string = ''): Array<{ control: FormControl, path: string }> {
-  const controls: Array<{ control: FormControl, path: string }> = [];
-
-  const processControl = (ctrl: AbstractControl, currentPath: string) => {
-    if (ctrl instanceof FormControl) {
-      controls.push({ control: ctrl, path: currentPath });
-    }
-    else if (ctrl instanceof FormGroup) {
-      Object.entries(ctrl.controls).forEach(([key, childCtrl]) => {
-        const childPath = currentPath ? `${currentPath}.${key}` : key;
-        processControl(childCtrl, childPath);
-      });
-    }
-    else if (ctrl instanceof FormArray) {
-      ctrl.controls.forEach((childCtrl, index) => {
-        processControl(childCtrl, `${currentPath}[${index}]`);
-      });
-    }
-  };
-
-  processControl(control, basePath);
-  return controls;
-}
-
-// Helper method to create change object
-private createChange(
-  path: string,
-  control: AbstractControl,
-  oldValue: any,
-  newValue: any,
-  status: ChangeStatus
-): any {
-  return {
-    label: this.getControlLabel(control, path),
-    formControlName: path,
-    path,
-    old: oldValue,
-    new: newValue,
-    status,
-    sectionName: this.getSectionName(path)
-  };
-}
-
-// Helper method to compare values
-private compareValues(
-  oldValue: any,
-  newValue: any,
-  path: string,
-  control: AbstractControl
-): any {
-  if (this.areValuesEqual(oldValue, newValue)) {
-    return null;
-  }
-
-  if (control instanceof FormGroup) {
-    return this.compareObjects(oldValue, newValue, path, control);
-  }
-
-  if (control instanceof FormArray) {
-    return this.compareArrays(oldValue, newValue, path, control);
-  }
-
-  return this.createChange(path, control, oldValue, newValue, 'modified');
+  return changes;
 }
 
 
