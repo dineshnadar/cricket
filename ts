@@ -6,66 +6,51 @@ private compareObjects(
 ): Record<string, any> {
   const changes: Record<string, any> = {};
 
-  // Early return if no control
   if (!control) return {};
 
-  // When initial is null, get individual field changes
+  // Helper function to process any type of control
+  const processControl = (ctrl: AbstractControl, ctrlPath: string) => {
+    if (ctrl instanceof FormControl) {
+      changes[ctrlPath] = {
+        label: this.getControlLabel(ctrl, ctrlPath),
+        formControlName: ctrlPath,
+        path: ctrlPath,
+        old: null,
+        new: ctrl.value,
+        status: 'added',
+        sectionName: this.getSectionName(path)
+      };
+    }
+    else if (ctrl instanceof FormGroup) {
+      Object.keys(ctrl.controls).forEach(key => {
+        const childPath = ctrlPath ? `${ctrlPath}.${key}` : key;
+        processControl(ctrl.get(key), childPath);
+      });
+    }
+    else if (ctrl instanceof FormArray) {
+      ctrl.controls.forEach((arrayControl, index) => {
+        processControl(arrayControl, `${ctrlPath}[${index}]`);
+      });
+    }
+  };
+
+  // For null initial values, traverse the form structure
   if (!initial) {
-    Object.keys(control.controls).forEach(key => {
-      const childControl = control.get(key);
-      const childPath = path ? `${path}.${key}` : key;
-
-      if (childControl instanceof FormControl) {
-        // Handle simple control
-        changes[key] = {
-          label: this.getControlLabel(childControl, childPath),
-          formControlName: childPath,
-          path: childPath,
-          old: null,
-          new: childControl.value,
-          status: 'added',
-          sectionName: this.getSectionName(path)
-        };
-      } 
-      else if (childControl instanceof FormArray) {
-        // Handle form array
-        const arrayChanges = this.compareArrays(
-          null, 
-          childControl.value,
-          childPath,
-          childControl
-        );
-        if (Object.keys(arrayChanges).length > 0) {
-          Object.assign(changes, arrayChanges);
-        }
-      }
-      else if (childControl instanceof FormGroup) {
-        // Handle nested form group
-        const groupChanges = this.compareObjects(
-          null,
-          childControl.value,
-          childPath,
-          childControl
-        );
-        if (Object.keys(groupChanges).length > 0) {
-          Object.assign(changes, groupChanges);
-        }
-      }
-    });
-
+    processControl(control, path);
     return changes;
   }
 
-  // Normal comparison for non-null case
+  // For existing values, compare normally
   const allKeys = new Set([...Object.keys(initial), ...Object.keys(current || {})]);
 
   allKeys.forEach(key => {
     const childPath = path ? `${path}.${key}` : key;
     const childControl = control.get(key);
 
+    if (!childControl) return;
+
     if (!(key in current)) {
-      // Handle deleted field
-      changes[key] = {
+      changes[childPath] = {
         label: this.getControlLabel(childControl, childPath),
         formControlName: childPath,
         path: childPath,
@@ -76,8 +61,7 @@ private compareObjects(
       };
     }
     else if (!(key in initial)) {
-      // Handle added field
-      changes[key] = {
+      changes[childPath] = {
         label: this.getControlLabel(childControl, childPath),
         formControlName: childPath,
         path: childPath,
@@ -88,8 +72,7 @@ private compareObjects(
       };
     }
     else if (!this.areValuesEqual(initial[key], current[key])) {
-      // Handle modified field
-      changes[key] = {
+      changes[childPath] = {
         label: this.getControlLabel(childControl, childPath),
         formControlName: childPath,
         path: childPath,
@@ -103,6 +86,8 @@ private compareObjects(
 
   return changes;
 }
+
+// No need for separate compareArrays method as arrays are handled in processControl
 
 
 
