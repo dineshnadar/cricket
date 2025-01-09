@@ -1,945 +1,936 @@
-import { FormGroup, FormArray, AbstractControl } from '@angular/forms';
+// libs/shared/message-banner/src/lib/interfaces/banner.interface.ts
+import { SafeHtml } from '@angular/platform-browser';
 
-function moveFormControls(
-  sourceGroup: FormGroup | FormArray,
-  targetGroup: FormGroup | FormArray,
-  removeFromSource: boolean = true
-): void {
-  Object.keys(sourceGroup.controls).forEach(controlName => {
-    const control = sourceGroup.get(controlName);
-    if (control) {
-      if (control instanceof FormGroup) {
-        // Handle nested FormGroup
-        const nestedTarget = targetGroup.get(controlName) as FormGroup;
-        if (!nestedTarget) {
-          targetGroup.addControl(controlName, new FormGroup({}));
-        }
-        moveFormControls(
-          control,
-          targetGroup.get(controlName) as FormGroup,
-          removeFromSource
-        );
-      } else if (control instanceof FormArray) {
-        // Handle nested FormArray
-        const nestedTarget = targetGroup.get(controlName) as FormArray;
-        if (!nestedTarget) {
-          targetGroup.addControl(controlName, new FormArray([]));
-        }
-        moveFormControls(
-          control,
-          targetGroup.get(controlName) as FormArray,
-          removeFromSource
-        );
-      } else {
-        // For standard controls
-        if (removeFromSource) {
-          sourceGroup.removeControl(controlName);
-        }
-        targetGroup.addControl(controlName, control);
-      }
-    }
-  });
+export type BannerType = 'info' | 'success' | 'warning' | 'error';
+
+export interface BannerButton {
+  label: string;
+  action?: string;
+  disabled?: boolean;
+  testId?: string;
 }
 
-
-// parallel-api.service.ts
-import { Injectable, inject } from '@angular/core';
-import { ApiService } from './api.service';
-import { Observable, forkJoin, of, throwError } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
-
-interface User {
+export interface MessageBannerConfig {
   id: string;
-  name: string;
+  message: string | SafeHtml;
+  type?: BannerType;
+  verticalOffset?: string;
+  showCloseIcon?: boolean;
+  duration?: number;
+  visible?: boolean;
+  primaryButton?: BannerButton;
+  secondaryButton?: BannerButton;
+  disableAnimation?: boolean;
+  ariaLabel?: string;
+  testId?: string;
 }
 
-interface OrgStats {
-  total: number;
-  active: number;
+export interface BannerAction {
+  bannerId: string;
+  actionType: 'close' | 'primary' | 'secondary';
+  action?: string;
 }
 
-interface OrganizationData {
-  users?: User[];
-  totalUsers?: number;
-  activeUsers?: number;
-  errors?: {
-    users?: string;
-    stats?: string;
-  };
-  hasErrors: boolean;
-}
+// libs/shared/message-banner/src/lib/constants/banner.constants.ts
+export const BANNER_DEFAULTS = {
+  type: 'info' as const,
+  verticalOffset: '0px',
+  showCloseIcon: true,
+  visible: true,
+  disableAnimation: false
+};
+
+// libs/shared/message-banner/src/lib/services/message-banner.service.ts
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
+import { MessageBannerConfig, BannerType } from '../interfaces/banner.interface';
+import { BANNER_DEFAULTS } from '../constants/banner.constants';
 
 @Injectable({
   providedIn: 'root'
 })
-export class ParallelApiService {
-  private api = inject(ApiService);
+export class MessageBannerService {
+  private readonly sanitizer = inject(DomSanitizer);
+  private readonly bannersSignal = signal<MessageBannerConfig[]>([]);
+  private idCounter = 0;
 
-  // Approach 1: Handle each failure separately and return partial data
-  getOrganizationData(orgId: string): Observable<OrganizationData> {
-    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
-      catchError(error => {
-        console.error('Failed to fetch users:', error);
-        return of(null);
-      })
-    );
+  readonly activeBanners = computed(() => this.bannersSignal());
 
-    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
-      catchError(error => {
-        console.error('Failed to fetch stats:', error);
-        return of(null);
-      })
-    );
+  show(config: Omit<MessageBannerConfig, 'id' | 'visible'> & { id?: string }): string {
+    const id = config.id || this.generateId();
+    const message = typeof config.message === 'string' 
+      ? this.sanitizer.bypassSecurityTrustHtml(config.message)
+      : config.message;
 
-    return forkJoin({
-      users: usersRequest,
-      stats: statsRequest
-    }).pipe(
-      map(({ users, stats }) => {
-        const result: OrganizationData = {
-          hasErrors: false,
-          errors: {}
-        };
-
-        // Handle users data
-        if (users === null) {
-          result.hasErrors = true;
-          result.errors!.users = 'Failed to load users';
-        } else {
-          result.users = users;
-        }
-
-        // Handle stats data
-        if (stats === null) {
-          result.hasErrors = true;
-          result.errors!.stats = 'Failed to load statistics';
-        } else {
-          result.totalUsers = stats.total;
-          result.activeUsers = stats.active;
-        }
-
-        return result;
-      })
-    );
-  }
-
-  // Approach 2: Fail if critical data is missing, return partial data for non-critical
-  getOrganizationDataStrict(orgId: string): Observable<OrganizationData> {
-    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
-      catchError(error => {
-        // Consider users data critical - throw error
-        return throwError(() => new Error('Failed to load users: Critical data missing'));
-      })
-    );
-
-    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
-      catchError(error => {
-        // Consider stats non-critical - return null
-        console.warn('Failed to load stats:', error);
-        return of(null);
-      })
-    );
-
-    return forkJoin({
-      users: usersRequest,
-      stats: statsRequest
-    }).pipe(
-      map(({ users, stats }) => ({
-        users,
-        totalUsers: stats?.total,
-        activeUsers: stats?.active,
-        hasErrors: !stats,
-        errors: stats ? undefined : { stats: 'Statistics temporarily unavailable' }
-      }))
-    );
-  }
-
-  // Approach 3: Detailed error handling with retry options
-  getOrganizationDataWithRetry(orgId: string): Observable<OrganizationData> {
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
-
-    const handleRetry = (error: any, source: string) => {
-      if (retryCount < MAX_RETRIES) {
-        retryCount++;
-        console.warn(`Retrying ${source} request (${retryCount}/${MAX_RETRIES})`);
-        return of(null);
-      }
-      return of({ error: error.message || `Failed to load ${source}` });
+    const bannerConfig: MessageBannerConfig = {
+      ...BANNER_DEFAULTS,
+      ...config,
+      id,
+      message,
+      visible: true
     };
 
-    const usersRequest = this.api.get<User[]>('getOrgUsers', { orgId }).pipe(
-      catchError(error => handleRetry(error, 'users'))
+    this.bannersSignal.update(banners => {
+      const index = banners.findIndex(b => b.id === id);
+      if (index >= 0) {
+        const updatedBanners = [...banners];
+        updatedBanners[index] = bannerConfig;
+        return updatedBanners;
+      }
+      return [...banners, bannerConfig];
+    });
+
+    if (bannerConfig.duration) {
+      setTimeout(() => this.close(id), bannerConfig.duration);
+    }
+
+    return id;
+  }
+
+  hide(id: string): void {
+    this.updateBannerVisibility(id, false);
+  }
+
+  show(id: string): void {
+    this.updateBannerVisibility(id, true);
+  }
+
+  close(id: string): void {
+    this.bannersSignal.update(banners => 
+      banners.filter(banner => banner.id !== id)
     );
+  }
 
-    const statsRequest = this.api.get<OrgStats>('getOrgStats', { orgId }).pipe(
-      catchError(error => handleRetry(error, 'stats'))
-    );
+  getBannerById(id: string) {
+    return computed(() => this.bannersSignal().find(banner => banner.id === id));
+  }
 
-    return forkJoin({
-      users: usersRequest,
-      stats: statsRequest
-    }).pipe(
-      map(({ users, stats }) => {
-        const result: OrganizationData = {
-          hasErrors: false,
-          errors: {}
-        };
+  private generateId(): string {
+    return `banner-${Date.now()}-${this.idCounter++}`;
+  }
 
-        // Handle users response
-        if (users === null || 'error' in users) {
-          result.hasErrors = true;
-          result.errors!.users = typeof users === 'object' ? users.error : 'Failed to load users';
-        } else {
-          result.users = users;
-        }
-
-        // Handle stats response
-        if (stats === null || 'error' in stats) {
-          result.hasErrors = true;
-          result.errors!.stats = typeof stats === 'object' ? stats.error : 'Failed to load statistics';
-        } else {
-          result.totalUsers = stats.total;
-          result.activeUsers = stats.active;
-        }
-
-        return result;
-      })
+  private updateBannerVisibility(id: string, visible: boolean): void {
+    this.bannersSignal.update(banners =>
+      banners.map(banner =>
+        banner.id === id ? { ...banner, visible } : banner
+      )
     );
   }
 }
 
-------------------------
-
-// organization-dashboard.component.ts
-import { Component, inject, signal } from '@angular/core';
+// libs/shared/message-banner/src/lib/components/message-banner.component.ts
+import { 
+  ChangeDetectionStrategy, 
+  Component, 
+  EventEmitter, 
+  Input, 
+  Output, 
+  computed, 
+  inject 
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ParallelApiService } from './parallel-api.service';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { MessageBannerService } from '../services/message-banner.service';
+import { BannerAction } from '../interfaces/banner.interface';
 
 @Component({
-  selector: 'app-organization-dashboard',
+  selector: 'lib-message-banner',
   standalone: true,
   imports: [CommonModule],
   template: `
-    @if (loading()) {
-      <div class="loading">Loading organization data...</div>
-    }
-
-    @if (error()) {
-      <div class="error-container">
-        <h3>Error Loading Data</h3>
-        <p>{{ error() }}</p>
-        <button (click)="loadData()">Retry</button>
-      </div>
-    }
-
-    @if (orgData()) {
-      <div class="dashboard">
-        @if (orgData()?.hasErrors) {
-          <div class="warning-banner">
-            <h4>Some data couldn't be loaded:</h4>
-            @if (orgData()?.errors?.users) {
-              <p>Users: {{ orgData()?.errors?.users }}</p>
+    @if (banner(); as banner) {
+      @if (banner.visible) {
+        <div 
+          class="message-banner"
+          [class.animate]="!banner.disableAnimation"
+          [ngClass]="banner.type"
+          [style.top]="banner.verticalOffset"
+          [attr.aria-label]="banner.ariaLabel"
+          [attr.data-testid]="banner.testId">
+          <div class="message-content" [innerHTML]="banner.message"></div>
+          <div class="button-group">
+            @if (banner.secondaryButton) {
+              <button 
+                class="btn-secondary"
+                [disabled]="banner.secondaryButton.disabled"
+                [attr.data-testid]="banner.secondaryButton.testId"
+                (click)="onSecondaryClick(banner.id, banner.secondaryButton.action)">
+                {{ banner.secondaryButton.label }}
+              </button>
             }
-            @if (orgData()?.errors?.stats) {
-              <p>Statistics: {{ orgData()?.errors?.stats }}</p>
+            @if (banner.primaryButton) {
+              <button 
+                class="btn-primary"
+                [disabled]="banner.primaryButton.disabled"
+                [attr.data-testid]="banner.primaryButton.testId"
+                (click)="onPrimaryClick(banner.id, banner.primaryButton.action)">
+                {{ banner.primaryButton.label }}
+              </button>
             }
-            <button (click)="loadData()">Retry Loading Data</button>
+            @if (banner.showCloseIcon) {
+              <button 
+                class="btn-close"
+                aria-label="Close"
+                (click)="onClose(banner.id)">
+                ×
+              </button>
+            }
           </div>
-        }
-
-        @if (orgData()?.users) {
-          <div class="users-section">
-            <h3>Organization Users</h3>
-            <ul>
-              @for (user of orgData()?.users; track user.id) {
-                <li>{{ user.name }}</li>
-              }
-            </ul>
-          </div>
-        }
-
-        @if (orgData()?.totalUsers !== undefined) {
-          <div class="stats-section">
-            <h3>Organization Statistics</h3>
-            <p>Total Users: {{ orgData()?.totalUsers }}</p>
-            <p>Active Users: {{ orgData()?.activeUsers }}</p>
-          </div>
-        }
-      </div>
+        </div>
+      }
     }
   `,
   styles: [`
-    .warning-banner {
-      background-color: #fff3cd;
-      border: 1px solid #ffeeba;
-      padding: 1rem;
-      margin-bottom: 1rem;
+    .message-banner {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
       border-radius: 4px;
-    }
-
-    .error-container {
-      background-color: #f8d7da;
-      border: 1px solid #f5c6cb;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      border-radius: 4px;
-    }
-  `]
-})
-export class OrganizationDashboardComponent {
-  private parallelApi = inject(ParallelApiService);
-  private destroyRef = inject(DestroyRef);
-
-  loading = signal(false);
-  error = signal<string | null>(null);
-  orgData = signal<OrganizationData | null>(null);
-
-  ngOnInit() {
-    this.loadData();
-  }
-
-  loadData() {
-    this.loading.set(true);
-    this.error.set(null);
-
-    // Using Approach 3 with retry
-    this.parallelApi.getOrganizationDataWithRetry('org123')
-      .pipe(
-        takeUntilDestroyed(this.destroyRef)
-      )
-      .subscribe({
-        next: (data) => {
-          this.orgData.set(data);
-          this.loading.set(false);
-
-          // Log partial failures for monitoring
-          if (data.hasErrors) {
-            console.warn('Partial data load failure:', data.errors);
-          }
-        },
-        error: (err) => {
-          this.error.set('Failed to load organization data. Please try again.');
-          this.loading.set(false);
-          console.error('Complete load failure:', err);
-        }
-      });
-  }
-
-  // Alternative approach using strict version
-  loadDataStrict() {
-    this.loading.set(true);
-    this.error.set(null);
-
-    this.parallelApi.getOrganizationDataStrict('org123')
-      .pipe(
-        takeUntilDestroyed(this.destroyRef)
-      )
-      .subscribe({
-        next: (data) => {
-          this.orgData.set(data);
-          this.loading.set(false);
-
-          if (data.hasErrors) {
-            // Show warning for non-critical failures
-            console.warn('Non-critical data missing:', data.errors);
-          }
-        },
-        error: (err) => {
-          // Critical failure - show error
-          this.error.set('Critical data could not be loaded. Please try again.');
-          this.loading.set(false);
-          console.error('Critical data load failure:', err);
-        }
-      });
-  }
-}
-
-
-
-
-
-------------------------------------------------------------------------
-// example.service.ts
-import { Injectable, inject } from '@angular/core';
-import { ApiService } from './api.service';
-
-interface UserProfile {
-  id: string;
-  name: string;
-  // ... other properties
-}
-
-interface UserPreferences {
-  theme: string;
-  notifications: boolean;
-  // ... other properties
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ExampleService {
-  private apiService = inject(ApiService);
-
-  // Method 1: Using async/await
-  async getUserData(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences }> {
-    try {
-      const profile = await this.apiService.get<UserProfile>('getUserProfile', { userId });
-      const preferences = await this.apiService.get<UserPreferences>('getUserPreferences', { userId });
-
-      return { profile, preferences };
-    } catch (error) {
-      throw new Error('Failed to fetch user data: ' + (error as Error).message);
-    }
-  }
-
-  // Method 2: Using Promise.all() when calls can be parallel
-  async getUserDataParallel(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences }> {
-    try {
-      const [profile, preferences] = await Promise.all([
-        this.apiService.get<UserProfile>('getUserProfile', { userId }),
-        this.apiService.get<UserPreferences>('getUserPreferences', { userId })
-      ]);
-
-      return { profile, preferences };
-    } catch (error) {
-      throw new Error('Failed to fetch user data: ' + (error as Error).message);
-    }
-  }
-
-  // Method 3: Sequential calls where second call depends on first call's data
-  async updateUserWithValidation(userId: string, updates: Partial<UserProfile>): Promise<UserProfile> {
-    try {
-      // First API call: Validate updates
-      const validationResult = await this.apiService.post<{ isValid: boolean; errors?: string[] }>(
-        'validateUserUpdates',
-        { updates }
-      );
-
-      if (!validationResult.isValid) {
-        throw new Error(`Validation failed: ${validationResult.errors?.join(', ')}`);
-      }
-
-      // Second API call: Apply updates
-      return await this.apiService.put<UserProfile>('updateUserProfile', updates, { userId });
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error; // Re-throw validation errors
-      }
-      throw new Error('Failed to update user profile: ' + (error as Error).message);
-    }
-  }
-
-  // Method 4: Complex sequential calls with different error handling
-  async completeUserRegistration(userData: any): Promise<{ success: boolean; userId?: string; error?: string }> {
-    try {
-      // Step 1: Create user
-      const user = await this.apiService.post<{ userId: string }>('createUser', userData);
-
-      try {
-        // Step 2: Set up user preferences
-        await this.apiService.post('createUserPreferences', {
-          userId: user.userId,
-          defaultPreferences: true
-        });
-
-        try {
-          // Step 3: Send welcome email
-          await this.apiService.post('sendWelcomeEmail', { userId: user.userId });
-          
-          return { success: true, userId: user.userId };
-        } catch (emailError) {
-          // Non-critical error: Log but don't fail the registration
-          console.warn('Failed to send welcome email:', emailError);
-          return { success: true, userId: user.userId };
-        }
-      } catch (prefError) {
-        // Critical error: Clean up and fail
-        await this.apiService.delete('deleteUser', { userId: user.userId })
-          .catch(deleteError => console.error('Cleanup failed:', deleteError));
-        
-        throw new Error('Failed to set up user preferences');
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: `Registration failed: ${(error as Error).message}`
-      };
-    }
-  }
-
-  // Method 5: Sequential calls with rollback
-  async transferFunds(fromAccount: string, toAccount: string, amount: number): Promise<boolean> {
-    try {
-      // Step 1: Check balance
-      const balance = await this.apiService.get<{ amount: number }>(
-        'getAccountBalance',
-        { accountId: fromAccount }
-      );
-
-      if (balance.amount < amount) {
-        throw new Error('Insufficient funds');
-      }
-
-      // Step 2: Debit from account
-      const debitResult = await this.apiService.post('debitAccount', {
-        accountId: fromAccount,
-        amount
-      });
-
-      try {
-        // Step 3: Credit to account
-        await this.apiService.post('creditAccount', {
-          accountId: toAccount,
-          amount
-        });
-
-        return true;
-      } catch (creditError) {
-        // Rollback the debit if credit fails
-        try {
-          await this.apiService.post('creditAccount', {
-            accountId: fromAccount,
-            amount
-          });
-        } catch (rollbackError) {
-          throw new Error('Critical: Failed to rollback transaction. Please contact support.');
-        }
-        throw new Error('Transfer failed during credit step');
-      }
-    } catch (error) {
-      throw new Error(`Transfer failed: ${(error as Error).message}`);
-    }
-  }
-}
-
-------------x----
-@Component({
-  selector: 'app-user-profile',
-  template: `
-    @if (loading) {
-      <div>Loading...</div>
-    } @else if (error) {
-      <div class="error">{{ error }}</div>
-    } @else {
-      <div>{{ userData | json }}</div>
-    }
-  `
-})
-export class UserProfileComponent implements OnInit {
-  loading = false;
-  error: string | null = null;
-  userData: any = null;
-
-  constructor(private exampleService: ExampleService) {}
-
-  async ngOnInit() {
-    this.loading = true;
-    this.error = null;
-
-    try {
-      this.userData = await this.exampleService.getUserData('123');
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async handleComplexOperation() {
-    this.loading = true;
-    this.error = null;
-
-    try {
-      const result = await this.exampleService.completeUserRegistration({
-        // user data
-      });
-
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-
-      // Handle success
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
-    } finally {
-      this.loading = false;
-    }
-  }
-}
-
---------------x--------------
-
-@Component({
-  selector: 'app-user-profile',
-  template: `
-    @if (loading) {
-      <div>Loading...</div>
-    } @else if (error) {
-      <div class="error">{{ error }}</div>
-    } @else {
-      <div>{{ userData | json }}</div>
-    }
-  `
-})
-export class UserProfileComponent implements OnInit {
-  loading = false;
-  error: string | null = null;
-  userData: any = null;
-
-  constructor(private exampleService: ExampleService) {}
-
-  async ngOnInit() {
-    this.loading = true;
-    this.error = null;
-
-    try {
-      this.userData = await this.exampleService.getUserData('123');
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async handleComplexOperation() {
-    this.loading = true;
-    this.error = null;
-
-    try {
-      const result = await this.exampleService.completeUserRegistration({
-        // user data
-      });
-
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-
-      // Handle success
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'An unknown error occurred';
-    } finally {
-      this.loading = false;
-    }
-  }
-}
-
------------xxxx------
-
-// user-dashboard.component.ts
-import { Component, OnInit, inject, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { ExampleService } from './example.service';
-
-interface UserData {
-  profile: UserProfile;
-  preferences: UserPreferences;
-}
-
-interface UserProfile {
-  id: string;
-  name: string;
-  email: string;
-}
-
-interface UserPreferences {
-  theme: string;
-  notifications: boolean;
-}
-
-@Component({
-  selector: 'app-user-dashboard',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    @if (loading()) {
-      <div class="loading-container">
-        <app-loading-spinner />
-      </div>
-    }
-
-    @if (error()) {
-      <div class="error-container">
-        <div class="error-message">
-          {{ error() }}
-          <button (click)="retryLoad()" class="retry-button">
-            Retry
-          </button>
-        </div>
-      </div>
-    }
-
-    @if (userData()) {
-      <div class="dashboard-container">
-        <!-- Profile Section -->
-        <div class="profile-section">
-          <h2>Profile</h2>
-          <div class="profile-details">
-            <p>Name: {{ userData()?.profile.name }}</p>
-            <p>Email: {{ userData()?.profile.email }}</p>
-          </div>
-        </div>
-
-        <!-- Preferences Section -->
-        <div class="preferences-section">
-          <h2>Preferences</h2>
-          <div class="preferences-details">
-            <p>Theme: {{ userData()?.preferences.theme }}</p>
-            <p>Notifications: {{ userData()?.preferences.notifications ? 'Enabled' : 'Disabled' }}</p>
-          </div>
-        </div>
-
-        <!-- Actions Section -->
-        <div class="actions-section">
-          <button (click)="refreshData()" 
-                  [disabled]="loading()"
-                  class="refresh-button">
-            Refresh Data
-          </button>
-        </div>
-      </div>
-    }
-  `,
-  styles: [`
-    .dashboard-container {
-      padding: 20px;
-      max-width: 800px;
-      margin: 0 auto;
-    }
-
-    .loading-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 200px;
-    }
-
-    .error-container {
-      padding: 20px;
-      background-color: #fff3f3;
-      border: 1px solid #ff8080;
-      border-radius: 4px;
-      margin: 20px;
-    }
-
-    .error-message {
-      color: #d63031;
       display: flex;
       align-items: center;
-      gap: 10px;
-    }
-
-    .retry-button {
-      background-color: #ff7675;
-      color: white;
-      border: none;
-      padding: 5px 10px;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-
-    .profile-section,
-    .preferences-section {
-      background-color: white;
-      padding: 20px;
-      border-radius: 4px;
-      margin-bottom: 20px;
+      gap: 12px;
+      z-index: 1000;
+      min-width: 300px;
+      max-width: 600px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
-    .actions-section {
-      display: flex;
-      justify-content: flex-end;
-      padding: 20px 0;
+    .animate {
+      animation: slideIn 0.3s ease-out;
     }
 
-    .refresh-button {
-      background-color: #74b9ff;
-      color: white;
-      border: none;
-      padding: 10px 20px;
+    @keyframes slideIn {
+      from {
+        transform: translateX(-50%) translateY(-100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .message-content {
+      flex: 1;
+      line-height: 1.5;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn-primary, .btn-secondary {
+      padding: 6px 16px;
       border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+
+    .btn-primary {
+      background-color: #1976d2;
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background-color: #1565c0;
+    }
+
+    .btn-secondary {
+      background-color: transparent;
+      border: 1px solid currentColor;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background-color: rgba(0,0,0,0.04);
+    }
+
+    .btn-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      padding: 4px;
+      cursor: pointer;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .btn-close:hover {
+      opacity: 1;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .info {
+      background-color: #e3f2fd;
+      color: #0d47a1;
+    }
+
+    .success {
+      background-color: #e8f5e9;
+      color: #1b5e20;
+    }
+
+    .warning {
+      background-color: #fff3e0;
+      color: #e65100;
+    }
+
+    .error {
+      background-color: #ffebee;
+      color: #b71c1c;
+    }
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class MessageBannerComponent {
+  @Input({ required: true }) id!: string;
+  @Output() readonly bannerAction = new EventEmitter<BannerAction>();
+
+  private readonly bannerService = inject(MessageBannerService);
+  readonly banner = computed(() => this.bannerService.getBannerById(this.id)());
+
+  onClose(bannerId: string): void {
+    this.bannerService.close(bannerId);
+    this.emitAction('close', bannerId);
+  }
+
+  onPrimaryClick(bannerId: string, action?: string): void {
+    this.emitAction('primary', bannerId, action);
+  }
+
+  onSecondaryClick(bannerId: string, action?: string): void {
+    this.emitAction('secondary', bannerId, action);
+  }
+
+  private emitAction(
+    actionType: BannerAction['actionType'], 
+    bannerId: string, 
+    action?: string
+  ): void {
+    this.bannerAction.emit({ bannerId, actionType, action });
+  }
+}
+
+// libs/shared/message-banner/src/index.ts
+export * from './lib/interfaces/banner.interface';
+export * from './lib/services/message-banner.service';
+export * from './lib/components/message-banner.component';
+export * from './lib/constants/banner.constants';
+
+--------------------
+
+// apps/your-app/src/app/app.component.ts
+import { Component, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { 
+  MessageBannerService, 
+  MessageBannerComponent, 
+  BannerAction,
+  BannerType 
+} from '@your-workspace/shared/message-banner';
+
+@Component({
+  selector: 'app-root',
+  standalone: true,
+  imports: [CommonModule, MessageBannerComponent],
+  template: `
+    <div class="container">
+      <h2>Message Banner Demo</h2>
+
+      <!-- Static banner placements -->
+      <div class="banner-container">
+        <h3>Static Banners</h3>
+        <lib-message-banner 
+          id="top-static-banner"
+          (bannerAction)="onBannerAction($event)">
+        </lib-message-banner>
+
+        <lib-message-banner 
+          id="middle-static-banner"
+          (bannerAction)="onBannerAction($event)">
+        </lib-message-banner>
+      </div>
+
+      <!-- Dynamic banners -->
+      <div class="banner-container">
+        <h3>Dynamic Banners</h3>
+        @for (banner of bannerService.activeBanners(); track banner.id) {
+          @if (!isStaticBanner(banner.id)) {
+            <lib-message-banner 
+              [id]="banner.id"
+              (bannerAction)="onBannerAction($event)">
+            </lib-message-banner>
+          }
+        }
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <h3>Banner Controls</h3>
+        
+        <!-- Types -->
+        <div class="control-group">
+          <h4>Banner Types</h4>
+          <button (click)="showInfoBanner()">Show Info Banner</button>
+          <button (click)="showSuccessBanner()">Show Success Banner</button>
+          <button (click)="showWarningBanner()">Show Warning Banner</button>
+          <button (click)="showErrorBanner()">Show Error Banner</button>
+        </div>
+
+        <!-- Actions -->
+        <div class="control-group">
+          <h4>Action Banners</h4>
+          <button (click)="showConfirmationBanner()">Show Confirmation</button>
+          <button (click)="showChoiceBanner()">Show Choice Dialog</button>
+          <button (click)="showAutoClosingBanner()">Show Auto-closing Banner</button>
+        </div>
+
+        <!-- Static Banner Controls -->
+        <div class="control-group">
+          <h4>Static Banner Controls</h4>
+          <button (click)="showTopStaticBanner()">Show Top Static</button>
+          <button (click)="showMiddleStaticBanner()">Show Middle Static</button>
+          <button (click)="hideAllStaticBanners()">Hide All Static</button>
+        </div>
+
+        <!-- HTML Content -->
+        <div class="control-group">
+          <h4>Content Types</h4>
+          <button (click)="showHtmlBanner()">Show HTML Content</button>
+          <button (click)="showComplexBanner()">Show Complex Banner</button>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .container {
+      padding: 20px;
+    }
+
+    .controls {
+      margin-top: 20px;
+    }
+
+    .control-group {
+      margin-bottom: 20px;
+    }
+
+    button {
+      margin: 5px;
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      background: #fff;
       cursor: pointer;
     }
 
-    .refresh-button:disabled {
-      background-color: #ddd;
-      cursor: not-allowed;
+    button:hover {
+      background: #f0f0f0;
     }
   `]
 })
-export class UserDashboardComponent implements OnInit {
-  private exampleService = inject(ExampleService);
+export class AppComponent {
+  private readonly bannerService = inject(MessageBannerService);
+  private readonly staticBannerIds = ['top-static-banner', 'middle-static-banner'];
 
-  // Signals for state management
-  loading = signal(false);
-  error = signal<string | null>(null);
-  userData = signal<UserData | null>(null);
-
-  ngOnInit() {
-    this.loadUserData();
+  // Helper Methods
+  isStaticBanner(id: string): boolean {
+    return this.staticBannerIds.includes(id);
   }
 
-  async loadUserData(showLoading = true): Promise<void> {
-    if (showLoading) {
-      this.loading.set(true);
-    }
-    this.error.set(null);
-
-    try {
-      // Using parallel data fetching
-      const userData = await this.exampleService.getUserDataParallel('123'); // Replace with actual user ID
-      this.userData.set(userData);
-    } catch (err) {
-      this.error.set(this.getErrorMessage(err));
-      this.userData.set(null);
-    } finally {
-      this.loading.set(false);
-    }
-  }
-
-  // Silent refresh without showing loading indicator
-  async refreshData(): Promise<void> {
-    await this.loadUserData(false);
-  }
-
-  async retryLoad(): Promise<void> {
-    await this.loadUserData();
-  }
-
-  private getErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return 'An unexpected error occurred';
-  }
-}
-
-// Usage with optimistic updates:
-@Component({
-  selector: 'app-user-settings',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    <div class="settings-container">
-      @if (userData()) {
-        <div class="settings-form">
-          <!-- Theme Toggle -->
-          <div class="setting-item">
-            <label>Theme</label>
-            <select 
-              [value]="userData()?.preferences.theme"
-              (change)="updateTheme($event)"
-              [disabled]="updating()"
-            >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </div>
-
-          <!-- Notifications Toggle -->
-          <div class="setting-item">
-            <label>
-              <input 
-                type="checkbox"
-                [checked]="userData()?.preferences.notifications"
-                (change)="updateNotifications($event)"
-                [disabled]="updating()"
-              >
-              Enable Notifications
-            </label>
-          </div>
-        </div>
-
-        @if (error()) {
-          <div class="error-message">
-            {{ error() }}
-          </div>
-        }
-      }
-    </div>
-  `
-})
-export class UserSettingsComponent implements OnInit {
-  private exampleService = inject(ExampleService);
-
-  userData = signal<UserData | null>(null);
-  updating = signal(false);
-  error = signal<string | null>(null);
-
-  ngOnInit() {
-    this.loadData();
-  }
-
-  async loadData(): Promise<void> {
-    try {
-      const data = await this.exampleService.getUserDataParallel('123');
-      this.userData.set(data);
-    } catch (err) {
-      this.error.set(this.getErrorMessage(err));
-    }
-  }
-
-  async updateTheme(event: Event): Promise<void> {
-    const select = event.target as HTMLSelectElement;
-    const newTheme = select.value;
-
-    // Optimistic update
-    this.updateLocalState({ theme: newTheme });
-
-    try {
-      this.updating.set(true);
-      await this.exampleService.updateUserWithValidation('123', {
-        preferences: { theme: newTheme }
-      });
-    } catch (err) {
-      // Rollback on error
-      await this.loadData();
-      this.error.set(this.getErrorMessage(err));
-    } finally {
-      this.updating.set(false);
-    }
-  }
-
-  async updateNotifications(event: Event): Promise<void> {
-    const checkbox = event.target as HTMLInputElement;
-    const enabled = checkbox.checked;
-
-    // Optimistic update
-    this.updateLocalState({ notifications: enabled });
-
-    try {
-      this.updating.set(true);
-      await this.exampleService.updateUserWithValidation('123', {
-        preferences: { notifications: enabled }
-      });
-    } catch (err) {
-      // Rollback on error
-      await this.loadData();
-      this.error.set(this.getErrorMessage(err));
-    } finally {
-      this.updating.set(false);
-    }
-  }
-
-  private updateLocalState(update: Partial<UserPreferences>): void {
-    this.userData.update(data => {
-      if (data) {
-        return {
-          ...data,
-          preferences: {
-            ...data.preferences,
-            ...update
-          }
-        };
-      }
-      return data;
+  // Basic Type Banners
+  showInfoBanner(): void {
+    this.bannerService.show({
+      message: 'This is an information message',
+      type: 'info',
+      verticalOffset: '20px'
     });
   }
 
-  private getErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : 'An unexpected error occurred';
+  showSuccessBanner(): void {
+    this.bannerService.show({
+      message: 'Operation completed successfully!',
+      type: 'success',
+      verticalOffset: '80px',
+      duration: 3000
+    });
+  }
+
+  showWarningBanner(): void {
+    this.bannerService.show({
+      message: 'Please review your changes before proceeding',
+      type: 'warning',
+      verticalOffset: '140px'
+    });
+  }
+
+  showErrorBanner(): void {
+    this.bannerService.show({
+      message: 'An error occurred while processing your request',
+      type: 'error',
+      verticalOffset: '200px'
+    });
+  }
+
+  // Action Banners
+  showConfirmationBanner(): void {
+    this.bannerService.show({
+      message: 'Are you sure you want to proceed with this action?',
+      type: 'warning',
+      primaryButton: {
+        label: 'Confirm',
+        action: 'confirm_action'
+      },
+      secondaryButton: {
+        label: 'Cancel',
+        action: 'cancel_action'
+      }
+    });
+  }
+
+  showChoiceBanner(): void {
+    this.bannerService.show({
+      message: 'Would you like to save your changes?',
+      type: 'info',
+      primaryButton: {
+        label: 'Save',
+        action: 'save_changes'
+      },
+      secondaryButton: {
+        label: 'Don\'t Save',
+        action: 'discard_changes'
+      },
+      showCloseIcon: false
+    });
+  }
+
+  showAutoClosingBanner(): void {
+    this.bannerService.show({
+      message: 'This banner will close automatically in 5 seconds',
+      type: 'info',
+      duration: 5000,
+      verticalOffset: '260px'
+    });
+  }
+
+  // Static Banner Controls
+  showTopStaticBanner(): void {
+    this.bannerService.show({
+      id: 'top-static-banner',
+      message: 'This is a static top banner',
+      type: 'info',
+      verticalOffset: '20px',
+      primaryButton: {
+        label: 'Action',
+        action: 'static_action'
+      }
+    });
+  }
+
+  showMiddleStaticBanner(): void {
+    this.bannerService.show({
+      id: 'middle-static-banner',
+      message: 'This is a static middle banner',
+      type: 'warning',
+      verticalOffset: '80px'
+    });
+  }
+
+  hideAllStaticBanners(): void {
+    this.staticBannerIds.forEach(id => this.bannerService.hide(id));
+  }
+
+  // Complex Content Banners
+  showHtmlBanner(): void {
+    this.bannerService.show({
+      message: `
+        <strong>HTML Content</strong>
+        <p>This banner contains <em>formatted</em> text and a <a href="#">link</a>.</p>
+      `,
+      type: 'info',
+      verticalOffset: '320px'
+    });
+  }
+
+  showComplexBanner(): void {
+    this.bannerService.show({
+      message: `
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 24px;">🚀</span>
+          <div>
+            <strong>New Feature Available!</strong>
+            <p style="margin: 4px 0 0 0;">Try our new dashboard experience.</p>
+          </div>
+        </div>
+      `,
+      type: 'success',
+      verticalOffset: '380px',
+      primaryButton: {
+        label: 'Try Now',
+        action: 'try_feature'
+      },
+      secondaryButton: {
+        label: 'Learn More',
+        action: 'learn_more'
+      }
+    });
+  }
+
+  // Action Handler
+  onBannerAction(event: BannerAction): void {
+    console.log('Banner action:', event);
+
+    switch (event.action) {
+      case 'confirm_action':
+        console.log('Confirming action...');
+        break;
+      case 'cancel_action':
+        console.log('Cancelling action...');
+        break;
+      case 'save_changes':
+        console.log('Saving changes...');
+        break;
+      case 'discard_changes':
+        console.log('Discarding changes...');
+        break;
+      case 'try_feature':
+        console.log('Navigating to new feature...');
+        break;
+      case 'learn_more':
+        console.log('Opening documentation...');
+        break;
+      case 'static_action':
+        console.log('Static banner action...');
+        break;
+    }
+
+    // Close banner after handling action (if needed)
+    if (event.actionType !== 'close') {
+      this.bannerService.close(event.bannerId);
+    }
   }
 }
+
+-------------------
+
+// libs/shared/message-banner/src/lib/services/message-banner.service.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { MessageBannerService } from './message-banner.service';
+import { DomSanitizer, SecurityContext } from '@angular/platform-browser';
+import { MessageBannerConfig } from '../interfaces/banner.interface';
+
+describe('MessageBannerService', () => {
+  let service: MessageBannerService;
+  let sanitizer: jest.Mocked<DomSanitizer>;
+
+  beforeEach(() => {
+    const mockSanitizer = {
+      sanitize: jest.fn().mockImplementation((_, value) => value),
+      bypassSecurityTrustHtml: jest.fn().mockImplementation(value => value)
+    };
+
+    TestBed.configureTestingModule({
+      providers: [
+        MessageBannerService,
+        { provide: DomSanitizer, useValue: mockSanitizer }
+      ]
+    });
+
+    service = TestBed.inject(MessageBannerService);
+    sanitizer = TestBed.inject(DomSanitizer) as jest.Mocked<DomSanitizer>;
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  describe('show', () => {
+    it('should create banner with provided id', () => {
+      const id = 'test-banner';
+      const message = 'Test message';
+
+      const bannerId = service.show({ id, message });
+      const banner = service.getBannerById(id)();
+
+      expect(bannerId).toBe(id);
+      expect(banner).toBeDefined();
+      expect(banner?.message).toBe(message);
+    });
+
+    it('should generate unique id when not provided', () => {
+      const message = 'Test message';
+      
+      const bannerId = service.show({ message });
+      const banner = service.getBannerById(bannerId)();
+
+      expect(bannerId).toMatch(/banner-\d+-\d+/);
+      expect(banner).toBeDefined();
+    });
+
+    it('should sanitize HTML message', () => {
+      const htmlMessage = '<p>Test <strong>message</strong></p>';
+      service.show({ message: htmlMessage });
+
+      expect(sanitizer.bypassSecurityTrustHtml).toHaveBeenCalledWith(htmlMessage);
+    });
+
+    it('should update existing banner if id exists', () => {
+      const id = 'test-banner';
+      service.show({ id, message: 'Initial message' });
+      service.show({ id, message: 'Updated message' });
+
+      const banner = service.getBannerById(id)();
+      expect(banner?.message).toBe('Updated message');
+      expect(service.activeBanners().length).toBe(1);
+    });
+
+    it('should auto-close banner after duration', () => {
+      jest.useFakeTimers();
+      const id = 'test-banner';
+      
+      service.show({ id, message: 'Test', duration: 1000 });
+      expect(service.getBannerById(id)()).toBeDefined();
+
+      jest.advanceTimersByTime(1000);
+      expect(service.getBannerById(id)()).toBeUndefined();
+    });
+  });
+
+  describe('hide/show visibility', () => {
+    it('should update banner visibility', () => {
+      const id = 'test-banner';
+      service.show({ id, message: 'Test' });
+
+      service.hide(id);
+      expect(service.getBannerById(id)()?.visible).toBe(false);
+
+      service.show(id);
+      expect(service.getBannerById(id)()?.visible).toBe(true);
+    });
+  });
+
+  describe('close', () => {
+    it('should remove banner', () => {
+      const id = 'test-banner';
+      service.show({ id, message: 'Test' });
+      
+      service.close(id);
+      expect(service.getBannerById(id)()).toBeUndefined();
+    });
+  });
+
+  describe('activeBanners', () => {
+    it('should return all active banners', () => {
+      service.show({ message: 'Banner 1' });
+      service.show({ message: 'Banner 2' });
+      service.show({ message: 'Banner 3' });
+
+      expect(service.activeBanners().length).toBe(3);
+    });
+  });
+});
+
+// libs/shared/message-banner/src/lib/components/message-banner.component.spec.ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { MessageBannerComponent } from './message-banner.component';
+import { MessageBannerService } from '../services/message-banner.service';
+import { By } from '@angular/platform-browser';
+import { Component } from '@angular/core';
+import { BannerAction } from '../interfaces/banner.interface';
+
+// Test Host Component
+@Component({
+  template: `
+    <lib-message-banner
+      [id]="bannerId"
+      (bannerAction)="onAction($event)">
+    </lib-message-banner>
+  `
+})
+class TestHostComponent {
+  bannerId = 'test-banner';
+  onAction = jest.fn();
+}
+
+describe('MessageBannerComponent', () => {
+  let component: TestHostComponent;
+  let fixture: ComponentFixture<TestHostComponent>;
+  let service: MessageBannerService;
+  let bannerElement: HTMLElement;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [TestHostComponent],
+      imports: [MessageBannerComponent],
+      providers: [MessageBannerService]
+    }).compileComponents();
+
+    service = TestBed.inject(MessageBannerService);
+    fixture = TestBed.createComponent(TestHostComponent);
+    component = fixture.componentInstance;
+  });
+
+  const createBanner = (config: any = {}) => {
+    service.show({
+      id: 'test-banner',
+      message: 'Test message',
+      ...config
+    });
+    fixture.detectChanges();
+    bannerElement = fixture.debugElement.query(By.css('.message-banner'))?.nativeElement;
+  };
+
+  it('should create', () => {
+    createBanner();
+    expect(component).toBeTruthy();
+    expect(bannerElement).toBeTruthy();
+  });
+
+  it('should display message content', () => {
+    createBanner({ message: 'Test message content' });
+    const content = bannerElement.querySelector('.message-content');
+    expect(content?.textContent).toContain('Test message content');
+  });
+
+  it('should apply correct type class', () => {
+    createBanner({ type: 'warning' });
+    expect(bannerElement.classList.contains('warning')).toBeTruthy();
+  });
+
+  it('should position banner using verticalOffset', () => {
+    createBanner({ verticalOffset: '100px' });
+    expect(bannerElement.style.top).toBe('100px');
+  });
+
+  describe('Primary Button', () => {
+    it('should render and handle primary button click', () => {
+      const action = 'test_action';
+      createBanner({
+        primaryButton: { label: 'Primary', action }
+      });
+
+      const button = fixture.debugElement.query(By.css('.btn-primary'));
+      expect(button.nativeElement.textContent).toContain('Primary');
+
+      button.nativeElement.click();
+      expect(component.onAction).toHaveBeenCalledWith({
+        bannerId: 'test-banner',
+        actionType: 'primary',
+        action
+      });
+    });
+
+    it('should handle disabled state', () => {
+      createBanner({
+        primaryButton: { label: 'Primary', disabled: true }
+      });
+
+      const button = fixture.debugElement.query(By.css('.btn-primary'));
+      expect(button.nativeElement.disabled).toBeTruthy();
+    });
+  });
+
+  describe('Secondary Button', () => {
+    it('should render and handle secondary button click', () => {
+      const action = 'secondary_action';
+      createBanner({
+        secondaryButton: { label: 'Secondary', action }
+      });
+
+      const button = fixture.debugElement.query(By.css('.btn-secondary'));
+      expect(button.nativeElement.textContent).toContain('Secondary');
+
+      button.nativeElement.click();
+      expect(component.onAction).toHaveBeenCalledWith({
+        bannerId: 'test-banner',
+        actionType: 'secondary',
+        action
+      });
+    });
+  });
+
+  describe('Close Button', () => {
+    it('should show close button by default', () => {
+      createBanner();
+      const closeButton = fixture.debugElement.query(By.css('.btn-close'));
+      expect(closeButton).toBeTruthy();
+    });
+
+    it('should hide close button when showCloseIcon is false', () => {
+      createBanner({ showCloseIcon: false });
+      const closeButton = fixture.debugElement.query(By.css('.btn-close'));
+      expect(closeButton).toBeFalsy();
+    });
+
+    it('should emit close action and close banner on click', () => {
+      createBanner();
+      const closeButton = fixture.debugElement.query(By.css('.btn-close'));
+      
+      closeButton.nativeElement.click();
+      expect(component.onAction).toHaveBeenCalledWith({
+        bannerId: 'test-banner',
+        actionType: 'close'
+      });
+      
+      fixture.detectChanges();
+      expect(fixture.debugElement.query(By.css('.message-banner'))).toBeFalsy();
+    });
+  });
+
+  describe('Visibility', () => {
+    it('should show/hide banner based on visible property', () => {
+      createBanner();
+      expect(bannerElement).toBeTruthy();
+
+      service.hide('test-banner');
+      fixture.detectChanges();
+      expect(fixture.debugElement.query(By.css('.message-banner'))).toBeFalsy();
+
+      service.show('test-banner');
+      fixture.detectChanges();
+      expect(fixture.debugElement.query(By.css('.message-banner'))).toBeTruthy();
+    });
+  });
+
+  describe('Animation', () => {
+    it('should apply animation by default', () => {
+      createBanner();
+      expect(bannerElement.classList.contains('animate')).toBeTruthy();
+    });
+
+    it('should not animate when disableAnimation is true', () => {
+      createBanner({ disableAnimation: true });
+      expect(bannerElement.classList.contains('animate')).toBeFalsy();
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('should set aria-label when provided', () => {
+      createBanner({ ariaLabel: 'Test notification' });
+      expect(bannerElement.getAttribute('aria-label')).toBe('Test notification');
+    });
+
+    it('should set data-testid when provided', () => {
+      createBanner({ testId: 'test-banner-1' });
+      expect(bannerElement.getAttribute('data-testid')).toBe('test-banner-1');
+    });
+  });
+
+  describe('HTML Content', () => {
+    it('should render HTML content safely', () => {
+      const htmlContent = '<strong>Bold</strong> content';
+      createBanner({ message: htmlContent });
+      
+      const content = bannerElement.querySelector('.message-content');
+      expect(content?.innerHTML).toContain(htmlContent);
+    });
+  });
+});
