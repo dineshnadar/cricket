@@ -1,0 +1,351 @@
+import { TestBed } from '@angular/core/testing';
+import { RefreshService } from './refresh.service';
+
+describe('RefreshService', () => {
+  let service: RefreshService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [RefreshService]
+    });
+    service = TestBed.inject(RefreshService);
+  });
+
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
+
+  describe('initial state', () => {
+    it('should have initial counter as 0', () => {
+      expect(service.refreshCount()).toBe(0);
+    });
+
+    it('should have initial loading as false', () => {
+      expect(service.isLoading()).toBe(false);
+    });
+
+    it('should have initial error as null', () => {
+      expect(service.error()).toBeNull();
+    });
+
+    it('should have initial timestamp as null', () => {
+      expect(service.lastRefreshed()).toBeNull();
+    });
+  });
+
+  describe('triggerRefresh', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should increment counter', () => {
+      service.triggerRefresh();
+      expect(service.refreshCount()).toBe(1);
+
+      service.triggerRefresh();
+      expect(service.refreshCount()).toBe(2);
+    });
+
+    it('should update timestamp', () => {
+      const mockDate = new Date('2024-01-23');
+      jest.setSystemTime(mockDate);
+
+      service.triggerRefresh();
+      expect(service.lastRefreshed()).toEqual(mockDate);
+    });
+
+    it('should set loading to true', () => {
+      service.triggerRefresh();
+      expect(service.isLoading()).toBe(true);
+    });
+
+    it('should clear error', () => {
+      service.setError('Previous error');
+      service.triggerRefresh();
+      expect(service.error()).toBeNull();
+    });
+  });
+
+  describe('setLoading', () => {
+    it('should update loading state', () => {
+      service.setLoading(true);
+      expect(service.isLoading()).toBe(true);
+
+      service.setLoading(false);
+      expect(service.isLoading()).toBe(false);
+    });
+
+    it('should not affect other state properties', () => {
+      const initialCount = service.refreshCount();
+      const initialError = service.error();
+      
+      service.setLoading(true);
+      
+      expect(service.refreshCount()).toBe(initialCount);
+      expect(service.error()).toBe(initialError);
+    });
+  });
+
+  describe('setError', () => {
+    it('should update error state', () => {
+      const errorMessage = 'Test error';
+      service.setError(errorMessage);
+      expect(service.error()).toBe(errorMessage);
+    });
+
+    it('should set loading to false', () => {
+      service.setLoading(true);
+      service.setError('Error occurred');
+      expect(service.isLoading()).toBe(false);
+    });
+
+    it('should allow clearing error', () => {
+      service.setError('Error');
+      service.setError(null);
+      expect(service.error()).toBeNull();
+    });
+  });
+
+  describe('computed signals', () => {
+    it('should reflect state changes', () => {
+      const mockDate = new Date();
+      jest.setSystemTime(mockDate);
+
+      service.triggerRefresh();
+
+      expect(service.refreshCount()).toBe(1);
+      expect(service.isLoading()).toBe(true);
+      expect(service.lastRefreshed()).toEqual(mockDate);
+      expect(service.error()).toBeNull();
+    });
+  });
+});
+
+
+
+-----------------
+
+// types.ts
+export interface RefreshState {
+  counter: number;
+  timestamp: Date | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+// refresh.service.ts
+import { Injectable, signal, computed } from '@angular/core';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class RefreshService {
+  private state = signal<RefreshState>({
+    counter: 0,
+    timestamp: null,
+    isLoading: false,
+    error: null
+  });
+
+  readonly refreshCount = computed(() => this.state().counter);
+  readonly lastRefreshed = computed(() => this.state().timestamp);
+  readonly isLoading = computed(() => this.state().isLoading);
+  readonly error = computed(() => this.state().error);
+
+  triggerRefresh(): void {
+    this.state.update(state => ({
+      ...state,
+      counter: state.counter + 1,
+      timestamp: new Date(),
+      isLoading: true,
+      error: null
+    }));
+  }
+
+  setLoading(isLoading: boolean): void {
+    this.state.update(state => ({ ...state, isLoading }));
+  }
+
+  setError(error: string | null): void {
+    this.state.update(state => ({ ...state, error, isLoading: false }));
+  }
+}
+
+// data.service.ts
+@Injectable({
+  providedIn: 'root'
+})
+export class DataService {
+  private profileData = signal<Profile | null>(null);
+  private ordersData = signal<Order[] | null>(null);
+  private notificationsData = signal<Notification[] | null>(null);
+
+  readonly profile = computed(() => this.profileData());
+  readonly orders = computed(() => this.ordersData());
+  readonly notifications = computed(() => this.notificationsData());
+
+  constructor(
+    private refreshService: RefreshService,
+    private http: HttpClient
+  ) {
+    this.listenToRefresh();
+  }
+
+  private listenToRefresh(): void {
+    // Using computed for automatic tracking
+    const refreshCount = computed(() => this.refreshService.refreshCount());
+    
+    computed(() => {
+      if (refreshCount() > 0) {
+        this.loadAllData();
+      }
+    });
+  }
+
+  private async loadAllData(): Promise<void> {
+    try {
+      const [profile, orders, notifications] = await Promise.all([
+        this.http.get<Profile>('/api/profile').toPromise(),
+        this.http.get<Order[]>('/api/orders').toPromise(),
+        this.http.get<Notification[]>('/api/notifications').toPromise()
+      ]);
+
+      this.profileData.set(profile);
+      this.ordersData.set(orders);
+      this.notificationsData.set(notifications);
+      
+      this.refreshService.setLoading(false);
+    } catch (error) {
+      this.refreshService.setError(error.message);
+    }
+  }
+}
+
+// profile.component.ts
+@Component({
+  selector: 'app-profile',
+  template: `
+    <div class="profile">
+      @if (profile(); as userData) {
+        <div class="user-info">{{ userData.name }}</div>
+      }
+      <button (click)="refresh()">Refresh</button>
+    </div>
+  `
+})
+export class ProfileComponent {
+  constructor(
+    private refreshService: RefreshService,
+    private dataService: DataService
+  ) {}
+
+  readonly profile = this.dataService.profile;
+  
+  refresh(): void {
+    this.refreshService.triggerRefresh();
+  }
+}
+
+// orders.component.ts
+@Component({
+  selector: 'app-orders',
+  template: `
+    <div class="orders">
+      @if (orders(); as orderList) {
+        <div class="orders-list">
+          @for (order of orderList; track order.id) {
+            <div class="order-item">{{ order.title }}</div>
+          }
+        </div>
+      }
+    </div>
+  `
+})
+export class OrdersComponent {
+  constructor(private dataService: DataService) {}
+  
+  readonly orders = this.dataService.orders;
+}
+
+// notifications.component.ts
+@Component({
+  selector: 'app-notifications',
+  template: `
+    <div class="notifications">
+      @if (notifications(); as notificationList) {
+        <div class="notifications-list">
+          @for (notification of notificationList; track notification.id) {
+            <div class="notification">{{ notification.message }}</div>
+          }
+        </div>
+      }
+      <div class="refresh-info">
+        @if (isLoading()) {
+          <span>Refreshing...</span>
+        }
+        @if (error()) {
+          <span class="error">{{ error() }}</span>
+        }
+        @if (lastRefreshed()) {
+          <span>Last updated: {{ lastRefreshed() | date:'medium' }}</span>
+        }
+      </div>
+    </div>
+  `
+})
+export class NotificationsComponent {
+  constructor(private refreshService: RefreshService, private dataService: DataService) {}
+
+  readonly notifications = this.dataService.notifications;
+  readonly isLoading = this.refreshService.isLoading;
+  readonly error = this.refreshService.error;
+  readonly lastRefreshed = this.refreshService.lastRefreshed;
+}
+
+-----------
+
+@Component({
+  selector: 'app-orders',
+  template: `
+    <div class="orders">
+      <div class="status-bar">
+        Refresh Count: {{ refreshCount() }}
+        @if (isLoading()) {
+          <span>Loading...</span>
+        }
+      </div>
+      @if (orders(); as orderList) {
+        <div class="orders-list">
+          @for (order of orderList; track order.id) {
+            <div class="order-item">{{ order.title }}</div>
+          }
+        </div>
+      }
+    </div>
+  `
+})
+export class OrdersComponent {
+  constructor(
+    private refreshService: RefreshService,
+    private dataService: DataService
+  ) {
+    computed(() => {
+      // When refreshCount changes, load orders
+      if (this.refreshCount() > 0) {
+        this.loadOrders();
+      }
+    });
+  }
+
+  readonly refreshCount = this.refreshService.refreshCount;
+  readonly isLoading = this.refreshService.isLoading;
+  readonly orders = this.dataService.orders;
+
+  private loadOrders(): void {
+    // Load orders implementation
+  }
+}
