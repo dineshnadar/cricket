@@ -1,3 +1,158 @@
+// src/app/resolvers/__tests__/constant-message.resolver.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { ConstantMessageService } from '../../services/constant-message.service';
+import { constantMessageResolver } from '../constant-message.resolver';
+import { of, throwError } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
+import { ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
+import { ConstantMessage } from '../../models/constant-message.model';
+
+describe('constantMessageResolver', () => {
+  let messageService: jest.Mocked<ConstantMessageService>;
+
+  const mockMessages: ConstantMessage[] = [
+    {
+      type: 'tooltip',
+      key: 'test-tooltip',
+      header: 'Test Tooltip',
+      content: 'Test content',
+      contentType: 'text',
+      category: 'test'
+    }
+  ];
+
+  beforeEach(() => {
+    messageService = {
+      fetchMessages: jest.fn()
+    } as any;
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ConstantMessageService, useValue: messageService }
+      ]
+    });
+  });
+
+  it('should resolve messages successfully', async () => {
+    messageService.fetchMessages.mockReturnValue(of(mockMessages));
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual(mockMessages);
+    expect(messageService.fetchMessages).toHaveBeenCalled();
+  });
+
+  it('should resolve to empty array on error', async () => {
+    messageService.fetchMessages.mockReturnValue(
+      throwError(() => new Error('API Error'))
+    );
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual([]);
+    expect(messageService.fetchMessages).toHaveBeenCalled();
+  });
+
+  it('should handle null response', async () => {
+    messageService.fetchMessages.mockReturnValue(of(null));
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual([]);
+  });
+
+  it('should handle undefined response', async () => {
+    messageService.fetchMessages.mockReturnValue(of(undefined));
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual([]);
+  });
+
+  it('should not block navigation on error', async () => {
+    messageService.fetchMessages.mockReturnValue(
+      throwError(() => new Error('Network Error'))
+    );
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual([]);
+    // Verify that navigation would continue
+    expect(messageService.fetchMessages).toHaveBeenCalled();
+  });
+
+  // Test different error scenarios
+  it.each([
+    ['Network error', new Error('Network Error')],
+    ['Server error', new Error('500 Internal Server Error')],
+    ['Timeout', new Error('Request timeout')],
+    ['Invalid data', new Error('Invalid data format')]
+  ])('should handle %s gracefully', async (_, error) => {
+    messageService.fetchMessages.mockReturnValue(throwError(() => error));
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
+
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
+
+    const result = await firstValueFrom(resolver);
+    expect(result).toEqual([]);
+  });
+});
+
+// Optional: Test Helper file (src/app/resolvers/__tests__/test-helpers.ts)
+export function createActivatedRouteSnapshot(params: any = {}): ActivatedRouteSnapshot {
+  return {
+    params,
+    queryParams: {},
+    data: {},
+    url: [],
+    paramMap: {
+      get: (key: string) => params[key],
+      has: (key: string) => key in params
+    },
+    queryParamMap: {
+      get: (key: string) => null,
+      has: (key: string) => false
+    }
+  } as ActivatedRouteSnapshot;
+}
+
+
+
+--------------------------
 // src/app/config/api.config.ts
 export const API_CONFIG = {
   endpoints: {
