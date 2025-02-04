@@ -1,351 +1,601 @@
-import { TestBed } from '@angular/core/testing';
-import { RefreshService } from './refresh.service';
+// src/app/config/api.config.ts
+export const API_CONFIG = {
+  endpoints: {
+    constantMessages: {
+      url: '/api/constant-messages',
+      shouldCache: true,
+      storageType: 'session', // Use session storage
+      cacheDuration: 24 * 60 * 60 * 1000, // 24 hours
+      retryEnabled: true,
+      maxRetries: 3,
+      retryDelay: 1000
+    }
+  }
+};
 
-describe('RefreshService', () => {
-  let service: RefreshService;
+// src/app/models/constant-message.model.ts
+export interface ConstantMessage {
+  type: 'tooltip' | 'notification' | 'constant';
+  key: string;
+  header: string;
+  content: string | string[];
+  contentType: 'html' | 'text';
+  placement?: 'top' | 'bottom' | 'left' | 'right';
+  category: string;
+}
+
+// src/app/services/constant-message.service.ts
+import { Injectable, inject, signal, computed } from '@angular/core';
+import { ApiService } from './api.service';
+import { ConstantMessage } from '../models/constant-message.model';
+import { Observable, map } from 'rxjs';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ConstantMessageService {
+  private readonly apiService = inject(ApiService);
+  private messages = signal<ConstantMessage[]>([]);
+
+  // Computed values for different message types
+  readonly allMessages = computed(() => this.messages());
+  readonly tooltips = computed(() => 
+    this.messages().filter(msg => msg.type === 'tooltip')
+  );
+  readonly notifications = computed(() => 
+    this.messages().filter(msg => msg.type === 'notification')
+  );
+  readonly constants = computed(() => 
+    this.messages().filter(msg => msg.type === 'constant')
+  );
+
+  fetchMessages(): Observable<ConstantMessage[]> {
+    // Use apiService which handles caching internally
+    return this.apiService.fetchData('constantMessages', 'GET').pipe(
+      map((response: any) => {
+        const messages = response?.data || [];
+        this.messages.set(messages);
+        return messages;
+      })
+    );
+  }
+
+  getMessageByKey(key: string): ConstantMessage | undefined {
+    return this.messages().find(msg => msg.key === key);
+  }
+
+  getMessagesByCategory(category: string): ConstantMessage[] {
+    return this.messages().filter(msg => msg.category === category);
+  }
+
+  getMessagesByType(type: ConstantMessage['type']): ConstantMessage[] {
+    return this.messages().filter(msg => msg.type === type);
+  }
+
+  getLookupValues(category: string): string[] {
+    const messages = this.getMessagesByCategory(category);
+    return messages.reduce<string[]>((values, msg) => {
+      if (Array.isArray(msg.content)) {
+        return values.concat(msg.content);
+      }
+      return values.concat([msg.content]);
+    }, []);
+  }
+
+  clearCache(): void {
+    this.apiService.clearCache('constantMessages');
+    this.messages.set([]);
+  }
+}
+
+// src/app/resolvers/constant-message.resolver.ts
+import { ResolveFn } from '@angular/router';
+import { inject } from '@angular/core';
+import { ConstantMessageService } from '../services/constant-message.service';
+import { ConstantMessage } from '../models/constant-message.model';
+import { catchError, Observable, of } from 'rxjs';
+
+export const constantMessageResolver: ResolveFn<ConstantMessage[]> = 
+  (): Observable<ConstantMessage[]> => {
+    return inject(ConstantMessageService).fetchMessages().pipe(
+      catchError(() => {
+        console.warn('Failed to load constant messages, continuing with empty state');
+        return of([]);
+      })
+    );
+  };
+
+// Example component usage
+// src/app/components/display/constant-message-display.component.ts
+import { Component, computed, input } from '@angular/core';
+import { ConstantMessageService } from '../../services/constant-message.service';
+import { CommonModule } from '@angular/common';
+
+@Component({
+  selector: 'app-constant-message',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <ng-container *ngIf="message() as msg">
+      <div [ngClass]="['message', msg.type, msg.placement || '']">
+        <h3>{{ msg.header }}</h3>
+        <div [ngSwitch]="msg.contentType">
+          <div *ngSwitchCase="'html'" [innerHTML]="msg.content"></div>
+          <ng-container *ngSwitchCase="'text'">
+            <ng-container *ngIf="isArray(msg.content); else singleContent">
+              <ul>
+                <li *ngFor="let line of msg.content; trackBy: trackByIndex">
+                  {{ line }}
+                </li>
+              </ul>
+            </ng-container>
+            <ng-template #singleContent>
+              <p>{{ msg.content }}</p>
+            </ng-template>
+          </ng-container>
+        </div>
+      </div>
+    </ng-container>
+  `,
+  styles: [`
+    .message {
+      padding: 1rem;
+      border-radius: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .tooltip { background-color: #f3f4f6; }
+    .notification { background-color: #fef3c7; }
+    .constant { background-color: #e0e7ff; }
+  `]
+})
+export class ConstantMessageDisplayComponent {
+  private messageService = inject(ConstantMessageService);
+  
+  // Modern input syntax
+  messageKey = input.required<string>();
+
+  // Computed message based on key
+  message = computed(() => 
+    this.messageService.getMessageByKey(this.messageKey())
+  );
+
+  isArray(content: string | string[]): content is string[] {
+    return Array.isArray(content);
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+}
+
+// app.routes.ts
+import { Routes } from '@angular/router';
+import { constantMessageResolver } from './resolvers/constant-message.resolver';
+
+export const routes: Routes = [
+  {
+    path: '',
+    resolve: {
+      messages: constantMessageResolver
+    },
+    children: [
+      // Your other routes
+    ]
+  }
+];
+
+// Example page component
+// src/app/pages/example/example.component.ts
+import { Component, inject } from '@angular/core';
+import { ConstantMessageService } from '../../services/constant-message.service';
+import { ConstantMessageDisplayComponent } from '../../components/display/constant-message-display.component';
+
+@Component({
+  selector: 'app-example',
+  standalone: true,
+  imports: [ConstantMessageDisplayComponent],
+  template: `
+    <div class="page-content">
+      <!-- Display validation messages -->
+      <div class="validation-section">
+        <app-constant-message messageKey="form-errors" />
+      </div>
+
+      <!-- Display help messages -->
+      <div class="help-section">
+        <app-constant-message messageKey="help-upload" />
+      </div>
+
+      <!-- Display notification -->
+      <div class="notification-section">
+        <app-constant-message messageKey="account-locked" />
+      </div>
+    </div>
+  `
+})
+export class ExampleComponent {
+  private messageService = inject(ConstantMessageService);
+
+  // Example of getting lookup values
+  countryOptions = computed(() => 
+    this.messageService.getLookupValues('countries')
+  );
+}
+
+
+-----------
+
+// src/app/services/__tests__/constant-message.service.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { ConstantMessageService } from '../constant-message.service';
+import { ApiService } from '../api.service';
+import { of, throwError } from 'rxjs';
+import { ConstantMessage } from '../../models/constant-message.model';
+
+describe('ConstantMessageService', () => {
+  let service: ConstantMessageService;
+  let apiService: jest.Mocked<ApiService>;
+
+  const mockMessages: ConstantMessage[] = [
+    {
+      type: 'tooltip',
+      key: 'help-upload',
+      header: 'Upload Guide',
+      content: '<div>Click here to upload your files</div>',
+      contentType: 'html',
+      placement: 'bottom',
+      category: 'help'
+    },
+    {
+      type: 'notification',
+      key: 'account-locked',
+      header: 'Account Security Alert',
+      content: [
+        'Your account has been temporarily locked',
+        'Please verify your identity'
+      ],
+      contentType: 'text',
+      placement: 'top',
+      category: 'security'
+    },
+    {
+      type: 'constant',
+      key: 'form-errors',
+      header: 'Validation Errors',
+      content: ['Please fill all fields', 'Invalid email format'],
+      contentType: 'text',
+      category: 'validation'
+    }
+  ];
 
   beforeEach(() => {
+    // Create mock API service
+    apiService = {
+      fetchData: jest.fn(),
+      clearCache: jest.fn()
+    } as any;
+
     TestBed.configureTestingModule({
-      providers: [RefreshService]
+      providers: [
+        ConstantMessageService,
+        { provide: ApiService, useValue: apiService }
+      ]
     });
-    service = TestBed.inject(RefreshService);
+
+    service = TestBed.inject(ConstantMessageService);
   });
 
   it('should be created', () => {
     expect(service).toBeTruthy();
   });
 
-  describe('initial state', () => {
-    it('should have initial counter as 0', () => {
-      expect(service.refreshCount()).toBe(0);
+  describe('fetchMessages', () => {
+    it('should fetch messages successfully', (done) => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+
+      service.fetchMessages().subscribe(messages => {
+        expect(messages).toEqual(mockMessages);
+        expect(service.allMessages()).toHaveLength(3);
+        done();
+      });
     });
 
-    it('should have initial loading as false', () => {
-      expect(service.isLoading()).toBe(false);
+    it('should handle empty response', (done) => {
+      apiService.fetchData.mockReturnValue(of({ data: [] }));
+
+      service.fetchMessages().subscribe(messages => {
+        expect(messages).toEqual([]);
+        expect(service.allMessages()).toHaveLength(0);
+        done();
+      });
     });
 
-    it('should have initial error as null', () => {
-      expect(service.error()).toBeNull();
+    it('should handle null response', (done) => {
+      apiService.fetchData.mockReturnValue(of(null));
+
+      service.fetchMessages().subscribe(messages => {
+        expect(messages).toEqual([]);
+        expect(service.allMessages()).toHaveLength(0);
+        done();
+      });
     });
 
-    it('should have initial timestamp as null', () => {
-      expect(service.lastRefreshed()).toBeNull();
+    it('should handle API error', (done) => {
+      apiService.fetchData.mockReturnValue(throwError(() => new Error('API Error')));
+
+      service.fetchMessages().subscribe({
+        error: (error) => {
+          expect(error).toBeTruthy();
+          expect(service.allMessages()).toHaveLength(0);
+          done();
+        }
+      });
     });
   });
 
-  describe('triggerRefresh', () => {
+  describe('getMessageByKey', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
     });
 
-    afterEach(() => {
-      jest.useRealTimers();
+    it('should return message by key', () => {
+      const message = service.getMessageByKey('help-upload');
+      expect(message).toBeDefined();
+      expect(message?.type).toBe('tooltip');
     });
 
-    it('should increment counter', () => {
-      service.triggerRefresh();
-      expect(service.refreshCount()).toBe(1);
-
-      service.triggerRefresh();
-      expect(service.refreshCount()).toBe(2);
-    });
-
-    it('should update timestamp', () => {
-      const mockDate = new Date('2024-01-23');
-      jest.setSystemTime(mockDate);
-
-      service.triggerRefresh();
-      expect(service.lastRefreshed()).toEqual(mockDate);
-    });
-
-    it('should set loading to true', () => {
-      service.triggerRefresh();
-      expect(service.isLoading()).toBe(true);
-    });
-
-    it('should clear error', () => {
-      service.setError('Previous error');
-      service.triggerRefresh();
-      expect(service.error()).toBeNull();
+    it('should return undefined for non-existent key', () => {
+      const message = service.getMessageByKey('non-existent');
+      expect(message).toBeUndefined();
     });
   });
 
-  describe('setLoading', () => {
-    it('should update loading state', () => {
-      service.setLoading(true);
-      expect(service.isLoading()).toBe(true);
-
-      service.setLoading(false);
-      expect(service.isLoading()).toBe(false);
+  describe('getMessagesByCategory', () => {
+    beforeEach(() => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
     });
 
-    it('should not affect other state properties', () => {
-      const initialCount = service.refreshCount();
-      const initialError = service.error();
-      
-      service.setLoading(true);
-      
-      expect(service.refreshCount()).toBe(initialCount);
-      expect(service.error()).toBe(initialError);
+    it('should return messages by category', () => {
+      const messages = service.getMessagesByCategory('help');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].key).toBe('help-upload');
+    });
+
+    it('should return empty array for non-existent category', () => {
+      const messages = service.getMessagesByCategory('non-existent');
+      expect(messages).toHaveLength(0);
     });
   });
 
-  describe('setError', () => {
-    it('should update error state', () => {
-      const errorMessage = 'Test error';
-      service.setError(errorMessage);
-      expect(service.error()).toBe(errorMessage);
+  describe('getMessagesByType', () => {
+    beforeEach(() => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
     });
 
-    it('should set loading to false', () => {
-      service.setLoading(true);
-      service.setError('Error occurred');
-      expect(service.isLoading()).toBe(false);
+    it('should return messages by type', () => {
+      const messages = service.getMessagesByType('notification');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].key).toBe('account-locked');
     });
 
-    it('should allow clearing error', () => {
-      service.setError('Error');
-      service.setError(null);
-      expect(service.error()).toBeNull();
+    it('should return empty array for non-existent type', () => {
+      const messages = service.getMessagesByType('non-existent' as any);
+      expect(messages).toHaveLength(0);
     });
   });
 
-  describe('computed signals', () => {
-    it('should reflect state changes', () => {
-      const mockDate = new Date();
-      jest.setSystemTime(mockDate);
+  describe('getLookupValues', () => {
+    beforeEach(() => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
+    });
 
-      service.triggerRefresh();
+    it('should return flattened array of content for category', () => {
+      const values = service.getLookupValues('validation');
+      expect(values).toHaveLength(2);
+      expect(values).toContain('Please fill all fields');
+    });
 
-      expect(service.refreshCount()).toBe(1);
-      expect(service.isLoading()).toBe(true);
-      expect(service.lastRefreshed()).toEqual(mockDate);
-      expect(service.error()).toBeNull();
+    it('should handle single string content', () => {
+      const values = service.getLookupValues('help');
+      expect(values).toHaveLength(1);
+      expect(values[0]).toContain('Click here to upload');
+    });
+  });
+
+  describe('computed properties', () => {
+    beforeEach(() => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
+    });
+
+    it('should filter tooltips correctly', () => {
+      const tooltips = service.tooltips();
+      expect(tooltips).toHaveLength(1);
+      expect(tooltips[0].type).toBe('tooltip');
+    });
+
+    it('should filter notifications correctly', () => {
+      const notifications = service.notifications();
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].type).toBe('notification');
+    });
+
+    it('should filter constants correctly', () => {
+      const constants = service.constants();
+      expect(constants).toHaveLength(1);
+      expect(constants[0].type).toBe('constant');
+    });
+  });
+
+  describe('clearCache', () => {
+    it('should clear cache and reset messages', () => {
+      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
+      service.fetchMessages().subscribe();
+
+      expect(service.allMessages()).toHaveLength(3);
+
+      service.clearCache();
+
+      expect(service.allMessages()).toHaveLength(0);
+      expect(apiService.clearCache).toHaveBeenCalledWith('constantMessages');
     });
   });
 });
 
+// src/app/resolvers/__tests__/constant-message.resolver.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { ConstantMessageService } from '../../services/constant-message.service';
+import { constantMessageResolver } from '../constant-message.resolver';
+import { of, throwError } from 'rxjs';
+import { ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
 
+describe('constantMessageResolver', () => {
+  let messageService: jest.Mocked<ConstantMessageService>;
 
------------------
+  beforeEach(() => {
+    messageService = {
+      fetchMessages: jest.fn()
+    } as any;
 
-// types.ts
-export interface RefreshState {
-  counter: number;
-  timestamp: Date | null;
-  isLoading: boolean;
-  error: string | null;
-}
-
-// refresh.service.ts
-import { Injectable, signal, computed } from '@angular/core';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class RefreshService {
-  private state = signal<RefreshState>({
-    counter: 0,
-    timestamp: null,
-    isLoading: false,
-    error: null
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ConstantMessageService, useValue: messageService }
+      ]
+    });
   });
 
-  readonly refreshCount = computed(() => this.state().counter);
-  readonly lastRefreshed = computed(() => this.state().timestamp);
-  readonly isLoading = computed(() => this.state().isLoading);
-  readonly error = computed(() => this.state().error);
+  it('should resolve messages successfully', (done) => {
+    const mockMessages = [{ key: 'test', type: 'tooltip' } as any];
+    messageService.fetchMessages.mockReturnValue(of(mockMessages));
 
-  triggerRefresh(): void {
-    this.state.update(state => ({
-      ...state,
-      counter: state.counter + 1,
-      timestamp: new Date(),
-      isLoading: true,
-      error: null
-    }));
-  }
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
 
-  setLoading(isLoading: boolean): void {
-    this.state.update(state => ({ ...state, isLoading }));
-  }
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
 
-  setError(error: string | null): void {
-    this.state.update(state => ({ ...state, error, isLoading: false }));
-  }
-}
-
-// data.service.ts
-@Injectable({
-  providedIn: 'root'
-})
-export class DataService {
-  private profileData = signal<Profile | null>(null);
-  private ordersData = signal<Order[] | null>(null);
-  private notificationsData = signal<Notification[] | null>(null);
-
-  readonly profile = computed(() => this.profileData());
-  readonly orders = computed(() => this.ordersData());
-  readonly notifications = computed(() => this.notificationsData());
-
-  constructor(
-    private refreshService: RefreshService,
-    private http: HttpClient
-  ) {
-    this.listenToRefresh();
-  }
-
-  private listenToRefresh(): void {
-    // Using computed for automatic tracking
-    const refreshCount = computed(() => this.refreshService.refreshCount());
-    
-    computed(() => {
-      if (refreshCount() > 0) {
-        this.loadAllData();
-      }
+    resolver.subscribe(result => {
+      expect(result).toEqual(mockMessages);
+      done();
     });
-  }
+  });
 
-  private async loadAllData(): Promise<void> {
-    try {
-      const [profile, orders, notifications] = await Promise.all([
-        this.http.get<Profile>('/api/profile').toPromise(),
-        this.http.get<Order[]>('/api/orders').toPromise(),
-        this.http.get<Notification[]>('/api/notifications').toPromise()
-      ]);
+  it('should resolve to empty array on error', (done) => {
+    messageService.fetchMessages.mockReturnValue(throwError(() => new Error('API Error')));
 
-      this.profileData.set(profile);
-      this.ordersData.set(orders);
-      this.notificationsData.set(notifications);
-      
-      this.refreshService.setLoading(false);
-    } catch (error) {
-      this.refreshService.setError(error.message);
-    }
-  }
-}
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {} as RouterStateSnapshot;
 
-// profile.component.ts
-@Component({
-  selector: 'app-profile',
-  template: `
-    <div class="profile">
-      @if (profile(); as userData) {
-        <div class="user-info">{{ userData.name }}</div>
-      }
-      <button (click)="refresh()">Refresh</button>
-    </div>
-  `
-})
-export class ProfileComponent {
-  constructor(
-    private refreshService: RefreshService,
-    private dataService: DataService
-  ) {}
+    const resolver = TestBed.runInInjectionContext(() =>
+      constantMessageResolver(route, state)
+    );
 
-  readonly profile = this.dataService.profile;
-  
-  refresh(): void {
-    this.refreshService.triggerRefresh();
-  }
-}
-
-// orders.component.ts
-@Component({
-  selector: 'app-orders',
-  template: `
-    <div class="orders">
-      @if (orders(); as orderList) {
-        <div class="orders-list">
-          @for (order of orderList; track order.id) {
-            <div class="order-item">{{ order.title }}</div>
-          }
-        </div>
-      }
-    </div>
-  `
-})
-export class OrdersComponent {
-  constructor(private dataService: DataService) {}
-  
-  readonly orders = this.dataService.orders;
-}
-
-// notifications.component.ts
-@Component({
-  selector: 'app-notifications',
-  template: `
-    <div class="notifications">
-      @if (notifications(); as notificationList) {
-        <div class="notifications-list">
-          @for (notification of notificationList; track notification.id) {
-            <div class="notification">{{ notification.message }}</div>
-          }
-        </div>
-      }
-      <div class="refresh-info">
-        @if (isLoading()) {
-          <span>Refreshing...</span>
-        }
-        @if (error()) {
-          <span class="error">{{ error() }}</span>
-        }
-        @if (lastRefreshed()) {
-          <span>Last updated: {{ lastRefreshed() | date:'medium' }}</span>
-        }
-      </div>
-    </div>
-  `
-})
-export class NotificationsComponent {
-  constructor(private refreshService: RefreshService, private dataService: DataService) {}
-
-  readonly notifications = this.dataService.notifications;
-  readonly isLoading = this.refreshService.isLoading;
-  readonly error = this.refreshService.error;
-  readonly lastRefreshed = this.refreshService.lastRefreshed;
-}
-
------------
-
-@Component({
-  selector: 'app-orders',
-  template: `
-    <div class="orders">
-      <div class="status-bar">
-        Refresh Count: {{ refreshCount() }}
-        @if (isLoading()) {
-          <span>Loading...</span>
-        }
-      </div>
-      @if (orders(); as orderList) {
-        <div class="orders-list">
-          @for (order of orderList; track order.id) {
-            <div class="order-item">{{ order.title }}</div>
-          }
-        </div>
-      }
-    </div>
-  `
-})
-export class OrdersComponent {
-  constructor(
-    private refreshService: RefreshService,
-    private dataService: DataService
-  ) {
-    computed(() => {
-      // When refreshCount changes, load orders
-      if (this.refreshCount() > 0) {
-        this.loadOrders();
-      }
+    resolver.subscribe(result => {
+      expect(result).toEqual([]);
+      done();
     });
-  }
+  });
+});
 
-  readonly refreshCount = this.refreshService.refreshCount;
-  readonly isLoading = this.refreshService.isLoading;
-  readonly orders = this.dataService.orders;
+// src/app/components/display/__tests__/constant-message-display.component.spec.ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ConstantMessageDisplayComponent } from '../constant-message-display.component';
+import { ConstantMessageService } from '../../../services/constant-message.service';
+import { By } from '@angular/platform-browser';
 
-  private loadOrders(): void {
-    // Load orders implementation
-  }
-}
+describe('ConstantMessageDisplayComponent', () => {
+  let component: ConstantMessageDisplayComponent;
+  let fixture: ComponentFixture<ConstantMessageDisplayComponent>;
+  let messageService: jest.Mocked<ConstantMessageService>;
+
+  beforeEach(async () => {
+    messageService = {
+      getMessageByKey: jest.fn()
+    } as any;
+
+    await TestBed.configureTestingModule({
+      imports: [ConstantMessageDisplayComponent],
+      providers: [
+        { provide: ConstantMessageService, useValue: messageService }
+      ]
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ConstantMessageDisplayComponent);
+    component = fixture.componentInstance;
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('should display HTML content', () => {
+    const mockMessage = {
+      type: 'tooltip',
+      key: 'test',
+      header: 'Test Header',
+      content: '<div>Test content</div>',
+      contentType: 'html',
+      category: 'test'
+    };
+
+    messageService.getMessageByKey.mockReturnValue(mockMessage);
+    component.messageKey.set('test');
+    fixture.detectChanges();
+
+    const content = fixture.debugElement.query(By.css('[innerHTML]'));
+    expect(content.nativeElement.innerHTML).toBe(mockMessage.content);
+  });
+
+  it('should display array content as list', () => {
+    const mockMessage = {
+      type: 'notification',
+      key: 'test',
+      header: 'Test Header',
+      content: ['Line 1', 'Line 2'],
+      contentType: 'text',
+      category: 'test'
+    };
+
+    messageService.getMessageByKey.mockReturnValue(mockMessage);
+    component.messageKey.set('test');
+    fixture.detectChanges();
+
+    const listItems = fixture.debugElement.queryAll(By.css('li'));
+    expect(listItems).toHaveLength(2);
+    expect(listItems[0].nativeElement.textContent).toContain('Line 1');
+  });
+
+  it('should handle non-existent message', () => {
+    messageService.getMessageByKey.mockReturnValue(undefined);
+    component.messageKey.set('non-existent');
+    fixture.detectChanges();
+
+    const content = fixture.debugElement.query(By.css('.message'));
+    expect(content).toBeFalsy();
+  });
+
+  it('should apply correct CSS classes', () => {
+    const mockMessage = {
+      type: 'notification',
+      key: 'test',
+      header: 'Test Header',
+      content: 'Test content',
+      contentType: 'text',
+      category: 'test',
+      placement: 'top'
+    };
+
+    messageService.getMessageByKey.mockReturnValue(mockMessage);
+    component.messageKey.set('test');
+    fixture.detectChanges();
+
+    const messageElement = fixture.debugElement.query(By.css('.message'));
+    expect(messageElement.classes['notification']).toBeTruthy();
+    expect(messageElement.classes['top']).toBeTruthy();
+  });
+});
