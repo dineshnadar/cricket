@@ -3,7 +3,10 @@ import {
   Signal, 
   signal, 
   computed, 
-  ElementRef
+  ElementRef,
+  Renderer2,
+  RendererFactory2,
+  SecurityContext
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
@@ -22,6 +25,160 @@ export interface TooltipConfig {
   interactive?: boolean;
 }
 
+// Tooltip Position Calculation Interface
+export interface TooltipPosition {
+  top: number;
+  left: number;
+}
+
+// Tooltip Service
+@Injectable({
+  providedIn: 'root'
+})
+export class TooltipService {
+  private renderer: Renderer2;
+
+  // Sanitize HTML method
+  sanitizeHtml(html: string): SafeHtml {
+    return this.domSanitizer.bypassSecurityTrustHtml(html);
+  }
+
+  // Private signal for tooltip state management
+  private tooltipState = signal({
+    isVisible: false,
+    content: '' as string | SafeHtml,
+    position: DEFAULT_TOOLTIP_CONFIG.position,
+    interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
+    target: null as ElementRef | null,
+    tooltipElement: null as HTMLElement | null
+  });
+
+  // Public computed signals for reactive access
+  public readonly isVisible = computed(() => this.tooltipState().isVisible);
+  public readonly content = computed(() => this.tooltipState().content);
+  public readonly position = computed(() => this.tooltipState().position);
+  public readonly interactive = computed(() => this.tooltipState().interactive);
+  public readonly target = computed(() => this.tooltipState().target);
+
+  constructor(
+    private domSanitizer: DomSanitizer,
+    rendererFactory: RendererFactory2
+  ) {
+    this.renderer = rendererFactory.createRenderer(null, null);
+  }
+
+  // Create tooltip element
+  private createTooltipElement(content: string | SafeHtml, position: string, interactive: boolean): HTMLElement {
+    const tooltip = this.renderer.createElement('div');
+    this.renderer.addClass(tooltip, 'tooltip');
+    this.renderer.addClass(tooltip, `tooltip-${position}`);
+    
+    if (interactive) {
+      this.renderer.addClass(tooltip, 'tooltip-interactive');
+    }
+
+    const span = this.renderer.createElement('span');
+    this.renderer.addClass(span, 'tooltip-content');
+    
+    if (interactive) {
+      this.renderer.addClass(span, 'selectable');
+    }
+
+    // Set innerHTML safely
+    span.innerHTML = typeof content === 'string' 
+      ? content 
+      : this.domSanitizer.sanitize(SecurityContext.HTML, content) || '';
+
+    this.renderer.appendChild(tooltip, span);
+    return tooltip;
+  }
+
+  // Show tooltip
+  public show(config: TooltipConfig, target?: ElementRef): void {
+    // Remove any existing tooltip
+    this.hide();
+
+    const sanitizedContent = typeof config.message === 'string' 
+      ? config.message 
+      : this.domSanitizer.sanitize(SecurityContext.HTML, config.message) || '';
+
+    const position = config.position ?? DEFAULT_TOOLTIP_CONFIG.position;
+    const interactive = config.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive;
+
+    if (target) {
+      // Create tooltip element
+      const tooltipElement = this.createTooltipElement(
+        sanitizedContent, 
+        position, 
+        interactive
+      );
+
+      // Append tooltip to target
+      this.renderer.appendChild(target.nativeElement, tooltipElement);
+
+      // Update state
+      this.tooltipState.update(state => ({
+        isVisible: true,
+        content: sanitizedContent,
+        position: position,
+        interactive: interactive,
+        target: target,
+        tooltipElement: tooltipElement
+      }));
+    }
+  }
+
+  // Hide tooltip
+  public hide(): void {
+    const state = this.tooltipState();
+    
+    // Remove tooltip element if it exists
+    if (state.target && state.tooltipElement) {
+      this.renderer.removeChild(state.target.nativeElement, state.tooltipElement);
+    }
+
+    // Reset state
+    this.tooltipState.update(state => ({
+      isVisible: false,
+      content: '',
+      position: DEFAULT_TOOLTIP_CONFIG.position,
+      interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
+      target: null,
+      tooltipElement: null
+    }));
+  }
+}
+import { 
+  Injectable, 
+  Signal, 
+  signal, 
+  computed, 
+  ElementRef,
+  SecurityContext
+} from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+
+// Default configuration for tooltips
+export const DEFAULT_TOOLTIP_CONFIG = {
+  delay: 200,
+  position: 'top' as const,
+  interactive: true
+};
+
+// Tooltip Configuration Interface
+export interface TooltipConfig {
+  message: string | SafeHtml;
+  position?: 'top' | 'bottom' | 'left' | 'right';
+  delay?: number;
+  interactive?: boolean;
+}
+
+// Tooltip Position Calculation Interface
+export interface TooltipPosition {
+  top: number;
+  left: number;
+}
+
 // Tooltip Service
 @Injectable({
   providedIn: 'root'
@@ -38,7 +195,8 @@ export class TooltipService {
     content: '' as string | SafeHtml,
     position: DEFAULT_TOOLTIP_CONFIG.position,
     interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
-    target: null as ElementRef | null
+    target: null as ElementRef | null,
+    tooltipPosition: { top: 0, left: 0 } as TooltipPosition
   });
 
   // Public computed signals for reactive access
@@ -47,8 +205,40 @@ export class TooltipService {
   public readonly position = computed(() => this.tooltipState().position);
   public readonly interactive = computed(() => this.tooltipState().interactive);
   public readonly target = computed(() => this.tooltipState().target);
+  public readonly tooltipPosition = computed(() => this.tooltipState().tooltipPosition);
 
   constructor(private domSanitizer: DomSanitizer) {}
+
+  // Calculate tooltip position
+  calculatePosition(target: ElementRef, preferredPosition?: string): TooltipPosition {
+    const element = target.nativeElement;
+    const rect = element.getBoundingClientRect();
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+    // Base positions
+    const positions = {
+      top: {
+        top: rect.top + scrollTop - 10,
+        left: rect.left + scrollLeft + (rect.width / 2)
+      },
+      bottom: {
+        top: rect.bottom + scrollTop + 10,
+        left: rect.left + scrollLeft + (rect.width / 2)
+      },
+      left: {
+        top: rect.top + scrollTop + (rect.height / 2),
+        left: rect.left + scrollLeft - 10
+      },
+      right: {
+        top: rect.top + scrollTop + (rect.height / 2),
+        left: rect.right + scrollLeft + 10
+      }
+    };
+
+    // Use preferred position or default to top
+    return positions[preferredPosition as keyof typeof positions] || positions.top;
+  }
 
   // Show tooltip with given configuration
   public show(config: TooltipConfig, target?: ElementRef): void {
@@ -56,12 +246,18 @@ export class TooltipService {
       ? config.message 
       : this.domSanitizer.sanitize(SecurityContext.HTML, config.message) || '';
 
+    const position = config.position ?? DEFAULT_TOOLTIP_CONFIG.position;
+    const tooltipPosition = target 
+      ? this.calculatePosition(target, position) 
+      : { top: 0, left: 0 };
+
     this.tooltipState.update(state => ({
       isVisible: true,
       content: sanitizedContent,
-      position: config.position ?? DEFAULT_TOOLTIP_CONFIG.position,
+      position: position,
       interactive: config.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive,
-      target: target ?? state.target
+      target: target ?? state.target,
+      tooltipPosition
     }));
   }
 
@@ -72,253 +268,5 @@ export class TooltipService {
       isVisible: false,
       target: null
     }));
-  }
-}
-
-////
-
-import { 
-  Directive, 
-  Input, 
-  HostListener, 
-  ElementRef, 
-  inject, 
-  OnDestroy 
-} from '@angular/core';
-import { TooltipService, TooltipConfig, DEFAULT_TOOLTIP_CONFIG } from './tooltip.model-service';
-
-@Directive({
-  selector: '[appTooltip]',
-  standalone: true
-})
-export class TooltipDirective implements OnDestroy {
-  // Tooltip configuration input
-  @Input('appTooltip') tooltipConfig!: TooltipConfig;
-
-  // Inject dependencies
-  private el = inject(ElementRef);
-  private tooltipService = inject(TooltipService);
-
-  // Tracking mouse and timer states
-  private isMouseInside = false;
-  private hoverTimer: number | null = null;
-  private hideTimer: number | null = null;
-
-  // Mouse enter event handler
-  @HostListener('mouseenter')
-  onMouseEnter(): void {
-    this.isMouseInside = true;
-    this.clearTimers();
-
-    // Set hover timer
-    this.hoverTimer = window.setTimeout(() => {
-      if (this.isMouseInside) {
-        const config = {
-          ...DEFAULT_TOOLTIP_CONFIG,
-          ...this.tooltipConfig
-        };
-        this.tooltipService.show(config, this.el);
-      }
-    }, this.tooltipConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay);
-  }
-
-  // Mouse leave event handler
-  @HostListener('mouseleave')
-  onMouseLeave(): void {
-    this.isMouseInside = false;
-    this.clearTimers();
-
-    // Set hide timer
-    this.hideTimer = window.setTimeout(() => {
-      if (!this.isMouseInside) {
-        this.tooltipService.hide();
-      }
-    }, this.tooltipConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay);
-  }
-
-  // Clear existing timers
-  private clearTimers(): void {
-    if (this.hoverTimer) {
-      window.clearTimeout(this.hoverTimer);
-      this.hoverTimer = null;
-    }
-    if (this.hideTimer) {
-      window.clearTimeout(this.hideTimer);
-      this.hideTimer = null;
-    }
-  }
-
-  // Cleanup on component destroy
-  ngOnDestroy(): void {
-    this.clearTimers();
-    this.tooltipService.hide();
-  }
-}
-
-////
-import { 
-  Component, 
-  inject, 
-  OnDestroy, 
-  ChangeDetectionStrategy 
-} from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { TooltipService } from './tooltip.model-service';
-import { TooltipDirective } from './tooltip.directive';
-
-@Component({
-  selector: 'app-tooltip',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    @if (tooltipService.isVisible()) {
-      <div 
-        class="tooltip" 
-        [class]="'tooltip-' + tooltipService.position()"
-        [class.tooltip-interactive]="tooltipService.interactive()"
-        (mouseenter)="onTooltipMouseEnter()"
-        (mouseleave)="onTooltipMouseLeave()"
-      >
-        <span 
-          class="tooltip-content" 
-          [class.selectable]="tooltipService.interactive()"
-          [innerHTML]="tooltipService.content()"
-        ></span>
-      </div>
-    }
-  `,
-  styles: [`
-    .tooltip {
-      position: fixed;
-      background-color: #333;
-      color: white;
-      padding: 5px 10px;
-      border-radius: 4px;
-      z-index: 1000;
-      max-width: 300px;
-      word-wrap: break-word;
-      transition: opacity 0.3s ease;
-    }
-    
-    .tooltip-interactive {
-      pointer-events: auto;
-      cursor: text;
-    }
-    
-    .tooltip-content {
-      display: block;
-      user-select: none;
-    }
-    
-    .selectable {
-      user-select: text;
-    }
-    
-    .tooltip-top { 
-      transform: translateY(-100%); 
-      bottom: 100%; 
-    }
-    .tooltip-bottom { 
-      top: 100%; 
-    }
-    .tooltip-left { 
-      right: 100%; 
-      top: 50%;
-      transform: translateY(-50%);
-    }
-    .tooltip-right { 
-      left: 100%; 
-      top: 50%;
-      transform: translateY(-50%);
-    }
-  `],
-  changeDetection: ChangeDetectionStrategy.OnPush
-})
-export class TooltipComponent implements OnDestroy {
-  // Inject tooltip service
-  protected tooltipService = inject(TooltipService);
-
-  // Tracking mouse state
-  private isMouseInside = false;
-  private hideTimer: number | null = null;
-
-  // Tooltip mouse enter handler
-  onTooltipMouseEnter(): void {
-    this.isMouseInside = true;
-    
-    // Clear hide timer
-    if (this.hideTimer) {
-      window.clearTimeout(this.hideTimer);
-      this.hideTimer = null;
-    }
-  }
-
-  // Tooltip mouse leave handler
-  onTooltipMouseLeave(): void {
-    this.isMouseInside = false;
-    
-    // Set timer to hide tooltip
-    this.hideTimer = window.setTimeout(() => {
-      if (!this.isMouseInside) {
-        this.tooltipService.hide();
-      }
-    }, 300);
-  }
-
-  // Cleanup on component destroy
-  ngOnDestroy(): void {
-    // Clear any lingering timers
-    if (this.hideTimer) {
-      window.clearTimeout(this.hideTimer);
-      this.hideTimer = null;
-    }
-  }
-}
-
-// Example Usage Component
-@Component({
-  selector: 'app-example',
-  standalone: true,
-  imports: [TooltipDirective, TooltipComponent],
-  template: `
-    <div class="flex space-x-4 p-4">
-      <button 
-        appTooltip="{
-          message: 'Simple string tooltip', 
-          position: 'top'
-        }"
-      >
-        String Tooltip
-      </button>
-
-      <button 
-        appTooltip="{
-          message: tooltipService.sanitizeHtml('<strong>HTML</strong> <em>tooltip</em> with <u>formatting</u>'), 
-          position: 'bottom'
-        }"
-      >
-        HTML Tooltip via Service
-      </button>
-
-      <button 
-        appTooltip="{
-          message: createSafeHtml('<span style=\'color: red;\'>Custom HTML Tooltip</span>'), 
-          position: 'left'
-        }"
-      >
-        HTML Tooltip via Component
-      </button>
-    </div>
-    <app-tooltip />
-  `
-})
-export class ExampleComponent {
-  // Inject dependencies
-  tooltipService = inject(TooltipService);
-  private sanitizer = inject(DomSanitizer);
-
-  // Method to create safe HTML in the component
-  createSafeHtml(htmlString: string): SafeHtml {
-    return this.sanitizer.bypassSecurityTrustHtml(htmlString);
   }
 }
