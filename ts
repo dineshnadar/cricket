@@ -1,371 +1,79 @@
-@Directive({
-  selector: '[appTooltip]',
-  standalone: true
-})
-export class TooltipDirective implements OnDestroy {
-  // Flexible input that can accept multiple types
-  @Input('appTooltip') tooltipConfig: string | TooltipConfig | any = '';
+private parseStringToObject(input: string): TooltipConfig {
+  // Remove surrounding quotes and trim
+  const cleanInput = input.trim().replace(/^['"]|['"]$/g, '');
 
-  // Inject dependencies
-  private el = inject(ElementRef);
-  private tooltipService = inject(TooltipService);
-
-  // Tracking mouse and timer states
-  private isMouseInside = false;
-  private hoverTimer: number | null = null;
-  private hideTimer: number | null = null;
-
-  // Safely parse tooltip configuration
-  private parseTooltipConfig(): TooltipConfig {
-    // If it's already a complete configuration object
-    if (this.tooltipConfig && typeof this.tooltipConfig === 'object' && 'message' in this.tooltipConfig) {
-      return {
-        message: this.tooltipConfig.message ?? '',
-        position: this.tooltipConfig.position ?? DEFAULT_TOOLTIP_CONFIG.position,
-        delay: this.tooltipConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay,
-        interactive: this.tooltipConfig.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive
-      };
-    }
-
-    // If it's a string
-    if (typeof this.tooltipConfig === 'string') {
-      // Trim and handle different string formats
-      const trimmedConfig = this.tooltipConfig.trim();
-
-      // Try to parse JSON-like string
-      try {
-        // Remove surrounding quotes if present
-        const cleanConfig = trimmedConfig
-          .replace(/^['"]|['"]$/g, '')  // Remove surrounding quotes
-          .replace(/'/g, '"');  // Replace single quotes with double quotes
-
-        // Attempt to parse if it looks like an object
-        if (cleanConfig.includes(':')) {
-          const parsedObj = JSON.parse(`{${cleanConfig}}`);
-          return {
-            message: parsedObj.message ?? cleanConfig,
-            position: parsedObj.position ?? DEFAULT_TOOLTIP_CONFIG.position,
-            delay: parsedObj.delay ?? DEFAULT_TOOLTIP_CONFIG.delay,
-            interactive: parsedObj.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive
-          };
-        }
-      } catch (error) {
-        // If parsing fails, use the string as the message
-        return {
-          message: trimmedConfig,
-          position: DEFAULT_TOOLTIP_CONFIG.position,
-          delay: DEFAULT_TOOLTIP_CONFIG.delay,
-          interactive: DEFAULT_TOOLTIP_CONFIG.interactive
-        };
-      }
-
-      // If no special parsing needed, use as message
-      return {
-        message: trimmedConfig,
-        position: DEFAULT_TOOLTIP_CONFIG.position,
-        delay: DEFAULT_TOOLTIP_CONFIG.delay,
-        interactive: DEFAULT_TOOLTIP_CONFIG.interactive
-      };
-    }
-
-    // Fallback to default configuration
-    return {
-      message: '',
-      position: DEFAULT_TOOLTIP_CONFIG.position,
-      delay: DEFAULT_TOOLTIP_CONFIG.delay,
-      interactive: DEFAULT_TOOLTIP_CONFIG.interactive
-    };
-  }
-
-  // Mouse enter event handler
-  @HostListener('mouseenter')
-  onMouseEnter(): void {
-    this.isMouseInside = true;
-    this.clearTimers();
-
-    // Parse and merge configuration
-    const config = this.parseTooltipConfig();
-
-    // Set hover timer
-    this.hoverTimer = window.setTimeout(() => {
-      if (this.isMouseInside) {
-        this.tooltipService.show(config, this.el);
-      }
-    }, config.delay);
-  }
-
-  // Rest of the directive remains the same...
-}
-
-import { 
-  Injectable, 
-  Signal, 
-  signal, 
-  computed, 
-  ElementRef,
-  Renderer2,
-  RendererFactory2,
-  SecurityContext
-} from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-
-// Default configuration for tooltips
-export const DEFAULT_TOOLTIP_CONFIG = {
-  delay: 200,
-  position: 'top' as const,
-  interactive: true
-};
-
-// Tooltip Configuration Interface
-export interface TooltipConfig {
-  message: string | SafeHtml;
-  position?: 'top' | 'bottom' | 'left' | 'right';
-  delay?: number;
-  interactive?: boolean;
-}
-
-// Tooltip Position Calculation Interface
-export interface TooltipPosition {
-  top: number;
-  left: number;
-}
-
-// Tooltip Service
-@Injectable({
-  providedIn: 'root'
-})
-export class TooltipService {
-  private renderer: Renderer2;
-
-  // Sanitize HTML method
-  sanitizeHtml(html: string): SafeHtml {
-    return this.domSanitizer.bypassSecurityTrustHtml(html);
-  }
-
-  // Private signal for tooltip state management
-  private tooltipState = signal({
-    isVisible: false,
-    content: '' as string | SafeHtml,
+  // Default configuration
+  const config: TooltipConfig = {
+    message: '',
     position: DEFAULT_TOOLTIP_CONFIG.position,
-    interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
-    target: null as ElementRef | null,
-    tooltipElement: null as HTMLElement | null
-  });
+    delay: DEFAULT_TOOLTIP_CONFIG.delay,
+    interactive: DEFAULT_TOOLTIP_CONFIG.interactive
+  };
 
-  // Public computed signals for reactive access
-  public readonly isVisible = computed(() => this.tooltipState().isVisible);
-  public readonly content = computed(() => this.tooltipState().content);
-  public readonly position = computed(() => this.tooltipState().position);
-  public readonly interactive = computed(() => this.tooltipState().interactive);
-  public readonly target = computed(() => this.tooltipState().target);
+  // If input is empty, return default
+  if (!cleanInput) return config;
 
-  constructor(
-    private domSanitizer: DomSanitizer,
-    rendererFactory: RendererFactory2
-  ) {
-    this.renderer = rendererFactory.createRenderer(null, null);
-  }
+  // Try parsing different formats
+  try {
+    // Remove outer braces if present
+    const trimmedInput = cleanInput.replace(/^{|}$/g, '').trim();
 
-  // Create tooltip element
-  private createTooltipElement(content: string | SafeHtml, position: string, interactive: boolean): HTMLElement {
-    const tooltip = this.renderer.createElement('div');
-    this.renderer.addClass(tooltip, 'tooltip');
-    this.renderer.addClass(tooltip, `tooltip-${position}`);
-    
-    if (interactive) {
-      this.renderer.addClass(tooltip, 'tooltip-interactive');
-    }
+    // Split by comma, but ignore commas inside quotes
+    const pairs = trimmedInput.match(/(?:[^,"']|'[^']*'|"[^"]*")+/g) || [];
 
-    const span = this.renderer.createElement('span');
-    this.renderer.addClass(span, 'tooltip-content');
-    
-    if (interactive) {
-      this.renderer.addClass(span, 'selectable');
-    }
+    pairs.forEach(pair => {
+      // Split key and value
+      const [rawKey, rawValue] = pair.split(':').map(s => s.trim());
+      
+      // Clean key and value
+      const key = rawKey.replace(/^['"]|['"]$/g, '');
+      const value = rawValue.replace(/^['"]|['"]$/g, '');
 
-    // Set innerHTML safely
-    span.innerHTML = typeof content === 'string' 
-      ? content 
-      : this.domSanitizer.sanitize(SecurityContext.HTML, content) || '';
-
-    this.renderer.appendChild(tooltip, span);
-    return tooltip;
-  }
-
-  // Show tooltip
-  public show(config: TooltipConfig, target?: ElementRef): void {
-    // Remove any existing tooltip
-    this.hide();
-
-    const sanitizedContent = typeof config.message === 'string' 
-      ? config.message 
-      : this.domSanitizer.sanitize(SecurityContext.HTML, config.message) || '';
-
-    const position = config.position ?? DEFAULT_TOOLTIP_CONFIG.position;
-    const interactive = config.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive;
-
-    if (target) {
-      // Create tooltip element
-      const tooltipElement = this.createTooltipElement(
-        sanitizedContent, 
-        position, 
-        interactive
-      );
-
-      // Append tooltip to target
-      this.renderer.appendChild(target.nativeElement, tooltipElement);
-
-      // Update state
-      this.tooltipState.update(state => ({
-        isVisible: true,
-        content: sanitizedContent,
-        position: position,
-        interactive: interactive,
-        target: target,
-        tooltipElement: tooltipElement
-      }));
-    }
-  }
-
-  // Hide tooltip
-  public hide(): void {
-    const state = this.tooltipState();
-    
-    // Remove tooltip element if it exists
-    if (state.target && state.tooltipElement) {
-      this.renderer.removeChild(state.target.nativeElement, state.tooltipElement);
-    }
-
-    // Reset state
-    this.tooltipState.update(state => ({
-      isVisible: false,
-      content: '',
-      position: DEFAULT_TOOLTIP_CONFIG.position,
-      interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
-      target: null,
-      tooltipElement: null
-    }));
-  }
-}
-import { 
-  Injectable, 
-  Signal, 
-  signal, 
-  computed, 
-  ElementRef,
-  SecurityContext
-} from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-
-// Default configuration for tooltips
-export const DEFAULT_TOOLTIP_CONFIG = {
-  delay: 200,
-  position: 'top' as const,
-  interactive: true
-};
-
-// Tooltip Configuration Interface
-export interface TooltipConfig {
-  message: string | SafeHtml;
-  position?: 'top' | 'bottom' | 'left' | 'right';
-  delay?: number;
-  interactive?: boolean;
-}
-
-// Tooltip Position Calculation Interface
-export interface TooltipPosition {
-  top: number;
-  left: number;
-}
-
-// Tooltip Service
-@Injectable({
-  providedIn: 'root'
-})
-export class TooltipService {
-  // Sanitize HTML method
-  sanitizeHtml(html: string): SafeHtml {
-    return this.domSanitizer.bypassSecurityTrustHtml(html);
-  }
-
-  // Private signal for tooltip state management
-  private tooltipState = signal({
-    isVisible: false,
-    content: '' as string | SafeHtml,
-    position: DEFAULT_TOOLTIP_CONFIG.position,
-    interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
-    target: null as ElementRef | null,
-    tooltipPosition: { top: 0, left: 0 } as TooltipPosition
-  });
-
-  // Public computed signals for reactive access
-  public readonly isVisible = computed(() => this.tooltipState().isVisible);
-  public readonly content = computed(() => this.tooltipState().content);
-  public readonly position = computed(() => this.tooltipState().position);
-  public readonly interactive = computed(() => this.tooltipState().interactive);
-  public readonly target = computed(() => this.tooltipState().target);
-  public readonly tooltipPosition = computed(() => this.tooltipState().tooltipPosition);
-
-  constructor(private domSanitizer: DomSanitizer) {}
-
-  // Calculate tooltip position
-  calculatePosition(target: ElementRef, preferredPosition?: string): TooltipPosition {
-    const element = target.nativeElement;
-    const rect = element.getBoundingClientRect();
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-
-    // Base positions
-    const positions = {
-      top: {
-        top: rect.top + scrollTop - 10,
-        left: rect.left + scrollLeft + (rect.width / 2)
-      },
-      bottom: {
-        top: rect.bottom + scrollTop + 10,
-        left: rect.left + scrollLeft + (rect.width / 2)
-      },
-      left: {
-        top: rect.top + scrollTop + (rect.height / 2),
-        left: rect.left + scrollLeft - 10
-      },
-      right: {
-        top: rect.top + scrollTop + (rect.height / 2),
-        left: rect.right + scrollLeft + 10
+      // Map to configuration
+      switch(key) {
+        case 'message':
+          config.message = value;
+          break;
+        case 'position':
+          if (['top', 'bottom', 'left', 'right'].includes(value)) {
+            config.position = value as 'top' | 'bottom' | 'left' | 'right';
+          }
+          break;
+        case 'delay':
+          const parsedDelay = parseInt(value, 10);
+          if (!isNaN(parsedDelay)) {
+            config.delay = parsedDelay;
+          }
+          break;
+        case 'interactive':
+          config.interactive = value.toLowerCase() === 'true';
+          break;
       }
-    };
+    });
 
-    // Use preferred position or default to top
-    return positions[preferredPosition as keyof typeof positions] || positions.top;
+    return config;
+  } catch (error) {
+    // Fallback to using input as message
+    config.message = cleanInput;
+    return config;
   }
+}
 
-  // Show tooltip with given configuration
-  public show(config: TooltipConfig, target?: ElementRef): void {
-    const sanitizedContent = typeof config.message === 'string' 
-      ? config.message 
-      : this.domSanitizer.sanitize(SecurityContext.HTML, config.message) || '';
+// In the directive
+@HostListener('mouseenter')
+onMouseEnter(): void {
+  this.isMouseInside = true;
+  this.clearTimers();
 
-    const position = config.position ?? DEFAULT_TOOLTIP_CONFIG.position;
-    const tooltipPosition = target 
-      ? this.calculatePosition(target, position) 
-      : { top: 0, left: 0 };
+  // Parse configuration
+  const config = typeof this.tooltipConfig === 'string'
+    ? this.parseStringToObject(this.tooltipConfig)
+    : this.tooltipConfig;
 
-    this.tooltipState.update(state => ({
-      isVisible: true,
-      content: sanitizedContent,
-      position: position,
-      interactive: config.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive,
-      target: target ?? state.target,
-      tooltipPosition
-    }));
-  }
-
-  // Hide tooltip
-  public hide(): void {
-    this.tooltipState.update(state => ({
-      ...state,
-      isVisible: false,
-      target: null
-    }));
-  }
+  // Set hover timer
+  this.hoverTimer = window.setTimeout(() => {
+    if (this.isMouseInside) {
+      this.tooltipService.show(config, this.el);
+    }
+  }, config.delay);
 }
