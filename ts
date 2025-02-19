@@ -1,3 +1,10 @@
+const config: TooltipConfig = {
+        message: this.tooltipConfig.message ?? DEFAULT_TOOLTIP_CONFIG.message,
+        position: this.tooltipConfig.position ?? DEFAULT_TOOLTIP_CONFIG.position,
+        delay: this.tooltipConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay,
+        interactive: this.tooltipConfig.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive
+      };
+
 import { 
   Injectable, 
   Signal, 
