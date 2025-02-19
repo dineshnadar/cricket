@@ -1,9 +1,45 @@
-const config: TooltipConfig = {
-        message: this.tooltipConfig.message ?? DEFAULT_TOOLTIP_CONFIG.message,
-        position: this.tooltipConfig.position ?? DEFAULT_TOOLTIP_CONFIG.position,
-        delay: this.tooltipConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay,
-        interactive: this.tooltipConfig.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive
-      };
+@HostListener('mouseenter')
+onMouseEnter(): void {
+  this.isMouseInside = true;
+  this.clearTimers();
+
+  // Parse the input configuration
+  let parsedConfig: TooltipConfig = { message: '' };
+
+  try {
+    // If it's a string that looks like an object
+    if (typeof this.tooltipConfig === 'string' && 
+        (this.tooltipConfig.startsWith('{') || this.tooltipConfig.includes(':'))) {
+      // Attempt to parse as JSON, handling common formatting issues
+      const cleanConfig = this.tooltipConfig
+        .replace(/'/g, '"')        // Replace single quotes with double quotes
+        .replace(/(\w+):/g, '"$1":'); // Wrap keys in quotes
+      
+      parsedConfig = JSON.parse(cleanConfig);
+    } else {
+      // If it's a simple string, use it as the message
+      parsedConfig.message = this.tooltipConfig;
+    }
+  } catch (error) {
+    // Fallback to using the entire input as message
+    parsedConfig.message = this.tooltipConfig;
+  }
+
+  // Merge with default configuration
+  const config: TooltipConfig = {
+    message: parsedConfig.message ?? DEFAULT_TOOLTIP_CONFIG.message,
+    position: parsedConfig.position ?? DEFAULT_TOOLTIP_CONFIG.position,
+    delay: parsedConfig.delay ?? DEFAULT_TOOLTIP_CONFIG.delay,
+    interactive: parsedConfig.interactive ?? DEFAULT_TOOLTIP_CONFIG.interactive
+  };
+
+  // Set hover timer
+  this.hoverTimer = window.setTimeout(() => {
+    if (this.isMouseInside) {
+      this.tooltipService.show(config, this.el);
+    }
+  }, config.delay);
+}
 
 import { 
   Injectable, 
