@@ -1,122 +1,118 @@
-@Directive({
-  selector: '[appTooltip]',
-  standalone: true
+// tooltip.directive.spec.ts
+import { Component, DebugElement } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+import { TooltipDirective } from './tooltip.directive';
+import { TooltipService } from './tooltip.service';
+
+// Test host component
+@Component({
+  template: `
+    <button 
+      [appTooltip]="{
+        message: 'Test Tooltip', 
+        position: 'top'
+      }"
+    >
+      Hover Me
+    </button>
+  `
 })
-export class TooltipDirective implements OnDestroy {
-  // Tooltip configuration input
-  @Input('appTooltip') tooltipConfig: string | TooltipConfig | any = '';
+class TestHostComponent {}
 
-  // Inject dependencies
-  private el = inject(ElementRef);
-  private tooltipService = inject(TooltipService);
+describe('TooltipDirective', () => {
+  let component: TestHostComponent;
+  let fixture: ComponentFixture<TestHostComponent>;
+  let buttonDebugEl: DebugElement;
+  let tooltipService: TooltipService;
 
-  // Tracking mouse and timer states
-  private isMouseInside = false;
-  private hoverTimer: number | null = null;
-  private hideTimer: number | null = null;
-  private isTooltipVisible = false; // New flag to prevent multiple tooltips
+  beforeEach(async () => {
+    // Create mock TooltipService
+    const mockTooltipService = {
+      show: jest.fn(),
+      hide: jest.fn(),
+      isVisible: jest.fn().mockReturnValue(false)
+    };
 
-  // Mouse enter event handler
-  @HostListener('mouseenter')
-  onMouseEnter(): void {
-    // Prevent re-triggering if tooltip is already visible
-    if (this.isTooltipVisible) return;
+    await TestBed.configureTestingModule({
+      declarations: [TestHostComponent],
+      imports: [TooltipDirective],
+      providers: [
+        { provide: TooltipService, useValue: mockTooltipService }
+      ]
+    }).compileComponents();
 
-    this.isMouseInside = true;
-    this.clearTimers();
-
-    // Parse configuration
-    const config = typeof this.tooltipConfig === 'string'
-      ? this.parseStringToObject(this.tooltipConfig)
-      : this.tooltipConfig;
-
-    // Set hover timer
-    this.hoverTimer = window.setTimeout(() => {
-      if (this.isMouseInside && !this.isTooltipVisible) {
-        this.tooltipService.show(config, this.el);
-        this.isTooltipVisible = true;
-      }
-    }, config.delay);
-  }
-
-  // Mouse leave event handler
-  @HostListener('mouseleave')
-  onMouseLeave(): void {
-    this.isMouseInside = false;
-    this.clearTimers();
-
-    // Set hide timer
-    this.hideTimer = window.setTimeout(() => {
-      if (!this.isMouseInside) {
-        this.tooltipService.hide();
-        this.isTooltipVisible = false;
-      }
-    }, this.tooltipConfig?.delay ?? DEFAULT_TOOLTIP_CONFIG.delay);
-  }
-
-  // Modify service to trigger a callback when tooltip is hidden
-  private setupTooltipHideListener() {
-    this.tooltipService.onHide(() => {
-      this.isTooltipVisible = false;
-    });
-  }
-
-  // Clear existing timers
-  private clearTimers(): void {
-    if (this.hoverTimer) {
-      window.clearTimeout(this.hoverTimer);
-      this.hoverTimer = null;
-    }
-    if (this.hideTimer) {
-      window.clearTimeout(this.hideTimer);
-      this.hideTimer = null;
-    }
-  }
-
-  // Cleanup on component destroy
-  ngOnDestroy(): void {
-    this.clearTimers();
-    this.tooltipService.hide();
-  }
-}
-
-
-@Injectable({
-  providedIn: 'root'
-})
-export class TooltipService {
-  // ... existing code ...
-
-  private hideCallback: (() => void) | null = null;
-
-  // Method to register a hide callback
-  onHide(callback: () => void): void {
-    this.hideCallback = callback;
-  }
-
-  // Modify hide method to trigger callback
-  public hide(): void {
-    const state = this.tooltipState();
+    fixture = TestBed.createComponent(TestHostComponent);
+    component = fixture.componentInstance;
+    buttonDebugEl = fixture.debugElement.query(By.directive(TooltipDirective));
+    tooltipService = TestBed.inject(TooltipService);
     
-    // Remove tooltip element if it exists
-    if (state.target && state.tooltipElement) {
-      this.renderer.removeChild(state.target.nativeElement, state.tooltipElement);
-    }
+    fixture.detectChanges();
+  });
 
-    // Trigger hide callback if exists
-    if (this.hideCallback) {
-      this.hideCallback();
-      this.hideCallback = null;
-    }
+  it('should create an instance', () => {
+    const directive = buttonDebugEl.injector.get(TooltipDirective);
+    expect(directive).toBeTruthy();
+  });
 
-    // Reset state
-    this.tooltipState.update(state => ({
-      isVisible: false,
-      content: '',
-      position: DEFAULT_TOOLTIP_CONFIG.position,
-      interactive: DEFAULT_TOOLTIP_CONFIG.interactive,
-      target: null,
-      tooltipElement: null
-    }));
-  }
-}
+  describe('Tooltip Interactions', () => {
+    it('should show tooltip on mouseenter', () => {
+      // Simulate mouseenter event
+      buttonDebugEl.triggerEventHandler('mouseenter', null);
+
+      // Expect show method to be called
+      expect(tooltipService.show).toHaveBeenCalledTimes(1);
+    });
+
+    it('should hide tooltip on mouseleave', () => {
+      // Simulate mouseenter and then mouseleave
+      buttonDebugEl.triggerEventHandler('mouseenter', null);
+      buttonDebugEl.triggerEventHandler('mouseleave', null);
+
+      // Expect hide method to be called
+      expect(tooltipService.hide).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not show tooltip if already visible', () => {
+      // Mock tooltip as already visible
+      (tooltipService.isVisible as jest.Mock).mockReturnValue(true);
+
+      // Simulate mouseenter
+      buttonDebugEl.triggerEventHandler('mouseenter', null);
+
+      // Expect show method not to be called
+      expect(tooltipService.show).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Configuration', () => {
+    it('should pass correct configuration to tooltip service', () => {
+      // Simulate mouseenter
+      buttonDebugEl.triggerEventHandler('mouseenter', null);
+
+      // Expect show method to be called with correct arguments
+      expect(tooltipService.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Test Tooltip',
+          position: 'top'
+        }),
+        expect.anything()
+      );
+    });
+  });
+
+  describe('Lifecycle', () => {
+    it('should hide tooltip on component destroy', () => {
+      const directive = buttonDebugEl.injector.get(TooltipDirective);
+      
+      // Simulate mouseenter to make tooltip visible
+      buttonDebugEl.triggerEventHandler('mouseenter', null);
+
+      // Call ngOnDestroy manually
+      directive.ngOnDestroy();
+
+      // Expect hide method to be called
+      expect(tooltipService.hide).toHaveBeenCalledTimes(1);
+    });
+  });
+});
