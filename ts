@@ -1,7 +1,7 @@
-// tooltip.service.spec.ts
 import { TestBed } from '@angular/core/testing';
-import { DomSanitizer, SecurityContext } from '@angular/platform-browser';
-import { TooltipService, TooltipConfig, DEFAULT_TOOLTIP_CONFIG } from './tooltip.service';
+import { DomSanitizer } from '@angular/platform-browser';
+import { SecurityContext } from '@angular/core';
+import { TooltipService } from './tooltip.service';
 import { ElementRef, Renderer2, RendererFactory2 } from '@angular/core';
 
 describe('TooltipService', () => {
@@ -52,7 +52,7 @@ describe('TooltipService', () => {
   });
 
   describe('Sanitization Methods', () => {
-    it('should sanitize HTML content', () => {
+    it('should sanitize string content', () => {
       const htmlContent = '<strong>Test</strong>';
       mockDomSanitizer.sanitize.mockReturnValue('sanitized-content');
 
@@ -80,21 +80,21 @@ describe('TooltipService', () => {
   });
 
   describe('Tooltip Visibility', () => {
+    const testConfig = {
+      message: 'Test Tooltip',
+      position: 'top'
+    };
+
     it('should initially have isVisible as false', () => {
       expect(service.isVisible()).toBe(false);
     });
 
     it('should show tooltip', () => {
-      const config: TooltipConfig = {
-        message: 'Test Tooltip',
-        position: 'top'
-      };
-
       // Mock sanitization
       mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
 
       // Show tooltip
-      service.show(config, mockElementRef);
+      service.show(testConfig, mockElementRef);
 
       // Assertions
       expect(service.isVisible()).toBe(true);
@@ -108,13 +108,8 @@ describe('TooltipService', () => {
     });
 
     it('should hide tooltip', () => {
-      const config: TooltipConfig = {
-        message: 'Test Tooltip',
-        position: 'top'
-      };
-
       // Show tooltip first
-      service.show(config, mockElementRef);
+      service.show(testConfig, mockElementRef);
       expect(service.isVisible()).toBe(true);
 
       // Hide tooltip
@@ -128,21 +123,27 @@ describe('TooltipService', () => {
   });
 
   describe('Tooltip Configuration', () => {
-    it('should use default configuration when not provided', () => {
-      const config: TooltipConfig = {
+    it('should use default position when not provided', () => {
+      const config = {
         message: 'Default Tooltip'
       };
 
+      // Mock sanitization
+      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
+
       service.show(config, mockElementRef);
 
-      expect(service.position()).toBe(DEFAULT_TOOLTIP_CONFIG.position);
+      expect(service.position()).toBe('top');
     });
 
     it('should override default configuration', () => {
-      const config: TooltipConfig = {
+      const config = {
         message: 'Custom Tooltip',
         position: 'bottom'
       };
+
+      // Mock sanitization
+      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
 
       service.show(config, mockElementRef);
 
@@ -152,26 +153,32 @@ describe('TooltipService', () => {
 
   describe('Edge Cases', () => {
     it('should handle empty message', () => {
-      const config: TooltipConfig = {
+      const config = {
         message: ''
       };
+
+      // Mock sanitization
+      mockDomSanitizer.sanitize.mockReturnValue('');
 
       service.show(config, mockElementRef);
 
       expect(service.content()).toBe('');
     });
 
-    it('should handle multiple show/hide calls', () => {
-      const config1: TooltipConfig = { message: 'Tooltip 1' };
-      const config2: TooltipConfig = { message: 'Tooltip 2' };
+    it('should handle multiple show calls', () => {
+      const config1 = { message: 'Tooltip 1' };
+      const config2 = { message: 'Tooltip 2' };
+
+      // Mock sanitization
+      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
 
       // Show first tooltip
       service.show(config1, mockElementRef);
-      expect(service.content()).toBe('Tooltip 1');
+      expect(service.content()).toBe('sanitized-message');
 
       // Show second tooltip
       service.show(config2, mockElementRef);
-      expect(service.content()).toBe('Tooltip 2');
+      expect(service.content()).toBe('sanitized-message');
 
       // Hide tooltip
       service.hide();
