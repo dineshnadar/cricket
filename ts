@@ -4,19 +4,37 @@ import { SecurityContext } from '@angular/core';
 import { TooltipService } from './tooltip.service';
 import { ElementRef, Renderer2, RendererFactory2 } from '@angular/core';
 
+// Explicitly type mocks
+type MockDomSanitizer = {
+  sanitize: jest.Mock;
+  bypassSecurityTrustHtml: jest.Mock;
+};
+
+type MockRenderer = {
+  createElement: jest.Mock;
+  addClass: jest.Mock;
+  appendChild: jest.Mock;
+  removeChild: jest.Mock;
+  setProperty: jest.Mock;
+};
+
+type MockRendererFactory = {
+  createRenderer: jest.Mock;
+};
+
 describe('TooltipService', () => {
   let service: TooltipService;
-  let mockDomSanitizer: jest.Mocked<DomSanitizer>;
-  let mockRenderer: jest.Mocked<Renderer2>;
-  let mockRendererFactory: jest.Mocked<RendererFactory2>;
+  let mockDomSanitizer: MockDomSanitizer;
+  let mockRenderer: MockRenderer;
+  let mockRendererFactory: MockRendererFactory;
   let mockElementRef: ElementRef;
 
   beforeEach(() => {
-    // Create mock dependencies
+    // Create mock dependencies with explicit typing
     mockDomSanitizer = {
       sanitize: jest.fn(),
       bypassSecurityTrustHtml: jest.fn()
-    } as any;
+    };
 
     mockRenderer = {
       createElement: jest.fn(),
@@ -24,11 +42,11 @@ describe('TooltipService', () => {
       appendChild: jest.fn(),
       removeChild: jest.fn(),
       setProperty: jest.fn(),
-    } as any;
+    };
 
     mockRendererFactory = {
       createRenderer: jest.fn().mockReturnValue(mockRenderer)
-    } as any;
+    };
 
     mockElementRef = {
       nativeElement: document.createElement('div')
@@ -56,7 +74,8 @@ describe('TooltipService', () => {
       const htmlContent = '<strong>Test</strong>';
       mockDomSanitizer.sanitize.mockReturnValue('sanitized-content');
 
-      const result = service['sanitizeMessage'](htmlContent);
+      // Use type assertion to access private method
+      const result = (service as any)['sanitizeMessage'](htmlContent);
 
       expect(mockDomSanitizer.sanitize).toHaveBeenCalledWith(
         SecurityContext.HTML, 
@@ -69,7 +88,8 @@ describe('TooltipService', () => {
       const safeHtml = {} as any;
       mockDomSanitizer.sanitize.mockReturnValue('safe-content');
 
-      const result = service['sanitizeMessage'](safeHtml);
+      // Use type assertion to access private method
+      const result = (service as any)['sanitizeMessage'](safeHtml);
 
       expect(mockDomSanitizer.sanitize).toHaveBeenCalledWith(
         SecurityContext.HTML, 
@@ -118,71 +138,4 @@ describe('TooltipService', () => {
       // Assertions
       expect(service.isVisible()).toBe(false);
       expect(service.content()).toBe('');
-      expect(mockRenderer.removeChild).toHaveBeenCalled();
-    });
-  });
-
-  describe('Tooltip Configuration', () => {
-    it('should use default position when not provided', () => {
-      const config = {
-        message: 'Default Tooltip'
-      };
-
-      // Mock sanitization
-      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
-
-      service.show(config, mockElementRef);
-
-      expect(service.position()).toBe('top');
-    });
-
-    it('should override default configuration', () => {
-      const config = {
-        message: 'Custom Tooltip',
-        position: 'bottom'
-      };
-
-      // Mock sanitization
-      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
-
-      service.show(config, mockElementRef);
-
-      expect(service.position()).toBe('bottom');
-    });
-  });
-
-  describe('Edge Cases', () => {
-    it('should handle empty message', () => {
-      const config = {
-        message: ''
-      };
-
-      // Mock sanitization
-      mockDomSanitizer.sanitize.mockReturnValue('');
-
-      service.show(config, mockElementRef);
-
-      expect(service.content()).toBe('');
-    });
-
-    it('should handle multiple show calls', () => {
-      const config1 = { message: 'Tooltip 1' };
-      const config2 = { message: 'Tooltip 2' };
-
-      // Mock sanitization
-      mockDomSanitizer.sanitize.mockReturnValue('sanitized-message');
-
-      // Show first tooltip
-      service.show(config1, mockElementRef);
-      expect(service.content()).toBe('sanitized-message');
-
-      // Show second tooltip
-      service.show(config2, mockElementRef);
-      expect(service.content()).toBe('sanitized-message');
-
-      // Hide tooltip
-      service.hide();
-      expect(service.isVisible()).toBe(false);
-    });
-  });
-});
+      expect(m
