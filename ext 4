@@ -1,871 +1,282 @@
-Party Config Demo Component (party-config-demo.component.ts)
-App Module (app.module.ts)
-Test Cases (party-config.service.spec.ts)
+// selective-rule-execution.service.ts
+import { Injectable } from '@angular/core';
+import { AbstractControl, FormGroup, ValidatorFn, Validators } from '@angular/forms';
+import { UnifiedValidationService, ValidationController, FieldRule, RuleTiming } from './unified-validation.service';
+import { FormExtensionService } from './form-extension.service';
 
-Let's start with the implementation files:
-
-context-config.ts:
-
-typescriptCopyexport interface ButtonConfig {
-  id: string;
-  label: string;
-  action: string;
-  location: 'header' | 'footer' | 'form-top' | 'form-bottom' | 'sidebar';
-  visible: boolean;
-  disabled: boolean;
-  requireConfirmation?: boolean;
-  confirmationMessage?: string;
+/**
+ * Extended validation controller with selective rule execution methods
+ */
+export interface ExtendedValidationController extends ValidationController {
+  /**
+   * Runs only visibility rules for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runVisibilityOnly(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Runs only validation rules for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runValidationOnly(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Runs only lookup rules for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runLookupOnly(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Runs visibility and lookup rules but skips validation for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runVisibilityAndLookup(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Runs visibility and validation rules but skips lookup for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runVisibilityAndValidation(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Applies Angular validators directly without running framework validation rules
+   * @param formId Form ID to target
+   * @param fieldPath Field path to target
+   * @param validators Array of Angular validators to apply
+   */
+  applyAngularValidators(formId: string, fieldPath: string, validators: ValidatorFn[]): void;
+  
+  /**
+   * Updates a field's visibility directly without running other rules
+   * @param formId Form ID to target
+   * @param fieldPath Field path to target
+   * @param isVisible Whether the field should be visible
+   * @param clearOnHide Whether to clear the value when hidden
+   */
+  updateVisibility(formId: string, fieldPath: string, isVisible: boolean, clearOnHide?: boolean): void;
 }
 
-export interface ApiCallConfig {
-  baseUrl: string;
-  endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  inputs: Array<string | { name: string; fromLookup: string; key: string }>;
-  lookups?: string[];
-  transformInput?: (input: any) => Promise<any>;
-}
-
-export interface UseCaseConfig {
-  buttons: ButtonConfig[];
-  apiCalls: Record<string, ApiCallConfig>;
-  initialApiCalls: string[];
-}
-
-export interface AppSettings {
-  showLeftMenu: boolean;
-  showHeader: boolean;
-}
-
-export interface ContextConfig {
-  useCases: Record<string, UseCaseConfig>;
-  lookups?: Record<string, any>;
-  metadata?: Record<string, any>;
-  sourceAppSettings: Record<string, AppSettings>;
-  defaultSourceApp: string;
-}
-
-export interface SharedConfig {
-  useCases: Record<string, UseCaseConfig>;
-  lookups?: Record<string, any>;
-  metadata?: Record<string, any>;
-}
-
-export const contextConfigs: Record<string, ContextConfig> = {
-  partyBuilder: {
-    useCases: {
-      existingPartyWithoutAccounts: {
-        buttons: [
-          { id: 'save', label: 'Save', action: 'saveParty', location: 'form-bottom', visible: true, disabled: false },
-          { id: 'submit', label: 'Submit', action: 'submitParty', location: 'form-bottom', visible: true, disabled: false },
-        ],
-        apiCalls: {
-          getPartyDetails: {
-            baseUrl: 'https://api.example.com',
-            endpoint: '/party',
-            method: 'GET',
-            inputs: ['partyId', { name: 'partyType', fromLookup: 'partyTypes', key: 'value' }]
-          },
-        },
-        initialApiCalls: ['getPartyDetails']
-      },
-      newPartyCreation: {
-        buttons: [
-          { id: 'create', label: 'Create', action: 'createParty', location: 'form-bottom', visible: true, disabled: false },
-        ],
-        apiCalls: {
-          createParty: {
-            baseUrl: 'https://api.example.com',
-            endpoint: '/party',
-            method: 'POST',
-            inputs: ['partyData']
-          },
-        },
-        initialApiCalls: []
-      },
-    },
-    lookups: {
-      partyTypes: [
-        { value: 'individual', label: 'Individual' },
-        { value: 'corporate', label: 'Corporate' }
-      ]
-    },
-    metadata: {
-      version: '1.0.0',
-      lastUpdated: '2023-05-20'
-    },
-    sourceAppSettings: {
-      web: {
-        showLeftMenu: true,
-        showHeader: true,
-      },
-      mobile: {
-        showLeftMenu: false,
-        showHeader: true,
-      },
-      kiosk: {
-        showLeftMenu: false,
-        showHeader: false,
-      }
-    },
-    defaultSourceApp: 'web'
-  },
-};
-
-export const sharedConfigs: SharedConfig = {
-  useCases: {},
-  lookups: {},
-  metadata: {}
-};
-
-context-config.service.ts:
-
-typescriptCopyimport { Injectable } from '@angular/core';
-import { ContextConfig, SharedConfig, UseCaseConfig, ButtonConfig, ApiCallConfig, AppSettings } from './context-config';
-import { contextConfigs, sharedConfigs } from './context-config';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ContextConfigService {
-  private currentSourceApp: string = '';
-  private currentContext: string = '';
-  private currentUseCase: string = '';
-
-  setContext(context: string, useCase?: string, sourceApp?: string) {
-    this.currentContext = context;
-    this.currentUseCase = useCase || Object.keys(contextConfigs[context].useCases)[0];
-    this.currentSourceApp = sourceApp || contextConfigs[context].defaultSourceApp;
-  }
-
-  setContextByUseCaseAndSourceApp(useCase: string, sourceApp: string) {
-    const context = this.findContextByUseCaseAndSourceApp(useCase, sourceApp);
-    if (context) {
-      this.setContext(context, useCase, sourceApp);
-    } else {
-      throw new Error(`No matching context found for use case "${useCase}" and source app "${sourceApp}"`);
-    }
-  }
-
-  setContextByContextAndSourceApp(context: string, sourceApp: string) {
-    if (contextConfigs[context] && contextConfigs[context].sourceAppSettings[sourceApp]) {
-      this.setContext(context, undefined, sourceApp);
-    } else {
-      throw new Error(`Invalid context "${context}" or source app "${sourceApp}"`);
-    }
-  }
-
-  private findContextByUseCaseAndSourceApp(useCase: string, sourceApp: string): string | null {
-    for (const [context, config] of Object.entries(contextConfigs)) {
-      if (config.useCases[useCase] && config.sourceAppSettings[sourceApp]) {
-        return context;
-      }
-    }
-    return null;
-  }
-
-  getCurrentState() {
+/**
+ * Utility service to provide selective rule execution methods for the Unified Validation Framework
+ */
+@Injectable({ providedIn: 'root' })
+export class ValidationExecutionService {
+  
+  constructor(
+    private validationService: UnifiedValidationService,
+    private formExtension: FormExtensionService
+  ) {}
+  
+  /**
+   * Extends the validation controller with selective rule execution methods
+   * @param validationController The controller to extend
+   * @returns Extended validation controller with new methods
+   */
+  extendController(validationController: ValidationController): ExtendedValidationController {
     return {
-      sourceApp: this.currentSourceApp,
-      context: this.currentContext,
-      useCase: this.currentUseCase
+      ...validationController,
+      
+      // Run only visibility rules
+      runVisibilityOnly: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['visibility']),
+      
+      // Run only validation rules
+      runValidationOnly: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['validation']),
+      
+      // Run only lookup rules
+      runLookupOnly: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['lookup']),
+      
+      // Run visibility and lookup, but not validation
+      runVisibilityAndLookup: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['visibility', 'lookup']),
+      
+      // Run visibility and validation, but not lookup
+      runVisibilityAndValidation: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['visibility', 'validation']),
+      
+      // Apply Angular validators without running framework validation
+      applyAngularValidators: (formId: string, fieldPath: string, validators: ValidatorFn[]) => 
+        this.applyAngularValidators(formId, fieldPath, validators),
+        
+      // Update a field's visibility without running other rules
+      updateVisibility: (formId: string, fieldPath: string, isVisible: boolean, clearOnHide?: boolean) => 
+        this.updateVisibility(formId, fieldPath, isVisible, clearOnHide)
     };
   }
-
-  getAppSettings(context?: string, sourceApp?: string): AppSettings {
-    const ctx = context || this.currentContext;
-    const app = sourceApp || this.currentSourceApp;
-    return contextConfigs[ctx]?.sourceAppSettings[app] || {};
-  }
-
-  private getUseCaseConfig(context?: string, useCase?: string): UseCaseConfig | null {
-    const ctx = context || this.currentContext;
-    const uc = useCase || this.currentUseCase;
-    return contextConfigs[ctx]?.useCases[uc] || null;
-  }
-
-  getButtons(context?: string, useCase?: string): ButtonConfig[] {
-    const useCaseConfig = this.getUseCaseConfig(context, useCase);
-    return useCaseConfig?.buttons || [];
-  }
-
-  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
-    const buttons = this.getButtons(context, useCase);
-    return buttons.reduce((acc, button) => {
-      (acc[button.location] = acc[button.location] || []).push(button);
-      return acc;
-    }, {} as Record<string, ButtonConfig[]>);
-  }
-
-  getApiCall(apiCallId: string, context?: string, useCase?: string): ApiCallConfig | undefined {
-    const useCaseConfig = this.getUseCaseConfig(context, useCase);
-    return useCaseConfig?.apiCalls[apiCallId];
-  }
-
-  getInitialApiCalls(context?: string, useCase?: string): string[] {
-    const useCaseConfig = this.getUseCaseConfig(context, useCase);
-    return useCaseConfig?.initialApiCalls || [];
-  }
-
-  getLookup(lookupName: string, context?: string): any[] {
-    const ctx = context || this.currentContext;
-    return contextConfigs[ctx]?.lookups?.[lookupName] || 
-           sharedConfigs.lookups?.[lookupName] || 
-           [];
-  }
-
-  getMetadata(context?: string): Record<string, any> | undefined {
-    const ctx = context || this.currentContext;
-    return contextConfigs[ctx]?.metadata || 
-           sharedConfigs.metadata;
-  }
-
-  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, sourceApp?: string): Promise<any> {
-    const apiCall = this.getApiCall(apiCallName, context, useCase);
-    if (!apiCall) {
-      throw new Error(`API call ${apiCallName} not found for the given context and use case`);
+  
+  /**
+   * Executes only specific rule types for a field or all fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   * @param ruleTypes Array of rule types to execute ['visibility', 'validation', 'lookup']
+   */
+  private runRuleType(
+    formId?: string, 
+    fieldPath?: string, 
+    ruleTypes: Array<'visibility' | 'validation' | 'lookup'> = []
+  ): void {
+    // Execute for a specific field
+    if (formId && fieldPath) {
+      this.runRuleTypeForField(formId, fieldPath, ruleTypes);
+      return;
     }
-
-    let preparedData: any = {};
-    for (const inputConfig of apiCall.inputs) {
-      if (typeof inputConfig === 'string') {
-        if (input[inputConfig] !== undefined) {
-          preparedData[inputConfig] = input[inputConfig];
-        }
+    
+    // Execute for all forms and fields
+    this.validationService['formRegistry'].forEach((form, formId) => {
+      const rules = this.validationService['rulesRegistry'].get(formId);
+      if (!rules) return;
+      
+      Object.keys(rules).forEach(path => {
+        this.runRuleTypeForField(formId, path, ruleTypes);
+      });
+    });
+  }
+  
+  /**
+   * Executes specific rule types for a specific field
+   */
+  private runRuleTypeForField(
+    formId: string, 
+    fieldPath: string, 
+    ruleTypes: Array<'visibility' | 'validation' | 'lookup'> = []
+  ): void {
+    const form = this.validationService['formRegistry'].get(formId);
+    const control = form?.get(fieldPath);
+    
+    if (!form || !control) return;
+    
+    // Get rule
+    const rules = this.validationService['rulesRegistry'].get(formId);
+    const rule = rules?.[fieldPath];
+    
+    if (!rule) return;
+    
+    // Evaluate base conditions
+    const conditions = rule.conditions || [];
+    const conditionsMet = this.validationService['evaluateConditions'](formId, conditions);
+    
+    // Apply visibility rule if requested
+    if (ruleTypes.includes('visibility') && rule.visibility) {
+      const isVisible = conditionsMet && rule.visibility.value;
+      this.formExtension.updateControlProperty(control, 'visible', isVisible);
+      
+      if (!isVisible && rule.visibility.clearOnHide) {
+        this.validationService['clearControlValue'](control);
+      }
+    }
+    
+    // Apply validation rule if requested
+    if (ruleTypes.includes('validation') && rule.validation) {
+      // Check validation-specific conditions
+      const validationConditions = rule.validation.conditions || [];
+      const validationConditionsMet = validationConditions.length === 0 ? 
+        conditionsMet : 
+        this.validationService['evaluateConditions'](formId, validationConditions);
+      
+      if (conditionsMet && validationConditionsMet) {
+        // Get original validators
+        const originalValidators = this.validationService['getOriginalValidators'](formId, fieldPath);
+        
+        // Get rule validators
+        const ruleValidators = this.validationService['createValidators'](rule.validation.rules);
+        
+        // Combine validators
+        const combinedValidators = [...originalValidators, ...ruleValidators];
+        
+        // Apply validators
+        control.setValidators(combinedValidators);
+        
+        // Update required flag
+        const isRequired = ruleValidators.some(v => 
+          this.validationService['isRequiredValidator'](v)
+        );
+        this.formExtension.updateControlProperty(control, 'required', isRequired);
       } else {
-        const lookupValue = this.getValueFromLookup(inputConfig.fromLookup, inputConfig.key, input[inputConfig.name], context);
-        if (lookupValue !== undefined) {
-          preparedData[inputConfig.name] = lookupValue;
-        }
+        // Reset to original validators
+        const originalValidators = this.validationService['getOriginalValidators'](formId, fieldPath);
+        control.setValidators(originalValidators.length > 0 ? originalValidators : null);
+        
+        // Remove required flag
+        this.formExtension.updateControlProperty(control, 'required', false);
       }
+      
+      control.updateValueAndValidity({ emitEvent: false });
     }
-
-    if (apiCall.lookups) {
-      for (const lookupName of apiCall.lookups) {
-        preparedData[lookupName] = this.getLookup(lookupName, context);
-      }
-    }
-
-    const metadata = this.getMetadata(context);
-    if (metadata) {
-      preparedData.metadata = metadata;
-    }
-
-    const appSettings = this.getAppSettings(context, sourceApp);
-    preparedData.appSettings = appSettings;
-
-    if (apiCall.transformInput) {
-      preparedData = await apiCall.transformInput(preparedData);
-    }
-
-    return preparedData;
-  }
-
-  private getValueFromLookup(lookupName: string, key: string, value: any, context?: string): any {
-    const lookup = this.getLookup(lookupName, context);
-    const lookupItem = lookup.find(item => item[key] === value);
-    return lookupItem ? lookupItem.value : undefined;
-  }
-}
-
-party-config.service.ts:
-
-typescriptCopyimport { Injectable } from '@angular/core';
-import { ContextConfigService } from './context-config.service';
-import { AppSettings, ButtonConfig } from './context-config';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class PartyConfigService {
-  constructor(private contextConfigService: ContextConfigService) {}
-
-  initializeConfig(context: string, useCase?: string, sourceApp?: string) {
-    this.contextConfigService.setContext(context, useCase, sourceApp);
-  }
-
-  initializeConfigByUseCaseAndSourceApp(useCase: string, sourceApp: string) {
-    this.contextConfigService.setContextByUseCaseAndSourceApp(useCase, sourceApp);
-  }
-
-  initializeConfigByContextAndSourceApp(context: string, sourceApp: string) {
-    this.contextConfigService.setContextByContextAndSourceApp(context, sourceApp);
-  }
-
-  getAppSettings(context?: string, sourceApp?: string): AppSettings {
-    return this.contextConfigService.getAppSettings(context, sourceApp);
-  }
-
-  getButtons(context?: string, useCase?: string): ButtonConfig[] {
-    return this.contextConfigService.getButtons(context, useCase);
-  }
-
-  getButtonsByLocation(context?: string, useCase?: string): Record<string, ButtonConfig[]> {
-    return this.contextConfigService.getButtonsByLocation(context, useCase);
-  }
-
-  getInitialApiCalls(context?: string, useCase?: string): string[] {
-    return this.contextConfigService.getInitialApiCalls(context, useCase);
-  }
-
-  getLookup(lookupName: string, context?: string): any[] {
-    return this.contextConfigService.getLookup(lookupName, context);
-  }
-
-  async prepareApiCall(apiCallName: string, input: any, context?: string, useCase?: string, sourceApp?: string): Promise<any> {
-    return this.contextConfigService.prepareApiCall(apiCallName, input, context, useCase, sourceApp);
-  }
-
-  getCurrentState() {
-    return this.contextConfigService.getCurrentState();
-  }
-}
-
-button.component.ts:
-
-typescriptCopyimport { Component, Input, Output, EventEmitter } from '@angular/core';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-button',
-  template: `
-    <button 
-      [disabled]="config.disabled" 
-      [style.display]="config.visible ? 'inline-block' : 'none'"
-      (click)="onClick()">
-      {{ config.label }}
-    </button>
-  `
-})
-export class ButtonComponent {
-  @Input() config!: ButtonConfig;
-  @Output() action = new EventEmitter<string>();
-
-  onClick() {
-    if (this.config.requireConfirmation) {
-      if (confirm(this.config.confirmationMessage || 'Are you sure?')) {
-        this.action.emit(this.config.action);
-      }
-    } else {
-      this.action.emit(this.config.action);
+    
+    // Apply lookup rule if requested
+    if (ruleTypes.includes('lookup') && rule.lookup) {
+      this.validationService['applyLookupRules'](formId, fieldPath, control, rule.lookup, conditionsMet);
     }
   }
-}
-
-party-config-demo.component.ts:
-
-typescriptCopyimport { Component } from '@angular/core';
-import { PartyConfigService } from './party-config.service';
-
-@Component({
-  selector: 'app-party-config-demo',
-  template: `
-    <h2>Party Config Demo</h2>
+  
+  /**
+   * Applies Angular validators directly without running framework validation rules
+   */
+  private applyAngularValidators(
+    formId: string, 
+    fieldPath: string, 
+    validators: ValidatorFn[]
+  ): void {
+    const form = this.validationService['formRegistry'].get(formId);
+    const control = form?.get(fieldPath);
     
-    <h3>Initialization</h3>
-    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
-    <button (click)="initWithAll()">Init with All</button>
-    <button (click)="initWithUseCaseAndSourceApp()">Init with Use Case and Source App</button>
+    if (!form || !control) return;
     
-    <h3>Get Configuration</h3>
-    <button (click)="getConfigWithContext()">Get with Context</button>
-    <button (click)="getConfigWithUseCase()">Get with Use Case</button>
-    <button (click)="getConfigWithSourceApp()">Get with Source App</button>
-    <button (click)="getConfigWithAll()">Get with All</button>
+    // Set validators directly on the control
+    control.setValidators(validators);
+    control.updateValueAndValidity();
     
-    <h3>Prepare API Call</h3>
-    <button (click)="prepareApiCallDefault()">Prepare API Call (Default)</button>
-    <button (click)="prepareApiCallCustom()">Prepare API Call (Custom)</button>
-    
-    <h3>Dynamic Buttons</h3>
-    <div *ngFor="let button of dynamicButtons">
-      <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
-    </div>
-    
-    <pre>{{ results | json }}</pre>
-  `
-})
-export class PartyConfigDemoComponent {
-  results: any;
-  dynamicButtons: ButtonConfig[] = [];
-
-  constructor(private partyConfigService: PartyConfigService) {}
-
-  initWithContextAndSourceApp() {
-    this.partyConfigService.initializeConfigByContextAndSourceApp('partyBuilder', 'mobile');
-    this.results = this.partyConfigService.getCurrentState();
-    this.updateDynamicButtons();
+    // Also update required flag for UI if Validators.required is present
+    const isRequired = validators.some(v => 
+      v === Validators.required || 
+      v === Validators.requiredTrue || 
+      this.isRequiredValidator(v)
+    );
+    this.formExtension.updateControlProperty(control, 'required', isRequired);
   }
-
-  initWithAll() {
-    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    this.results = this.partyConfigService.getCurrentState();
-    this.updateDynamicButtons();
-  }
-
-  initWithUseCaseAndSourceApp() {
-    this.partyConfigService.initializeConfigByUseCaseAndSourceApp('newPartyCreation', 'kiosk');
-    this.results = this.partyConfigService.getCurrentState(); CopyRetryClaude’s response was limited as it hit the maximum length allowed at this time. Claude does not have the ability to run the code it generates yet.DScode stuck in PartyConfigDemoComponentEditI apologize for the interruption. Let's complete the PartyConfigDemoComponent and add the remaining methods:
-typescriptCopyimport { Component } from '@angular/core';
-import { PartyConfigService } from './party-config.service';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-party-config-demo',
-  template: `
-    <h2>Party Config Demo</h2>
-    
-    <h3>Initialization</h3>
-    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
-    <button (click)="initWithAll()">Init with All</button>
-    <button (click)="initWithUseCaseAndSource CopyRetryClaude does not have the ability to run the code it generates yet.DScode stuck in 'app-party-config-demo', and plz giev test case for allEditI apologize for the confusion. Let's complete the PartyConfigDemoComponent and then provide test cases for all the components and services.
-First, let's finish the PartyConfigDemoComponent:
-typescriptCopyimport { Component } from '@angular/core';
-import { PartyConfigService } from './party-config.service';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-party-config-demo',
-  template: `
-    <h2>Party Config Demo</h2>
-    
-    <h3>Initialization</h3>
-    <button (click)="initWithContextAndSourceApp()">Init with Context and Source App</button>
-    <button (click)="initWithAll()">Init with All</button>
-    <button (click)="initWithUseCaseAndSourceApp()">Init with Use Case and Source App</button>
-    
-    <h3>Get Configuration</h3>
-    <button (click)="getConfigWithContext()">Get with Context</button>
-    <button (click)="getConfigWithUseCase()">Get with Use Case</button>
-    <button (click)="getConfigWithSourceApp()">Get with Source App</button>
-    <button (click)="getConfigWithAll()">Get with All</button>
-    
-    <h3>Prepare API Call</h3>
-    <button (click)="prepareApiCallDefault()">Prepare API Call (Default)</button>
-    <button (click)="prepareApiCallCustom()">Prepare API Call (Custom)</button>
-    
-    <h3>Dynamic Buttons</h3>
-    <div *ngFor="let button of dynamicButtons">
-      <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
-    </div>
-    
-    <pre>{{ results | json }}</pre>
-  `
-})
-export class PartyConfigDemoComponent {
-  results: any;
-  dynamicButtons: ButtonConfig[] = [];
-
-  constructor(private partyConfigService: PartyConfigService) {}
-
-  initWithContextAndSourceApp() {
-    this.partyConfigService.initializeConfigByContextAndSourceApp('partyBuilder', 'mobile');
-    this.results = this.partyConfigService.getCurrentState();
-    this.updateDynamicButtons();
-  }
-
-  initWithAll() {
-    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    this.results = this.partyConfigService.getCurrentState();
-    this.updateDynamicButtons();
-  }
-
-  initWithUseCaseAndSourceApp() {
-    this.partyConfigService.initializeConfigByUseCaseAndSourceApp('newPartyCreation', 'kiosk');
-    this.results = this.partyConfigService.getCurrentState();
-    this.updateDynamicButtons();
-  }
-
-  getConfigWithContext() {
-    this.results = {
-      appSettings: this.partyConfigService.getAppSettings('partyBuilder'),
-      buttons: this.partyConfigService.getButtons('partyBuilder'),
-      initialApiCalls: this.partyConfigService.getInitialApiCalls('partyBuilder'),
-      lookup: this.partyConfigService.getLookup('partyTypes', 'partyBuilder')
-    };
-  }
-
-  getConfigWithUseCase() {
-    this.results = {
-      buttons: this.partyConfigService.getButtons(undefined, 'newPartyCreation'),
-      initialApiCalls: this.partyConfigService.getInitialApiCalls(undefined, 'newPartyCreation')
-    };
-  }
-
-  getConfigWithSourceApp() {
-    this.results = {
-      appSettings: this.partyConfigService.getAppSettings(undefined, 'kiosk')
-    };
-  }
-
-  getConfigWithAll() {
-    this.results = {
-      appSettings: this.partyConfigService.getAppSettings('partyBuilder', 'mobile'),
-      buttons: this.partyConfigService.getButtons('partyBuilder', 'newPartyCreation'),
-      initialApiCalls: this.partyConfigService.getInitialApiCalls('partyBuilder', 'newPartyCreation'),
-      lookup: this.partyConfigService.getLookup('partyTypes', 'partyBuilder')
-    };
-  }
-
-  async prepareApiCallDefault() {
-    this.results = await this.partyConfigService.prepareApiCall('getPartyDetails', { partyId: '12345' });
-  }
-
-  async prepareApiCallCustom() {
-    this.results = await this.partyConfigService.prepareApiCall('createParty', { partyData: { name: 'John Doe' } }, 'partyBuilder', 'newPartyCreation', 'mobile');
-  }
-
-  updateDynamicButtons() {
-    this.dynamicButtons = this.partyConfigService.getButtons();
-  }
-
-  onButtonAction(action: string) {
-    this.results = { buttonAction: action };
-  }
-}
-Now, let's provide test cases for all the components and services:
-
-ContextConfigService spec:
-
-typescriptCopyimport { TestBed } from '@angular/core/testing';
-import { ContextConfigService } from './context-config.service';
-
-describe('ContextConfigService', () => {
-  let service: ContextConfigService;
-
-  beforeEach(() => {
-    TestBed.configureTestingModule({});
-    service = TestBed.inject(ContextConfigService);
-  });
-
-  it('should be created', () => {
-    expect(service).toBeTruthy();
-  });
-
-  it('should set context correctly', () => {
-    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const state = service.getCurrentState();
-    expect(state).toEqual({
-      context: 'partyBuilder',
-      useCase: 'existingPartyWithoutAccounts',
-      sourceApp: 'web'
-    });
-  });
-
-  it('should get app settings', () => {
-    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const appSettings = service.getAppSettings();
-    expect(appSettings).toEqual({
-      showLeftMenu: true,
-      showHeader: true,
-    });
-  });
-
-  it('should get buttons', () => {
-    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const buttons = service.getButtons();
-    expect(buttons.length).toBe(2);
-    expect(buttons[0].id).toBe('save');
-    expect(buttons[1].id).toBe('submit');
-  });
-
-  it('should get initial API calls', () => {
-    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const initialApiCalls = service.getInitialApiCalls();
-    expect(initialApiCalls).toEqual(['getPartyDetails']);
-  });
-
-  it('should prepare API call', async () => {
-    service.setContext('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const preparedData = await service.prepareApiCall('getPartyDetails', { partyId: '12345' });
-    expect(preparedData.partyId).toBe('12345');
-    expect(preparedData.appSettings).toBeDefined();
-    expect(preparedData.metadata).toBeDefined();
-  });
-});
-
-PartyConfigService spec:
-
-typescriptCopyimport { TestBed } from '@angular/core/testing';
-import { PartyConfigService } from './party-config.service';
-import { ContextConfigService } from './context-config.service';
-
-describe('PartyConfigService', () => {
-  let service: PartyConfigService;
-  let contextConfigServiceSpy: jasmine.SpyObj<ContextConfigService>;
-
-  beforeEach(() => {
-    const spy = jasmine.createSpyObj('ContextConfigService', ['setContext', 'setContextByUseCaseAndSourceApp', 'setContextByContextAndSourceApp', 'getAppSettings', 'getButtons', 'getInitialApiCalls', 'getLookup', 'prepareApiCall', 'getCurrentState']);
-
-    TestBed.configureTestingModule({
-      providers: [
-        PartyConfigService,
-        { provide: ContextConfigService, useValue: spy }
-      ]
-    });
-
-    service = TestBed.inject(PartyConfigService);
-    contextConfigServiceSpy = TestBed.inject(ContextConfigService) as jasmine.SpyObj<ContextConfigService>;
-  });
-
-  it('should be created', () => {
-    expect(service).toBeTruthy();
-  });
-
-  it('should initialize config', () => {
-    service.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    expect(contextConfigServiceSpy.setContext).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-  });
-
-  it('should get app settings', () => {
-    service.getAppSettings('partyBuilder', 'web');
-    expect(contextConfigServiceSpy.getAppSettings).toHaveBeenCalledWith('partyBuilder', 'web');
-  });
-
-  it('should get buttons', () => {
-    service.getButtons('partyBuilder', 'existingPartyWithoutAccounts');
-    expect(contextConfigServiceSpy.getButtons).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts');
-  });
-
-  it('should prepare API call', async () => {
-    await service.prepareApiCall('getPartyDetails', { partyId: '12345' });
-    expect(contextConfigServiceSpy.prepareApiCall).toHaveBeenCalledWith('getPartyDetails', { partyId: '12345' }, undefined, undefined, undefined);
-  });
-});
-
-ButtonComponent spec:
-
-typescriptCopyimport { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ButtonComponent } from './button.component';
-
-describe('ButtonComponent', () => {
-  let component: ButtonComponent;
-  let fixture: ComponentFixture<ButtonComponent>;
-
-  beforeEach(async () => {
-    await TestBed.configureTestingModule({
-      declarations: [ ButtonComponent ]
-    })
-    .compileComponents();
-  });
-
-  beforeEach(() => {
-    fixture = TestBed.createComponent(ButtonComponent);
-    component = fixture.componentInstance;
-    component.config = {
-      id: 'test',
-      label: 'Test Button',
-      action: 'testAction',
-      location: 'form-bottom',
-      visible: true,
-      disabled: false
-    };
-    fixture.detectChanges();
-  });
-
-  it('should create', () => {
-    expect(component).toBeTruthy();
-  });
-
-  it('should emit action on click', () => {
-    spyOn(component.action, 'emit');
-    const button = fixture.nativeElement.querySelector('button');
-    button.click();
-    expect(component.action.emit).toHaveBeenCalledWith('testAction');
-  });
-
-  it('should show confirmation dialog when required', () => {
-    component.config.requireConfirmation = true;
-    component.config.confirmationMessage = 'Are you sure?';
-    spyOn(window, 'confirm').and.returnValue(true);
-    spyOn(component.action, 'emit');
-    component.onClick();
-    expect(window.confirm).toHaveBeenCalledWith('Are you sure?');
-    expect(component.action.emit).toHaveBeenCalledWith('testAction');
-  });
-});
-
-PartyConfigDemoComponent spec:
-
-typescriptCopyimport { ComponentFixture, TestBed } from '@angular/core/testing';
-import { PartyConfigDemoComponent } from './party-config-demo.component';
-import { PartyConfigService } from './party-config.service';
-import { ButtonComponent } from './button.component';
-
-describe('PartyConfigDemoComponent', () => {
-  let component: PartyConfigDemoComponent;
-  let fixture: ComponentFixture<PartyConfigDemoComponent>;
-  let partyConfigServiceSpy: jasmine.SpyObj<PartyConfigService>;
-
-  beforeEach(async () => {
-    const spy = jasmine.createSpyObj('PartyConfigService', ['initializeConfigByContextAndSourceApp', 'initializeConfig', 'initializeConfigByUseCaseAndSourceApp', 'getAppSettings', 'getButtons', 'getInitialApiCalls', 'getLookup', 'prepareApiCall', 'getCurrentState']);
-
-    await TestBed.configureTestingModule({
-      declarations: [ PartyConfigDemoComponent, ButtonComponent ],
-      providers: [
-        { provide: PartyConfigService, useValue: spy }
-      ]
-    })
-    .compileComponents();
-
-    partyConfigServiceSpy = TestBed.inject(PartyConfigService) as jasmine.SpyObj<PartyConfigService>;
-  });
-
-  beforeEach(() => {
-    fixture = TestBed.createComponent(PartyConfigDemoComponent);
-    component = fixture.componentInstance;
-    fixture.detectChanges();
-  });
-
-  it('should create', () => {
-    expect(component).toBeTruthy();
-  });
-
-  it('should initialize with context and source app', () => {
-    component.initWithContextAndSourceApp();
-    expect(partyConfigServiceSpy.initializeConfigByContextAndSourceApp).toHaveBeenCalledWith('partyBuilder', 'mobile');
-  });
-
-  it('should initialize with all parameters', () => {
-    component.initWithAll();
-    expect(partyConfigServiceSpy.initializeConfig).toHaveBeenCalledWith('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-  });
-
-  it('should get config with context', () => {
-    component.getConfigWithContext();
-    expect(partyConfigServiceSpy.getAppSettings).toHaveBeenCalledWith('partyBuilder');
-    expect(partyConfigServiceSpy.getButtons).toHaveBeenCalledWith('partyBuilder');
-    expect(partyConfigServiceSpy.getInitialApiCalls).toHaveBeenCalledWith('partyBuilder');
-    expect(partyConfigServiceSpy.getLookup).toHaveBeenCalledWith('partyTypes', 'partyBuilder');
-  });
-
-  it('should prepare API call', async () => {
-    await component.prepareApiCallDefault();
-    expect(partyConfigServiceSpy.prepareApiCall).toHaveBeenCalledWith('getPartyDetails', { partyId: '12345' });
-  });
-});
-These test cases cover the main functionalities of each component and service. They check for proper initialization, method calls, and expected behaviors. Remember to adjust imports and paths as necessary based on your project structure. CopyRetryClaude does not have the ability to run the code it generates yet.DScan u show use with only button how button can be place in any place in one single component and how we can hide / show / enable or disable for check box also , do not use method on templateEditCertainly! I'll demonstrate how to use buttons in various locations within a single component, including how to hide/show, enable/disable buttons, and how to handle checkboxes. We'll do this without using methods directly in the template.
-Here's a revised version of the PartyConfigDemoComponent that incorporates these features:
-typescriptCopyimport { Component, OnInit } from '@angular/core';
-import { PartyConfigService } from './party-config.service';
-import { ButtonConfig } from './context-config';
-
-@Component({
-  selector: 'app-party-config-demo',
-  template: `
-    <h2>Party Config Demo</h2>
-    
-    <div>
-      <h3>Header Buttons</h3>
-      <ng-container *ngFor="let button of headerButtons">
-        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
-      </ng-container>
-    </div>
-
-    <div>
-      <h3>Form Content</h3>
-      <div>
-        <label>
-          <input type="checkbox" [checked]="isAcknowledged" (change)="onAcknowledgeChange()">
-          I acknowledge the terms
-        </label>
-      </div>
-      <ng-container *ngFor="let button of formButtons">
-        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
-      </ng-container>
-    </div>
-
-    <div>
-      <h3>Footer Buttons</h3>
-      <ng-container *ngFor="let button of footerButtons">
-        <app-button [config]="button" (action)="onButtonAction($event)"></app-button>
-      </ng-container>
-    </div>
-
-    <pre>{{ results | json }}</pre>
-  `
-})
-export class PartyConfigDemoComponent implements OnInit {
-  headerButtons: ButtonConfig[] = [];
-  formButtons: ButtonConfig[] = [];
-  footerButtons: ButtonConfig[] = [];
-  results: any;
-  isAcknowledged = false;
-
-  constructor(private partyConfigService: PartyConfigService) {}
-
-  ngOnInit() {
-    this.initializeButtons();
-  }
-
-  initializeButtons() {
-    this.partyConfigService.initializeConfig('partyBuilder', 'existingPartyWithoutAccounts', 'web');
-    const allButtons = this.partyConfigService.getButtons();
-
-    this.headerButtons = allButtons.filter(button => button.location === 'header');
-    this.formButtons = allButtons.filter(button => button.location === 'form-bottom');
-    this.footerButtons = allButtons.filter(button => button.location === 'footer');
-
-    // Add a custom button to demonstrate dynamic visibility
-    this.formButtons.push({
-      id: 'customButton',
-      label: 'Custom Action',
-      action: 'customAction',
-      location: 'form-bottom',
-      visible: true,
-      disabled: false
-    });
-
-    // Add a footer button to demonstrate dynamic disabling
-    this.footerButtons.push({
-      id: 'submitButton',
-      label: 'Submit',
-      action: 'submit',
-      location: 'footer',
-      visible: true,
-      disabled: true
-    });
-
-    this.updateButtonStates();
-  }
-
-  onButtonAction(action: string) {
-    this.results = { buttonAction: action };
-    
-    // Simulate changing button states based on actions
-    if (action === 'customAction') {
-      this.toggleCustomButtonVisibility();
+  
+  /**
+   * Check if a validator is a required validator
+   */
+  private isRequiredValidator(validator: ValidatorFn): boolean {
+    // First check for direct equality with the standard required validators
+    if (validator === Validators.required || validator === Validators.requiredTrue) {
+      return true;
     }
+    
+    // Try to identify required validators by testing with a null input
+    const testControl = { value: null } as any;
+    const errors = validator(testControl);
+    return errors && ('required' in errors);
   }
-
-  onAcknowledgeChange() {
-    this.isAcknowledged = !this.isAcknowledged;
-    this.updateButtonStates();
-  }
-
-  private updateButtonStates() {
-    // Update custom button visibility
-    const customButton = this.formButtons.find(b => b.id === 'customButton');
-    if (customButton) {
-      customButton.visible = Math.random() > 0.5; // Randomly show/hide
-    }
-
-    // Update submit button disabled state based on acknowledgement
-    const submitButton = this.footerButtons.find(b => b.id === 'submitButton');
-    if (submitButton) {
-      submitButton.disabled = !this.isAcknowledged;
-    }
-
-    // Force change detection
-    this.formButtons = [...this.formButtons];
-    this.footerButtons = [...this.footerButtons];
-  }
-
-  private toggleCustomButtonVisibility() {
-    const customButton = this.formButtons.find(b => b.id === 'customButton');
-    if (customButton) {
-      customButton.visible = !customButton.visible;
-      this.formButtons = [...this.formButtons];
+  
+  /**
+   * Updates a field's visibility directly without running other rules
+   */
+  private updateVisibility(
+    formId: string, 
+    fieldPath: string, 
+    isVisible: boolean, 
+    clearOnHide: boolean = false
+  ): void {
+    const form = this.validationService['formRegistry'].get(formId);
+    const control = form?.get(fieldPath);
+    
+    if (!form || !control) return;
+    
+    // Update visibility
+    this.formExtension.updateControlProperty(control, 'visible', isVisible);
+    
+    // Clear value if needed
+    if (!isVisible && clearOnHide) {
+      this.validationService['clearControlValue'](control);
     }
   }
 }
