@@ -296,3 +296,71 @@ export class RuleFactoryService {
           result.runWhen.onDependencyChange = result.runWhen.onDependencyChange || rule.runWhen.onDependencyChange;
           result.runWhen.manual = result.runWhen.manual || rule.runWhen.manual;
         }
+      }
+    });
+    
+    return result;
+  }
+  
+  /**
+   * Create a conditional rule that combines visibility and validation
+   * @param condition Condition that controls both visibility and validation
+   * @param validationRules Validation rules to apply when condition is met
+   * @param clearOnHide Whether to clear the field value when hidden
+   */
+  createConditionalRule(
+    condition: Condition,
+    validationRules: ValidationRule[],
+    clearOnHide: boolean = true
+  ): FieldRule {
+    return {
+      conditions: [condition],
+      visibility: {
+        value: true,
+        clearOnHide: clearOnHide
+      },
+      validation: {
+        rules: validationRules
+      },
+      runWhen: {
+        onLoad: true,
+        onChange: true,
+        onDependencyChange: true
+      }
+    };
+  }
+  
+  /**
+   * Create a dependency-based validation rule that reacts to changes in other fields
+   * @param dependencies Fields that trigger validation
+   * @param validationRules Validation rules to apply
+   */
+  createDependencyValidationRule(
+    dependencies: string[] | FieldReference[],
+    validationRules: ValidationRule[]
+  ): FieldRule {
+    // Create conditions that check if dependencies are not empty
+    const conditions: Condition[] = [];
+    
+    if (Array.isArray(dependencies)) {
+      dependencies.forEach(dep => {
+        conditions.push({
+          field: dep,
+          operator: 'isNotEmpty'
+        });
+      });
+    }
+    
+    return {
+      validation: {
+        conditions: conditions,
+        rules: validationRules
+      },
+      runWhen: {
+        onLoad: true,
+        onChange: true,
+        onDependencyChange: true
+      }
+    };
+  }
+}
