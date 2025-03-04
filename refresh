@@ -1,756 +1,96 @@
-// src/app/resolvers/__tests__/constant-message.resolver.spec.ts
-import { TestBed } from '@angular/core/testing';
-import { ConstantMessageService } from '../../services/constant-message.service';
-import { constantMessageResolver } from '../constant-message.resolver';
-import { of, throwError } from 'rxjs';
-import { firstValueFrom } from 'rxjs';
-import { ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
-import { ConstantMessage } from '../../models/constant-message.model';
-
-describe('constantMessageResolver', () => {
-  let messageService: jest.Mocked<ConstantMessageService>;
-
-  const mockMessages: ConstantMessage[] = [
-    {
-      type: 'tooltip',
-      key: 'test-tooltip',
-      header: 'Test Tooltip',
-      content: 'Test content',
-      contentType: 'text',
-      category: 'test'
-    }
-  ];
-
-  beforeEach(() => {
-    messageService = {
-      fetchMessages: jest.fn()
-    } as any;
-
-    TestBed.configureTestingModule({
-      providers: [
-        { provide: ConstantMessageService, useValue: messageService }
-      ]
-    });
-  });
-
-  it('should resolve messages successfully', async () => {
-    messageService.fetchMessages.mockReturnValue(of(mockMessages));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual(mockMessages);
-    expect(messageService.fetchMessages).toHaveBeenCalled();
-  });
-
-  it('should resolve to empty array on error', async () => {
-    messageService.fetchMessages.mockReturnValue(
-      throwError(() => new Error('API Error'))
-    );
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual([]);
-    expect(messageService.fetchMessages).toHaveBeenCalled();
-  });
-
-  it('should handle null response', async () => {
-    messageService.fetchMessages.mockReturnValue(of(null));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual([]);
-  });
-
-  it('should handle undefined response', async () => {
-    messageService.fetchMessages.mockReturnValue(of(undefined));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual([]);
-  });
-
-  it('should not block navigation on error', async () => {
-    messageService.fetchMessages.mockReturnValue(
-      throwError(() => new Error('Network Error'))
-    );
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual([]);
-    // Verify that navigation would continue
-    expect(messageService.fetchMessages).toHaveBeenCalled();
-  });
-
-  // Test different error scenarios
-  it.each([
-    ['Network error', new Error('Network Error')],
-    ['Server error', new Error('500 Internal Server Error')],
-    ['Timeout', new Error('Request timeout')],
-    ['Invalid data', new Error('Invalid data format')]
-  ])('should handle %s gracefully', async (_, error) => {
-    messageService.fetchMessages.mockReturnValue(throwError(() => error));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    const result = await firstValueFrom(resolver);
-    expect(result).toEqual([]);
-  });
-});
-
-// Optional: Test Helper file (src/app/resolvers/__tests__/test-helpers.ts)
-export function createActivatedRouteSnapshot(params: any = {}): ActivatedRouteSnapshot {
-  return {
-    params,
-    queryParams: {},
-    data: {},
-    url: [],
-    paramMap: {
-      get: (key: string) => params[key],
-      has: (key: string) => key in params
-    },
-    queryParamMap: {
-      get: (key: string) => null,
-      has: (key: string) => false
-    }
-  } as ActivatedRouteSnapshot;
-}
-
-
-
---------------------------
-// src/app/config/api.config.ts
-export const API_CONFIG = {
-  endpoints: {
-    constantMessages: {
-      url: '/api/constant-messages',
-      shouldCache: true,
-      storageType: 'session', // Use session storage
-      cacheDuration: 24 * 60 * 60 * 1000, // 24 hours
-      retryEnabled: true,
-      maxRetries: 3,
-      retryDelay: 1000
-    }
-  }
-};
-
-// src/app/models/constant-message.model.ts
-export interface ConstantMessage {
-  type: 'tooltip' | 'notification' | 'constant';
-  key: string;
-  header: string;
-  content: string | string[];
-  contentType: 'html' | 'text';
-  placement?: 'top' | 'bottom' | 'left' | 'right';
-  category: string;
-}
-
-// src/app/services/constant-message.service.ts
-import { Injectable, inject, signal, computed } from '@angular/core';
-import { ApiService } from './api.service';
-import { ConstantMessage } from '../models/constant-message.model';
-import { Observable, map } from 'rxjs';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ConstantMessageService {
-  private readonly apiService = inject(ApiService);
-  private messages = signal<ConstantMessage[]>([]);
-
-  // Computed values for different message types
-  readonly allMessages = computed(() => this.messages());
-  readonly tooltips = computed(() => 
-    this.messages().filter(msg => msg.type === 'tooltip')
-  );
-  readonly notifications = computed(() => 
-    this.messages().filter(msg => msg.type === 'notification')
-  );
-  readonly constants = computed(() => 
-    this.messages().filter(msg => msg.type === 'constant')
-  );
-
-  fetchMessages(): Observable<ConstantMessage[]> {
-    // Use apiService which handles caching internally
-    return this.apiService.fetchData('constantMessages', 'GET').pipe(
-      map((response: any) => {
-        const messages = response?.data || [];
-        this.messages.set(messages);
-        return messages;
-      })
-    );
-  }
-
-  getMessageByKey(key: string): ConstantMessage | undefined {
-    return this.messages().find(msg => msg.key === key);
-  }
-
-  getMessagesByCategory(category: string): ConstantMessage[] {
-    return this.messages().filter(msg => msg.category === category);
-  }
-
-  getMessagesByType(type: ConstantMessage['type']): ConstantMessage[] {
-    return this.messages().filter(msg => msg.type === type);
-  }
-
-  getLookupValues(category: string): string[] {
-    const messages = this.getMessagesByCategory(category);
-    return messages.reduce<string[]>((values, msg) => {
-      if (Array.isArray(msg.content)) {
-        return values.concat(msg.content);
-      }
-      return values.concat([msg.content]);
-    }, []);
-  }
-
-  clearCache(): void {
-    this.apiService.clearCache('constantMessages');
-    this.messages.set([]);
-  }
-}
-
-// src/app/resolvers/constant-message.resolver.ts
-import { ResolveFn } from '@angular/router';
-import { inject } from '@angular/core';
-import { ConstantMessageService } from '../services/constant-message.service';
-import { ConstantMessage } from '../models/constant-message.model';
-import { catchError, Observable, of } from 'rxjs';
-
-export const constantMessageResolver: ResolveFn<ConstantMessage[]> = 
-  (): Observable<ConstantMessage[]> => {
-    return inject(ConstantMessageService).fetchMessages().pipe(
-      catchError(() => {
-        console.warn('Failed to load constant messages, continuing with empty state');
-        return of([]);
-      })
-    );
-  };
-
-// Example component usage
-// src/app/components/display/constant-message-display.component.ts
-import { Component, computed, input } from '@angular/core';
-import { ConstantMessageService } from '../../services/constant-message.service';
-import { CommonModule } from '@angular/common';
+// profile-form.component.ts
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, FormArray } from '@angular/forms';
+import { PersonalInfoService } from './personal-info.service'; // Your existing service
+import { ProfileValidationService } from './profile-validation.service';
 
 @Component({
-  selector: 'app-constant-message',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
-    <ng-container *ngIf="message() as msg">
-      <div [ngClass]="['message', msg.type, msg.placement || '']">
-        <h3>{{ msg.header }}</h3>
-        <div [ngSwitch]="msg.contentType">
-          <div *ngSwitchCase="'html'" [innerHTML]="msg.content"></div>
-          <ng-container *ngSwitchCase="'text'">
-            <ng-container *ngIf="isArray(msg.content); else singleContent">
-              <ul>
-                <li *ngFor="let line of msg.content; trackBy: trackByIndex">
-                  {{ line }}
-                </li>
-              </ul>
-            </ng-container>
-            <ng-template #singleContent>
-              <p>{{ msg.content }}</p>
-            </ng-template>
-          </ng-container>
-        </div>
-      </div>
-    </ng-container>
-  `,
-  styles: [`
-    .message {
-      padding: 1rem;
-      border-radius: 0.5rem;
-      margin-bottom: 1rem;
-    }
-    .tooltip { background-color: #f3f4f6; }
-    .notification { background-color: #fef3c7; }
-    .constant { background-color: #e0e7ff; }
-  `]
+  selector: 'app-profile-form',
+  templateUrl: './profile-form.component.html'
 })
-export class ConstantMessageDisplayComponent {
-  private messageService = inject(ConstantMessageService);
+export class ProfileFormComponent implements OnInit {
+  profileForm: FormGroup;
   
-  // Modern input syntax
-  messageKey = input.required<string>();
-
-  // Computed message based on key
-  message = computed(() => 
-    this.messageService.getMessageByKey(this.messageKey())
-  );
-
-  isArray(content: string | string[]): content is string[] {
-    return Array.isArray(content);
+  constructor(
+    private fb: FormBuilder,
+    private personalInfoService: PersonalInfoService,
+    private validationService: ProfileValidationService
+  ) {
+    this.initForm();
   }
-
-  trackByIndex(index: number): number {
-    return index;
+  
+  initForm() {
+    // Create the main form
+    this.profileForm = this.fb.group({
+      profiles: this.fb.array([])
+    });
+    
+    // Add an initial profile
+    this.addProfile();
   }
-}
-
-// app.routes.ts
-import { Routes } from '@angular/router';
-import { constantMessageResolver } from './resolvers/constant-message.resolver';
-
-export const routes: Routes = [
-  {
-    path: '',
-    resolve: {
-      messages: constantMessageResolver
-    },
-    children: [
-      // Your other routes
-    ]
+  
+  ngOnInit() {
+    // Register main form with validation service
+    this.validationService.registerMainForm(this.profileForm);
   }
-];
-
-// Example page component
-// src/app/pages/example/example.component.ts
-import { Component, inject } from '@angular/core';
-import { ConstantMessageService } from '../../services/constant-message.service';
-import { ConstantMessageDisplayComponent } from '../../components/display/constant-message-display.component';
-
-@Component({
-  selector: 'app-example',
-  standalone: true,
-  imports: [ConstantMessageDisplayComponent],
-  template: `
-    <div class="page-content">
-      <!-- Display validation messages -->
-      <div class="validation-section">
-        <app-constant-message messageKey="form-errors" />
-      </div>
-
-      <!-- Display help messages -->
-      <div class="help-section">
-        <app-constant-message messageKey="help-upload" />
-      </div>
-
-      <!-- Display notification -->
-      <div class="notification-section">
-        <app-constant-message messageKey="account-locked" />
-      </div>
-    </div>
-  `
-})
-export class ExampleComponent {
-  private messageService = inject(ConstantMessageService);
-
-  // Example of getting lookup values
-  countryOptions = computed(() => 
-    this.messageService.getLookupValues('countries')
-  );
-}
-
-
------------
-
-// src/app/services/__tests__/constant-message.service.spec.ts
-import { TestBed } from '@angular/core/testing';
-import { ConstantMessageService } from '../constant-message.service';
-import { ApiService } from '../api.service';
-import { of, throwError } from 'rxjs';
-import { ConstantMessage } from '../../models/constant-message.model';
-
-describe('ConstantMessageService', () => {
-  let service: ConstantMessageService;
-  let apiService: jest.Mocked<ApiService>;
-
-  const mockMessages: ConstantMessage[] = [
-    {
-      type: 'tooltip',
-      key: 'help-upload',
-      header: 'Upload Guide',
-      content: '<div>Click here to upload your files</div>',
-      contentType: 'html',
-      placement: 'bottom',
-      category: 'help'
-    },
-    {
-      type: 'notification',
-      key: 'account-locked',
-      header: 'Account Security Alert',
-      content: [
-        'Your account has been temporarily locked',
-        'Please verify your identity'
-      ],
-      contentType: 'text',
-      placement: 'top',
-      category: 'security'
-    },
-    {
-      type: 'constant',
-      key: 'form-errors',
-      header: 'Validation Errors',
-      content: ['Please fill all fields', 'Invalid email format'],
-      contentType: 'text',
-      category: 'validation'
+  
+  // Add a profile to the profiles array
+  addProfile() {
+    const profilesArray = this.profileForm.get('profiles') as FormArray;
+    
+    // Use your personal info service to generate the form group
+    const newProfile = this.personalInfoService.createProfileFormGroup();
+    profilesArray.push(newProfile);
+    
+    // Register with validation service
+    this.validationService.registerNewProfile(profilesArray);
+  }
+  
+  // Add a phone info to a profile
+  addPhoneInfo(profileIndex: number) {
+    const profilesArray = this.profileForm.get('profiles') as FormArray;
+    const profile = profilesArray.at(profileIndex) as FormGroup;
+    const phoneArray = profile.get('contactInfo.phoneInfo') as FormArray;
+    
+    // Use your personal info service to create a phone entry
+    const phoneEntry = this.personalInfoService.createPhoneInfoFormGroup();
+    phoneArray.push(phoneEntry);
+    
+    // Register with validation service
+    this.validationService.registerNewPhoneInfo(phoneArray, profileIndex);
+  }
+  
+  // Add an email info to a profile
+  addEmailInfo(profileIndex: number) {
+    const profilesArray = this.profileForm.get('profiles') as FormArray;
+    const profile = profilesArray.at(profileIndex) as FormGroup;
+    const emailArray = profile.get('contactInfo.emailInfo') as FormArray;
+    
+    // Use your personal info service to create an email entry
+    const emailEntry = this.personalInfoService.createEmailInfoFormGroup();
+    emailArray.push(emailEntry);
+    
+    // Register with validation service
+    this.validationService.registerNewEmailInfo(emailArray, profileIndex);
+  }
+  
+  // Check if a field has an error (for template)
+  hasError(control: AbstractControl): boolean {
+    return this.validationService.hasFieldError(control);
+  }
+  
+  // Get error summary (for template)
+  getErrorSummary(): string[] {
+    return this.validationService.getErrorSummary();
+  }
+  
+  // Validate and submit
+  onSubmit() {
+    if (this.validationService.validateAllForms()) {
+      console.log('Form submitted successfully', this.profileForm.value);
+      // Process form data...
+    } else {
+      console.log('Validation failed');
     }
-  ];
-
-  beforeEach(() => {
-    // Create mock API service
-    apiService = {
-      fetchData: jest.fn(),
-      clearCache: jest.fn()
-    } as any;
-
-    TestBed.configureTestingModule({
-      providers: [
-        ConstantMessageService,
-        { provide: ApiService, useValue: apiService }
-      ]
-    });
-
-    service = TestBed.inject(ConstantMessageService);
-  });
-
-  it('should be created', () => {
-    expect(service).toBeTruthy();
-  });
-
-  describe('fetchMessages', () => {
-    it('should fetch messages successfully', (done) => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-
-      service.fetchMessages().subscribe(messages => {
-        expect(messages).toEqual(mockMessages);
-        expect(service.allMessages()).toHaveLength(3);
-        done();
-      });
-    });
-
-    it('should handle empty response', (done) => {
-      apiService.fetchData.mockReturnValue(of({ data: [] }));
-
-      service.fetchMessages().subscribe(messages => {
-        expect(messages).toEqual([]);
-        expect(service.allMessages()).toHaveLength(0);
-        done();
-      });
-    });
-
-    it('should handle null response', (done) => {
-      apiService.fetchData.mockReturnValue(of(null));
-
-      service.fetchMessages().subscribe(messages => {
-        expect(messages).toEqual([]);
-        expect(service.allMessages()).toHaveLength(0);
-        done();
-      });
-    });
-
-    it('should handle API error', (done) => {
-      apiService.fetchData.mockReturnValue(throwError(() => new Error('API Error')));
-
-      service.fetchMessages().subscribe({
-        error: (error) => {
-          expect(error).toBeTruthy();
-          expect(service.allMessages()).toHaveLength(0);
-          done();
-        }
-      });
-    });
-  });
-
-  describe('getMessageByKey', () => {
-    beforeEach(() => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-    });
-
-    it('should return message by key', () => {
-      const message = service.getMessageByKey('help-upload');
-      expect(message).toBeDefined();
-      expect(message?.type).toBe('tooltip');
-    });
-
-    it('should return undefined for non-existent key', () => {
-      const message = service.getMessageByKey('non-existent');
-      expect(message).toBeUndefined();
-    });
-  });
-
-  describe('getMessagesByCategory', () => {
-    beforeEach(() => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-    });
-
-    it('should return messages by category', () => {
-      const messages = service.getMessagesByCategory('help');
-      expect(messages).toHaveLength(1);
-      expect(messages[0].key).toBe('help-upload');
-    });
-
-    it('should return empty array for non-existent category', () => {
-      const messages = service.getMessagesByCategory('non-existent');
-      expect(messages).toHaveLength(0);
-    });
-  });
-
-  describe('getMessagesByType', () => {
-    beforeEach(() => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-    });
-
-    it('should return messages by type', () => {
-      const messages = service.getMessagesByType('notification');
-      expect(messages).toHaveLength(1);
-      expect(messages[0].key).toBe('account-locked');
-    });
-
-    it('should return empty array for non-existent type', () => {
-      const messages = service.getMessagesByType('non-existent' as any);
-      expect(messages).toHaveLength(0);
-    });
-  });
-
-  describe('getLookupValues', () => {
-    beforeEach(() => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-    });
-
-    it('should return flattened array of content for category', () => {
-      const values = service.getLookupValues('validation');
-      expect(values).toHaveLength(2);
-      expect(values).toContain('Please fill all fields');
-    });
-
-    it('should handle single string content', () => {
-      const values = service.getLookupValues('help');
-      expect(values).toHaveLength(1);
-      expect(values[0]).toContain('Click here to upload');
-    });
-  });
-
-  describe('computed properties', () => {
-    beforeEach(() => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-    });
-
-    it('should filter tooltips correctly', () => {
-      const tooltips = service.tooltips();
-      expect(tooltips).toHaveLength(1);
-      expect(tooltips[0].type).toBe('tooltip');
-    });
-
-    it('should filter notifications correctly', () => {
-      const notifications = service.notifications();
-      expect(notifications).toHaveLength(1);
-      expect(notifications[0].type).toBe('notification');
-    });
-
-    it('should filter constants correctly', () => {
-      const constants = service.constants();
-      expect(constants).toHaveLength(1);
-      expect(constants[0].type).toBe('constant');
-    });
-  });
-
-  describe('clearCache', () => {
-    it('should clear cache and reset messages', () => {
-      apiService.fetchData.mockReturnValue(of({ data: mockMessages }));
-      service.fetchMessages().subscribe();
-
-      expect(service.allMessages()).toHaveLength(3);
-
-      service.clearCache();
-
-      expect(service.allMessages()).toHaveLength(0);
-      expect(apiService.clearCache).toHaveBeenCalledWith('constantMessages');
-    });
-  });
-});
-
-// src/app/resolvers/__tests__/constant-message.resolver.spec.ts
-import { TestBed } from '@angular/core/testing';
-import { ConstantMessageService } from '../../services/constant-message.service';
-import { constantMessageResolver } from '../constant-message.resolver';
-import { of, throwError } from 'rxjs';
-import { ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
-
-describe('constantMessageResolver', () => {
-  let messageService: jest.Mocked<ConstantMessageService>;
-
-  beforeEach(() => {
-    messageService = {
-      fetchMessages: jest.fn()
-    } as any;
-
-    TestBed.configureTestingModule({
-      providers: [
-        { provide: ConstantMessageService, useValue: messageService }
-      ]
-    });
-  });
-
-  it('should resolve messages successfully', (done) => {
-    const mockMessages = [{ key: 'test', type: 'tooltip' } as any];
-    messageService.fetchMessages.mockReturnValue(of(mockMessages));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    resolver.subscribe(result => {
-      expect(result).toEqual(mockMessages);
-      done();
-    });
-  });
-
-  it('should resolve to empty array on error', (done) => {
-    messageService.fetchMessages.mockReturnValue(throwError(() => new Error('API Error')));
-
-    const route = {} as ActivatedRouteSnapshot;
-    const state = {} as RouterStateSnapshot;
-
-    const resolver = TestBed.runInInjectionContext(() =>
-      constantMessageResolver(route, state)
-    );
-
-    resolver.subscribe(result => {
-      expect(result).toEqual([]);
-      done();
-    });
-  });
-});
-
-// src/app/components/display/__tests__/constant-message-display.component.spec.ts
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ConstantMessageDisplayComponent } from '../constant-message-display.component';
-import { ConstantMessageService } from '../../../services/constant-message.service';
-import { By } from '@angular/platform-browser';
-
-describe('ConstantMessageDisplayComponent', () => {
-  let component: ConstantMessageDisplayComponent;
-  let fixture: ComponentFixture<ConstantMessageDisplayComponent>;
-  let messageService: jest.Mocked<ConstantMessageService>;
-
-  beforeEach(async () => {
-    messageService = {
-      getMessageByKey: jest.fn()
-    } as any;
-
-    await TestBed.configureTestingModule({
-      imports: [ConstantMessageDisplayComponent],
-      providers: [
-        { provide: ConstantMessageService, useValue: messageService }
-      ]
-    }).compileComponents();
-
-    fixture = TestBed.createComponent(ConstantMessageDisplayComponent);
-    component = fixture.componentInstance;
-  });
-
-  it('should create', () => {
-    expect(component).toBeTruthy();
-  });
-
-  it('should display HTML content', () => {
-    const mockMessage = {
-      type: 'tooltip',
-      key: 'test',
-      header: 'Test Header',
-      content: '<div>Test content</div>',
-      contentType: 'html',
-      category: 'test'
-    };
-
-    messageService.getMessageByKey.mockReturnValue(mockMessage);
-    component.messageKey.set('test');
-    fixture.detectChanges();
-
-    const content = fixture.debugElement.query(By.css('[innerHTML]'));
-    expect(content.nativeElement.innerHTML).toBe(mockMessage.content);
-  });
-
-  it('should display array content as list', () => {
-    const mockMessage = {
-      type: 'notification',
-      key: 'test',
-      header: 'Test Header',
-      content: ['Line 1', 'Line 2'],
-      contentType: 'text',
-      category: 'test'
-    };
-
-    messageService.getMessageByKey.mockReturnValue(mockMessage);
-    component.messageKey.set('test');
-    fixture.detectChanges();
-
-    const listItems = fixture.debugElement.queryAll(By.css('li'));
-    expect(listItems).toHaveLength(2);
-    expect(listItems[0].nativeElement.textContent).toContain('Line 1');
-  });
-
-  it('should handle non-existent message', () => {
-    messageService.getMessageByKey.mockReturnValue(undefined);
-    component.messageKey.set('non-existent');
-    fixture.detectChanges();
-
-    const content = fixture.debugElement.query(By.css('.message'));
-    expect(content).toBeFalsy();
-  });
-
-  it('should apply correct CSS classes', () => {
-    const mockMessage = {
-      type: 'notification',
-      key: 'test',
-      header: 'Test Header',
-      content: 'Test content',
-      contentType: 'text',
-      category: 'test',
-      placement: 'top'
-    };
-
-    messageService.getMessageByKey.mockReturnValue(mockMessage);
-    component.messageKey.set('test');
-    fixture.detectChanges();
-
-    const messageElement = fixture.debugElement.query(By.css('.message'));
-    expect(messageElement.classes['notification']).toBeTruthy();
-    expect(messageElement.classes['top']).toBeTruthy();
-  });
-});
+  }
+}
