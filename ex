@@ -90,6 +90,13 @@ export interface FieldRule {
     clearOnHide?: boolean;
   };
   
+  // Disable configuration
+  disable?: {
+    value: boolean;
+    clearOnDisable?: boolean;
+    conditions?: Condition[]; // Specific conditions for disable
+  };
+  
   // Validation configuration
   validation?: {
     conditions?: Condition[];
@@ -373,6 +380,12 @@ export class UnifiedValidationService {
       return true;
     }
     
+    // Check disable conditions
+    if (rule.disable?.conditions && 
+        this.conditionsHaveDependency(rule.disable.conditions, dependencyFormId, dependencyPath)) {
+      return true;
+    }
+    
     // Check validation conditions
     if (rule.validation?.conditions && 
         this.conditionsHaveDependency(rule.validation.conditions, dependencyFormId, dependencyPath)) {
@@ -448,12 +461,19 @@ export class UnifiedValidationService {
     formId: string,
     rules: Record<string, FieldRule>
   ): ValidationController {
-    // Store rules
-    this.rulesRegistry.set(formId, rules);
+    // Get existing rules
+    const existingRules = this.rulesRegistry.get(formId) || {};
+    
+    // Merge with new rules
+    const mergedRules = { ...existingRules, ...rules };
+    
+    // Store merged rules
+    this.rulesRegistry.set(formId, mergedRules);
     
     // Set up form field subscriptions
     const formGroup = this.formRegistry.get(formId);
     if (formGroup) {
+      // Only setup extensions for new rules
       this.setupFieldExtensions(formId, formGroup, rules);
     }
     
@@ -477,6 +497,7 @@ export class UnifiedValidationService {
       // Initialize form extension properties
       this.formExtension.extendControl(control, {
         visible: true,
+        disabled: false,
         required: false
       });
     });
@@ -515,6 +536,28 @@ export class UnifiedValidationService {
       // Clear value if hidden
       if (!isVisible && rule.visibility.clearOnHide) {
         this.clearControlValue(control);
+      }
+    }
+    
+    // Apply disable rules
+    if (rule.disable !== undefined) {
+      // Check disable-specific conditions if any
+      const disableConditionsMet = !rule.disable.conditions || 
+        this.evaluateConditions(formId, rule.disable.conditions);
+      
+      const isDisabled = conditionsMet && disableConditionsMet && rule.disable.value;
+      this.formExtension.updateControlProperty(control, 'disabled', isDisabled);
+      
+      // Set the native disabled state
+      if (isDisabled) {
+        control.disable({ emitEvent: false });
+        
+        // Clear value if needed
+        if (rule.disable.clearOnDisable) {
+          this.clearControlValue(control);
+        }
+      } else {
+        control.enable({ emitEvent: false });
       }
     }
     
@@ -1125,13 +1168,49 @@ export class UnifiedValidationService {
   }
   
   /**
+   * Update a field's disable rule at runtime
+   */
+  updateDisableRule(
+    formId: string,
+    fieldPath: string,
+    isDisabled: boolean,
+    clearOnDisable?: boolean
+  ): void {
+    // Get current rules
+    const rules = this.rulesRegistry.get(formId);
+    if (!rules || !rules[fieldPath]) return;
+    
+    // Create updated rule
+    const updatedRule = { ...rules[fieldPath] };
+    
+    // Update disable rule
+    if (!updatedRule.disable) {
+      updatedRule.disable = { 
+        value: isDisabled,
+        clearOnDisable: clearOnDisable ?? false
+      };
+    } else {
+      updatedRule.disable.value = isDisabled;
+      if (clearOnDisable !== undefined) {
+        updatedRule.disable.clearOnDisable = clearOnDisable;
+      }
+    }
+    
+    // Update rule registry
+    rules[fieldPath] = updatedRule;
+    
+    // Re-run the rule
+    this.runRulesForField(formId, fieldPath);
+  }
+  
+  /**
    * Update a field's conditions at runtime
    */
   updateFieldConditions(
     formId: string,
     fieldPath: string,
     newConditions: Condition[],
-    applyTo: 'all' | 'visibility' | 'validation' = 'all'
+    applyTo: 'all' | 'visibility' | 'validation' | 'disable' = 'all'
   ): void {
     // Get current rules
     const rules = this.rulesRegistry.get(formId);
@@ -1153,6 +1232,17 @@ export class UnifiedValidationService {
         };
       } else {
         updatedRule.validation.conditions = [...newConditions];
+      }
+    }
+    
+    if (applyTo === 'all' || applyTo === 'disable') {
+      if (!updatedRule.disable) {
+        updatedRule.disable = { 
+          conditions: [...newConditions],
+          value: true
+        };
+      } else {
+        updatedRule.disable.conditions = [...newConditions];
       }
     }
     
