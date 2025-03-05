@@ -59,6 +59,60 @@ export class RuleFactoryService {
   }
   
   /**
+   * Create a conditional disable rule
+   * @param conditionField Field that controls disabled state
+   * @param conditionValue Value to compare against
+   * @param operator Comparison operator
+   * @param clearOnDisable Whether to clear the field value when disabled
+   */
+  createConditionalDisableRule(
+    conditionField: string | FieldReference,
+    conditionValue: any,
+    operator: FieldOperator = 'equals',
+    clearOnDisable: boolean = false
+  ): FieldRule {
+    return {
+      conditions: [{
+        field: conditionField,
+        operator: operator,
+        value: conditionValue
+      }],
+      disable: {
+        value: true,
+        clearOnDisable: clearOnDisable
+      },
+      runWhen: { onLoad: true, onDependencyChange: true }
+    };
+  }
+  
+  /**
+   * Create a disabled field rule
+   * @param clearValue Whether to clear the field value when disabled
+   */
+  createDisabledFieldRule(clearValue: boolean = false): FieldRule {
+    return {
+      disable: {
+        value: true,
+        clearOnDisable: clearValue
+      },
+      runWhen: { onLoad: true }
+    };
+  }
+  
+  /**
+   * Create an enabled field rule
+   */
+  createEnabledFieldRule(): FieldRule {
+    return {
+      disable: {
+        value: false,
+        clearOnDisable: false
+      },
+      runWhen: { onLoad: true }
+    };
+  }
+  
+  /**
    * Create a filtered lookup rule
    * @param lookupName Name of the lookup to use
    * @param filterField Optional field to filter the lookup by
@@ -262,6 +316,11 @@ export class RuleFactoryService {
         result.visibility = { ...rule.visibility };
       }
       
+      // Take the last disable setting
+      if (rule.disable) {
+        result.disable = { ...rule.disable };
+      }
+      
       // Combine validation
       if (rule.validation) {
         if (!result.validation) {
@@ -321,6 +380,39 @@ export class RuleFactoryService {
       },
       validation: {
         rules: validationRules
+      },
+      runWhen: {
+        onLoad: true,
+        onChange: true,
+        onDependencyChange: true
+      }
+    };
+  }
+  
+  /**
+   * Create a combined conditional visibility and disable rule
+   * @param condition Condition that controls both visibility and disable states
+   * @param makeVisible Whether to make visible (true) or hidden (false) when condition is met
+   * @param makeDisabled Whether to disable (true) or enable (false) when condition is met
+   * @param clearOnHide Whether to clear the field value when hidden
+   * @param clearOnDisable Whether to clear the field value when disabled
+   */
+  createVisibilityAndDisableRule(
+    condition: Condition,
+    makeVisible: boolean,
+    makeDisabled: boolean,
+    clearOnHide: boolean = true,
+    clearOnDisable: boolean = false
+  ): FieldRule {
+    return {
+      conditions: [condition],
+      visibility: {
+        value: makeVisible,
+        clearOnHide: clearOnHide
+      },
+      disable: {
+        value: makeDisabled,
+        clearOnDisable: clearOnDisable
       },
       runWhen: {
         onLoad: true,
