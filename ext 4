@@ -30,6 +30,13 @@ export interface ExtendedValidationController extends ValidationController {
   runLookupOnly(formId?: string, fieldPath?: string): void;
   
   /**
+   * Runs only disable rules for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runDisableOnly(formId?: string, fieldPath?: string): void;
+  
+  /**
    * Runs visibility and lookup rules but skips validation for specified form/field or all forms/fields
    * @param formId Optional form ID to target a specific form
    * @param fieldPath Optional field path to target a specific field
@@ -42,6 +49,13 @@ export interface ExtendedValidationController extends ValidationController {
    * @param fieldPath Optional field path to target a specific field
    */
   runVisibilityAndValidation(formId?: string, fieldPath?: string): void;
+  
+  /**
+   * Runs visibility and disable rules for specified form/field or all forms/fields
+   * @param formId Optional form ID to target a specific form
+   * @param fieldPath Optional field path to target a specific field
+   */
+  runVisibilityAndDisable(formId?: string, fieldPath?: string): void;
   
   /**
    * Applies Angular validators directly without running framework validation rules
@@ -59,6 +73,15 @@ export interface ExtendedValidationController extends ValidationController {
    * @param clearOnHide Whether to clear the value when hidden
    */
   updateVisibility(formId: string, fieldPath: string, isVisible: boolean, clearOnHide?: boolean): void;
+  
+  /**
+   * Updates a field's disabled state directly without running other rules
+   * @param formId Form ID to target
+   * @param fieldPath Field path to target
+   * @param isDisabled Whether the field should be disabled
+   * @param clearOnDisable Whether to clear the value when disabled
+   */
+  updateDisabledState(formId: string, fieldPath: string, isDisabled: boolean, clearOnDisable?: boolean): void;
 }
 
 /**
@@ -93,6 +116,10 @@ export class ValidationExecutionService {
       runLookupOnly: (formId?: string, fieldPath?: string) => 
         this.runRuleType(formId, fieldPath, ['lookup']),
       
+      // Run only disable rules
+      runDisableOnly: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['disable']),
+      
       // Run visibility and lookup, but not validation
       runVisibilityAndLookup: (formId?: string, fieldPath?: string) => 
         this.runRuleType(formId, fieldPath, ['visibility', 'lookup']),
@@ -101,13 +128,21 @@ export class ValidationExecutionService {
       runVisibilityAndValidation: (formId?: string, fieldPath?: string) => 
         this.runRuleType(formId, fieldPath, ['visibility', 'validation']),
       
+      // Run visibility and disable rules
+      runVisibilityAndDisable: (formId?: string, fieldPath?: string) => 
+        this.runRuleType(formId, fieldPath, ['visibility', 'disable']),
+      
       // Apply Angular validators without running framework validation
       applyAngularValidators: (formId: string, fieldPath: string, validators: ValidatorFn[]) => 
         this.applyAngularValidators(formId, fieldPath, validators),
         
       // Update a field's visibility without running other rules
       updateVisibility: (formId: string, fieldPath: string, isVisible: boolean, clearOnHide?: boolean) => 
-        this.updateVisibility(formId, fieldPath, isVisible, clearOnHide)
+        this.updateVisibility(formId, fieldPath, isVisible, clearOnHide),
+        
+      // Update a field's disabled state without running other rules
+      updateDisabledState: (formId: string, fieldPath: string, isDisabled: boolean, clearOnDisable?: boolean) => 
+        this.updateDisabledState(formId, fieldPath, isDisabled, clearOnDisable)
     };
   }
   
@@ -115,12 +150,12 @@ export class ValidationExecutionService {
    * Executes only specific rule types for a field or all fields
    * @param formId Optional form ID to target a specific form
    * @param fieldPath Optional field path to target a specific field
-   * @param ruleTypes Array of rule types to execute ['visibility', 'validation', 'lookup']
+   * @param ruleTypes Array of rule types to execute ['visibility', 'validation', 'lookup', 'disable']
    */
   private runRuleType(
     formId?: string, 
     fieldPath?: string, 
-    ruleTypes: Array<'visibility' | 'validation' | 'lookup'> = []
+    ruleTypes: Array<'visibility' | 'validation' | 'lookup' | 'disable'> = []
   ): void {
     // Execute for a specific field
     if (formId && fieldPath) {
@@ -145,7 +180,7 @@ export class ValidationExecutionService {
   private runRuleTypeForField(
     formId: string, 
     fieldPath: string, 
-    ruleTypes: Array<'visibility' | 'validation' | 'lookup'> = []
+    ruleTypes: Array<'visibility' | 'validation' | 'lookup' | 'disable'> = []
   ): void {
     const form = this.validationService['formRegistry'].get(formId);
     const control = form?.get(fieldPath);
@@ -169,6 +204,27 @@ export class ValidationExecutionService {
       
       if (!isVisible && rule.visibility.clearOnHide) {
         this.validationService['clearControlValue'](control);
+      }
+    }
+    
+    // Apply disable rule if requested
+    if (ruleTypes.includes('disable') && rule.disable) {
+      // Check disable-specific conditions if any
+      const disableConditionsMet = !rule.disable.conditions || 
+        this.validationService['evaluateConditions'](formId, rule.disable.conditions);
+      
+      const isDisabled = conditionsMet && disableConditionsMet && rule.disable.value;
+      this.formExtension.updateControlProperty(control, 'disabled', isDisabled);
+      
+      // Set native disabled state
+      if (isDisabled) {
+        control.disable({ emitEvent: false });
+        
+        if (rule.disable.clearOnDisable) {
+          this.validationService['clearControlValue'](control);
+        }
+      } else {
+        control.enable({ emitEvent: false });
       }
     }
     
@@ -277,6 +333,36 @@ export class ValidationExecutionService {
     // Clear value if needed
     if (!isVisible && clearOnHide) {
       this.validationService['clearControlValue'](control);
+    }
+  }
+  
+  /**
+   * Updates a field's disabled state directly without running other rules
+   */
+  private updateDisabledState(
+    formId: string, 
+    fieldPath: string, 
+    isDisabled: boolean, 
+    clearOnDisable: boolean = false
+  ): void {
+    const form = this.validationService['formRegistry'].get(formId);
+    const control = form?.get(fieldPath);
+    
+    if (!form || !control) return;
+    
+    // Update disabled property
+    this.formExtension.updateControlProperty(control, 'disabled', isDisabled);
+    
+    // Set native disabled state
+    if (isDisabled) {
+      control.disable({ emitEvent: false });
+      
+      // Clear value if needed
+      if (clearOnDisable) {
+        this.validationService['clearControlValue'](control);
+      }
+    } else {
+      control.enable({ emitEvent: false });
     }
   }
 }
