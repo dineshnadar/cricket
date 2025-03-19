@@ -1,3 +1,60 @@
+generatePDF() {
+  // Create a flattened version of your shadow DOM content
+  const shadowHost = this.contentToCapture.element.nativeElement;
+  const flattenedContent = this.flattenShadowDOM(shadowHost);
+  
+  // Temporarily append to document
+  document.body.appendChild(flattenedContent);
+  
+  // Generate PDF
+  this.pdfService.generatePDF(flattenedContent, {
+    // options...
+  }).subscribe({
+    complete: () => {
+      // Clean up
+      document.body.removeChild(flattenedContent);
+    }
+  });
+}
+
+private flattenShadowDOM(node: Node): HTMLElement {
+  // Create a new element to hold the flattened content
+  const container = document.createElement('div');
+  
+  // Handle shadow roots
+  if (node instanceof HTMLElement && node.shadowRoot) {
+    // Process all nodes in the shadow root
+    node.shadowRoot.childNodes.forEach(child => {
+      const flattened = this.flattenShadowDOM(child);
+      if (flattened) {
+        container.appendChild(flattened);
+      }
+    });
+  } 
+  // Handle regular nodes
+  else if (node.nodeType === Node.ELEMENT_NODE) {
+    // Clone the node
+    const clone = (node as HTMLElement).cloneNode(false) as HTMLElement;
+    container.appendChild(clone);
+    
+    // Process children
+    node.childNodes.forEach(child => {
+      const flattened = this.flattenShadowDOM(child);
+      if (flattened) {
+        clone.appendChild(flattened);
+      }
+    });
+    
+    return clone;
+  } 
+  // Handle text nodes
+  else if (node.nodeType === Node.TEXT_NODE) {
+    return document.createTextNode(node.nodeValue || '') as unknown as HTMLElement;
+  }
+  
+  return container;
+}
+
 // pdf.service.ts
 import { Injectable } from '@angular/core';
 import html2canvas from 'html2canvas';
