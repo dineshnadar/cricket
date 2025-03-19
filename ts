@@ -1,64 +1,7 @@
-generatePDF() {
-  // Create a flattened version of your shadow DOM content
-  const shadowHost = this.contentToCapture.element.nativeElement;
-  const flattenedContent = this.flattenShadowDOM(shadowHost);
-  
-  // Temporarily append to document
-  document.body.appendChild(flattenedContent);
-  
-  // Generate PDF
-  this.pdfService.generatePDF(flattenedContent, {
-    // options...
-  }).subscribe({
-    complete: () => {
-      // Clean up
-      document.body.removeChild(flattenedContent);
-    }
-  });
-}
-
-private flattenShadowDOM(node: Node): HTMLElement {
-  // Create a new element to hold the flattened content
-  const container = document.createElement('div');
-  
-  // Handle shadow roots
-  if (node instanceof HTMLElement && node.shadowRoot) {
-    // Process all nodes in the shadow root
-    node.shadowRoot.childNodes.forEach(child => {
-      const flattened = this.flattenShadowDOM(child);
-      if (flattened) {
-        container.appendChild(flattened);
-      }
-    });
-  } 
-  // Handle regular nodes
-  else if (node.nodeType === Node.ELEMENT_NODE) {
-    // Clone the node
-    const clone = (node as HTMLElement).cloneNode(false) as HTMLElement;
-    container.appendChild(clone);
-    
-    // Process children
-    node.childNodes.forEach(child => {
-      const flattened = this.flattenShadowDOM(child);
-      if (flattened) {
-        clone.appendChild(flattened);
-      }
-    });
-    
-    return clone;
-  } 
-  // Handle text nodes
-  else if (node.nodeType === Node.TEXT_NODE) {
-    return document.createTextNode(node.nodeValue || '') as unknown as HTMLElement;
-  }
-  
-  return container;
-}
-
 // pdf.service.ts
 import { Injectable } from '@angular/core';
-import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import * as domtoimage from 'dom-to-image';
 import { Observable, from } from 'rxjs';
 import { finalize } from 'rxjs/operators';
 
@@ -86,7 +29,7 @@ export class PdfService {
     filename: 'document.pdf',
     compression: true,
     imageQuality: 0.92,
-    imageType: 'jpeg',
+    imageType: 'png',
     scaleFactor: 2
   };
 
@@ -119,16 +62,22 @@ export class PdfService {
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       
-      const canvas = await this.renderElementToCanvas(element, options.scaleFactor || 2);
-      const imgData = canvas.toDataURL(`image/${options.imageType}`, options.imageQuality);
+      const imgData = await this.renderElementToImage(element, options);
       
-      const imgProps = pdf.getImageProperties(imgData);
-      const contentWidth = pageWidth;
-      const contentHeight = (imgProps.height * contentWidth) / imgProps.width;
+      const img = new Image();
+      img.src = imgData;
       
-      await this.addContentToPDF(pdf, imgData, contentWidth, contentHeight, options);
-      
-      pdf.save(options.filename);
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          const contentWidth = pageWidth;
+          const contentHeight = (img.height * contentWidth) / img.width;
+          
+          this.addContentToPDF(pdf, imgData, contentWidth, contentHeight, options);
+          
+          pdf.save(options.filename);
+          resolve();
+        };
+      });
     } catch (error) {
       console.error('Error generating PDF:', error);
       throw error;
@@ -157,31 +106,37 @@ export class PdfService {
     for (let i = 0; i < sections.length; i++) {
       const currentSection = sections[i];
       
-      const canvas = await this.renderElementToCanvas(currentSection, options.scaleFactor || 2);
-      const imgData = canvas.toDataURL(`image/${options.imageType}`, options.imageQuality);
+      const imgData = await this.renderElementToImage(currentSection, options);
       
-      const imgProps = pdf.getImageProperties(imgData);
-      const contentWidth = pageWidth - 20;
-      const contentHeight = (imgProps.height * contentWidth) / imgProps.width;
+      const img = new Image();
+      img.src = imgData;
       
-      if (yPosition + contentHeight > pageHeight - (options.includeFooter ? 30 : 10)) {
-        if (options.includeFooter) {
-          this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum);
-        }
-        
-        pdf.addPage();
-        pageNum++;
-        yPosition = options.includeHeader ? 40 : 10;
-        
-        if (options.includeHeader) {
-          this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                              new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME');
-        }
-      }
-      
-      pdf.addImage(imgData, options.imageType?.toUpperCase() || 'JPEG', 10, yPosition, contentWidth, contentHeight);
-      
-      yPosition += contentHeight + 10;
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          const contentWidth = pageWidth - 20;
+          const contentHeight = (img.height * contentWidth) / img.width;
+          
+          if (yPosition + contentHeight > pageHeight - (options.includeFooter ? 30 : 10)) {
+            if (options.includeFooter) {
+              this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum);
+            }
+            
+            pdf.addPage();
+            pageNum++;
+            yPosition = options.includeHeader ? 40 : 10;
+            
+            if (options.includeHeader) {
+              this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
+                                  new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME');
+            }
+          }
+          
+          pdf.addImage(imgData, 'PNG', 10, yPosition, contentWidth, contentHeight);
+          
+          yPosition += contentHeight + 10;
+          resolve();
+        };
+      });
     }
     
     if (options.includeFooter) {
@@ -191,47 +146,69 @@ export class PdfService {
     pdf.save(options.filename);
   }
   
-  private async renderElementToCanvas(element: HTMLElement, scaleFactor: number = 2): Promise<HTMLCanvasElement> {
-    const originalDisplay = element.style.display;
-    const originalPosition = element.style.position;
-    const originalTransform = element.style.transform;
-    
+  private async renderElementToImage(element: HTMLElement, options: PDFGenerationOptions): Promise<string> {
     try {
-      element.style.display = 'block';
-      element.style.position = 'relative';
-      element.style.transform = 'translate3d(0,0,0)';
+      // Store the original styles
+      const originalStyles = {
+        transform: element.style.transform,
+        transformOrigin: element.style.transformOrigin,
+        width: element.style.width,
+        height: element.style.height
+      };
       
-      return await html2canvas(element, {
-        scale: scaleFactor,
-        logging: false,
-        allowTaint: true,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        scrollX: 0,
-        scrollY: -window.scrollY,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-        onclone: (doc) => {
-          const clonedElement = doc.querySelector(`#${element.id}`) as HTMLElement;
-          if (clonedElement) {
+      // Apply optimizations if needed
+      if (options.scaleFactor && options.scaleFactor !== 1) {
+        element.style.transform = `scale(${options.scaleFactor})`;
+        element.style.transformOrigin = 'top left';
+      }
+      
+      // Choose the appropriate dom-to-image method based on imageType
+      let imagePromise: Promise<string>;
+      if (options.imageType === 'jpeg') {
+        imagePromise = domtoimage.toJpeg(element, {
+          quality: options.imageQuality || 0.92,
+          bgcolor: '#ffffff',
+          height: element.scrollHeight,
+          width: element.scrollWidth,
+          style: {
+            'transform': 'scale(1)',
+            'transform-origin': 'top left'
           }
-          return Promise.resolve();
-        }
-      });
-    } finally {
-      element.style.display = originalDisplay;
-      element.style.position = originalPosition;
-      element.style.transform = originalTransform;
+        });
+      } else {
+        imagePromise = domtoimage.toPng(element, {
+          height: element.scrollHeight,
+          width: element.scrollWidth,
+          style: {
+            'transform': 'scale(1)',
+            'transform-origin': 'top left'
+          }
+        });
+      }
+      
+      // Process the image
+      const dataUrl = await imagePromise;
+      
+      // Restore the original styles
+      element.style.transform = originalStyles.transform;
+      element.style.transformOrigin = originalStyles.transformOrigin;
+      element.style.width = originalStyles.width;
+      element.style.height = originalStyles.height;
+      
+      return dataUrl;
+    } catch (error) {
+      console.error('Error rendering element to image:', error);
+      throw error;
     }
   }
   
-  private async addContentToPDF(
+  private addContentToPDF(
     pdf: jsPDF,
     imgData: string,
     contentWidth: number,
     contentHeight: number,
     options: PDFGenerationOptions
-  ): Promise<void> {
+  ): void {
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const customerName = options.customerName || 'Customer';
@@ -248,7 +225,7 @@ export class PdfService {
       this.addHeaderToPDF(pdf, pageWidth, customerName, currentDate, options.headerTitle);
     }
     
-    pdf.addImage(imgData, options.imageType?.toUpperCase() || 'JPEG', 0, position, contentWidth, contentHeight);
+    pdf.addImage(imgData, 'PNG', 0, position, contentWidth, contentHeight);
     
     if (options.includeFooter) {
       this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum);
@@ -266,7 +243,7 @@ export class PdfService {
       
       position = ((heightLeft > availableHeight) ? position - availableHeight : position - heightLeft) - headerHeight;
       
-      pdf.addImage(imgData, options.imageType?.toUpperCase() || 'JPEG', 0, position, contentWidth, contentHeight);
+      pdf.addImage(imgData, 'PNG', 0, position, contentWidth, contentHeight);
       
       if (options.includeFooter) {
         this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum);
@@ -311,176 +288,3 @@ export class PdfService {
     pdf.line(10, pageHeight - 25, pageWidth - 10, pageHeight - 25);
   }
 }
-
-// pdf-generator.component.ts
-import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
-import { PdfService } from '../services/pdf.service';
-import { finalize } from 'rxjs/operators';
-
-interface Product {
-  name: string;
-  quantity: number;
-  price: number;
-  total: number;
-}
-
-@Component({
-  selector: 'app-pdf-generator',
-  templateUrl: './pdf-generator.component.html',
-  styleUrls: ['./pdf-generator.component.scss']
-})
-export class PdfGeneratorComponent implements OnInit {
-  @ViewChild('contentToCapture') contentToCapture!: ElementRef;
-  @ViewChild('customerFormSection') customerFormSection!: ElementRef;
-  @ViewChild('productsTableSection') productsTableSection!: ElementRef;
-  
-  customerForm: FormGroup;
-  products: Product[] = [];
-  isGenerating = false;
-  
-  constructor(
-    private fb: FormBuilder,
-    private pdfService: PdfService
-  ) {
-    this.customerForm = this.fb.group({
-      name: ['John Doe'],
-      email: ['john@example.com'],
-      category: ['premium']
-    });
-    
-    this.products = [
-      { name: 'Laptop', quantity: 2, price: 800, total: 1600 },
-      { name: 'Mouse', quantity: 5, price: 20, total: 100 },
-      { name: 'Keyboard', quantity: 3, price: 50, total: 150 },
-    ];
-  }
-
-  ngOnInit(): void {}
-
-  generateSinglePDF(): void {
-    if (this.isGenerating) return;
-    this.isGenerating = true;
-    
-    const customerName = this.customerForm.get('name')?.value || 'Customer';
-    
-    this.pdfService.generatePDF(this.contentToCapture.nativeElement, {
-      customerName: customerName,
-      filename: `${customerName.replace(/\s+/g, '_')}_order.pdf`,
-      imageQuality: 0.9,
-      scaleFactor: 2
-    })
-    .pipe(
-      finalize(() => this.isGenerating = false)
-    )
-    .subscribe({
-      error: (err) => console.error('PDF generation failed:', err)
-    });
-  }
-  
-  generateMultiSectionPDF(): void {
-    if (this.isGenerating) return;
-    this.isGenerating = true;
-    
-    const customerName = this.customerForm.get('name')?.value || 'Customer';
-    
-    const sections = [
-      this.customerFormSection.nativeElement,
-      this.productsTableSection.nativeElement
-    ];
-    
-    this.pdfService.generateMultiSectionPDF(sections, {
-      customerName: customerName,
-      filename: `${customerName.replace(/\s+/g, '_')}_order.pdf`,
-      imageQuality: 0.9,
-      scaleFactor: 2
-    })
-    .pipe(
-      finalize(() => this.isGenerating = false)
-    )
-    .subscribe({
-      error: (err) => console.error('PDF generation failed:', err)
-    });
-  }
-}
-
-// pdf-generator.component.html
-<div class="container">
-  <h1>PDF Generator</h1>
-  
-  <form [formGroup]="customerForm">
-    <h2>Customer Information</h2>
-    <div class="form-group">
-      <label for="name">Name:</label>
-      <input type="text" id="name" formControlName="name">
-    </div>
-    <div class="form-group">
-      <label for="email">Email:</label>
-      <input type="email" id="email" formControlName="email">
-    </div>
-    <div class="form-group">
-      <label for="category">Category:</label>
-      <select id="category" formControlName="category">
-        <option value="premium">Premium</option>
-        <option value="standard">Standard</option>
-        <option value="basic">Basic</option>
-      </select>
-    </div>
-  </form>
-
-  <div #contentToCapture>
-    <div #customerFormSection id="customer-form-section">
-      <form [formGroup]="customerForm">
-        <h2>Customer Information</h2>
-        <div class="form-group">
-          <label for="pdf-name">Name:</label>
-          <input type="text" id="pdf-name" [value]="customerForm.get('name')?.value">
-        </div>
-        <div class="form-group">
-          <label for="pdf-email">Email:</label>
-          <input type="email" id="pdf-email" [value]="customerForm.get('email')?.value">
-        </div>
-        <div class="form-group">
-          <label for="pdf-category">Category:</label>
-          <select id="pdf-category" [value]="customerForm.get('category')?.value">
-            <option value="premium">Premium</option>
-            <option value="standard">Standard</option>
-            <option value="basic">Basic</option>
-          </select>
-        </div>
-      </form>
-    </div>
-
-    <div #productsTableSection id="products-table-section">
-      <h2>Order Details</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>Quantity</th>
-            <th>Price</th>
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let product of products">
-            <td>{{ product.name }}</td>
-            <td>{{ product.quantity }}</td>
-            <td>${{ product.price }}</td>
-            <td>${{ product.total }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="button-group">
-    <button [disabled]="isGenerating" (click)="generateSinglePDF()">
-      {{ isGenerating ? 'Generating...' : 'Generate Single PDF' }}
-    </button>
-    
-    <button [disabled]="isGenerating" (click)="generateMultiSectionPDF()">
-      {{ isGenerating ? 'Generating...' : 'Generate Multi-Section PDF' }}
-    </button>
-  </div>
-</div>
