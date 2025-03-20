@@ -1,2118 +1,362 @@
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Enhanced Metadata Form Builder</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/themes/base/jquery-ui.min.css"
-    />
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        padding: 20px;
-        background-color: #f5f5f5;
-      }
-      .container {
-        display: flex;
-        gap: 20px;
-      }
-      .catalog-panel {
-        width: 300px;
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-      }
-      .catalog {
-        background: white;
-        border-radius: 5px;
-        padding: 15px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-      }
-      .catalog-header {
-        font-weight: bold;
-        margin-bottom: 10px;
-        padding-bottom: 5px;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        justify-content: space-between;
-      }
-      .add-new {
-        cursor: pointer;
-        color: #4caf50;
-      }
-      .section-catalog-item,
-      .field-catalog-item {
-        padding: 8px 12px;
-        margin-bottom: 8px;
-        cursor: move;
-        border-radius: 3px;
-        position: relative;
-      }
-      .section-catalog-item {
-        background: #e3f2fd;
-        border: 1px solid #bbdefb;
-      }
-      .field-catalog-item {
-        background: #e8f5e9;
-        border: 1px solid #c8e6c9;
-      }
-      .catalog-item-id {
-        font-size: 0.7em;
-        color: #666;
-        display: block;
-        margin-top: 3px;
-      }
-      .form-container {
-        flex: 1;
-        background: white;
-        border-radius: 5px;
-        padding: 15px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        min-height: 500px;
-      }
-      .section {
-        background: #f5f5f5;
-        border-radius: 5px;
-        padding: 10px;
-        margin-bottom: 10px;
-      }
-      .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-        font-weight: bold;
-      }
-      .section-title {
-        display: flex;
-        flex-direction: column;
-      }
-      .section-id {
-        font-size: 0.7em;
-        color: #666;
-        font-weight: normal;
-      }
-      .nested-section {
-        background: #eaf5ff;
-        border-radius: 5px;
-        padding: 10px;
-        margin: 10px 0 10px 20px;
-        border: 1px solid #d0e3ff;
-      }
-      .section-drop-area,
-      .nested-section-drop-area {
-        min-height: 50px;
-        border: 1px dashed #ccc;
-        border-radius: 3px;
-        margin-top: 10px;
-        padding: 10px;
-      }
-      .field-item {
-        background: #e8f5e9;
-        border: 1px solid #c8e6c9;
-        border-radius: 3px;
-        padding: 8px;
-        margin: 5px 0;
-        position: relative;
-      }
-      .field-id {
-        font-size: 0.7em;
-        color: #666;
-        display: block;
-        margin-top: 3px;
-      }
-      .dropzone-active {
-        background: #e8f5e9;
-        border: 2px dashed #66bb6a;
-      }
-      .buttons {
-        margin-top: 10px;
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      button {
-        background: #4caf50;
-        color: white;
-        border: none;
-        padding: 8px 12px;
-        border-radius: 3px;
-        cursor: pointer;
-      }
-      button:hover {
-        background: #43a047;
-      }
-      .btn-secondary {
-        background: #2196f3;
-      }
-      .btn-secondary:hover {
-        background: #1976d2;
-      }
-      .btn-warning {
-        background: #ff9800;
-      }
-      .btn-warning:hover {
-        background: #f57c00;
-      }
-      .btn-danger {
-        background: #f44336;
-      }
-      .btn-danger:hover {
-        background: #d32f2f;
-      }
-      .empty-message {
-        color: #757575;
-        font-style: italic;
-        padding: 10px;
-        text-align: center;
-      }
-      .field-type {
-        font-size: 0.8em;
-        color: #757575;
-        margin-left: 5px;
-      }
-      .item-actions {
-        float: right;
-      }
-      .edit-item,
-      .remove-item {
-        cursor: pointer;
-        margin-left: 5px;
-      }
-      .edit-item {
-        color: #2196f3;
-      }
-      .remove-item {
-        color: #f44336;
-      }
-      .override-item {
-        color: #ff9800;
-        cursor: pointer;
-        margin-left: 5px;
-      }
-      .properties-panel {
-        display: none;
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: white;
-        border-radius: 5px;
-        padding: 15px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-        width: 350px;
-        z-index: 1000;
-        max-height: 80vh;
-        overflow-y: auto;
-      }
-      .properties-header {
-        font-weight: bold;
-        margin-bottom: 15px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 10px;
-        position: relative;
-      }
-      .close-panel {
-        position: absolute;
-        right: 0;
-        top: 0;
-        cursor: pointer;
-      }
-      .property-field {
-        margin-bottom: 10px;
-      }
-      .property-field label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
-      }
-      .property-field input,
-      .property-field select,
-      .property-field textarea {
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 3px;
-      }
-      .property-field input[type="checkbox"] {
-        width: auto;
-      }
-      .json-output {
-        margin-top: 20px;
-        background: #272822;
-        color: #f8f8f2;
-        padding: 15px;
-        border-radius: 5px;
-        max-height: 400px;
-        overflow: auto;
-        white-space: pre-wrap;
-        font-family: monospace;
-      }
-      .tabs {
-        display: flex;
-        border-bottom: 1px solid #ddd;
-        margin-bottom: 15px;
-      }
-      .tab {
-        padding: 8px 15px;
-        cursor: pointer;
-        border: 1px solid transparent;
-        border-bottom: none;
-        margin-right: 5px;
-      }
-      .tab.active {
-        background: #fff;
-        border-color: #ddd;
-        border-radius: 5px 5px 0 0;
-      }
-      .tab-content {
-        display: none;
-      }
-      .tab-content.active {
-        display: block;
-      }
-      .id-display {
-        font-size: 0.8em;
-        color: #888;
-        margin-bottom: 10px;
-        border: 1px solid #eee;
-        padding: 5px;
-        background: #f9f9f9;
-      }
-      .custom-property-row {
-        display: flex;
-        margin-bottom: 5px;
-      }
-      .custom-property-row input {
-        flex: 1;
-        margin-right: 5px;
-      }
-      .remove-prop {
-        cursor: pointer;
-        color: #f44336;
-        font-weight: bold;
-      }
-      .add-property-btn {
-        margin-top: 5px;
-        background: #2196f3;
-      }
-      .catalog-item-details {
-        position: relative;
-      }
-      .reference-json {
-        margin-top: 20px;
-        padding: 15px;
-        background: #fff;
-        border-radius: 5px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-      }
-      .file-input-container {
-        margin-bottom: 20px;
-      }
-      #import-export-container {
-        margin-top: 20px;
-        border-top: 1px solid #ddd;
-        padding-top: 20px;
-      }
-      #json-editor {
-        width: 100%;
-        height: 300px;
-        font-family: monospace;
-        padding: 10px;
-        margin-bottom: 10px;
-      }
-      .override-panel {
-        background: #fff9c4;
-        padding: 5px;
-        margin: 5px 0;
-        border-radius: 3px;
-      }
-      .override-title {
-        font-weight: bold;
-        margin-bottom: 5px;
-      }
-      .has-overrides {
-        border-left: 4px solid #ff9800;
-      }
-      .ui-draggable-dragging {
-        z-index: 9999 !important;
-      }
-      .drop-highlight {
-        background-color: #e8f5e9 !important;
-        border: 2px dashed #4caf50 !important;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>Enhanced Metadata Form Builder</h1>
-    <p>
-      Drag and drop sections and fields to build your form. Each section and
-      field keeps its original reference ID.
-    </p>
-
-    <div class="container">
-      <!-- Catalog Panel -->
-      <div class="catalog-panel">
-        <div class="catalog">
-          <div class="catalog-header">
-            Sections <span class="add-new" id="add-section">+</span>
-          </div>
-          <div id="section-catalog"></div>
-        </div>
-
-        <div class="catalog">
-          <div class="catalog-header">
-            Fields <span class="add-new" id="add-field">+</span>
-          </div>
-          <div id="field-catalog"></div>
-        </div>
-
-        <div id="import-export-container">
-          <h3>Import/Export Catalogs</h3>
-          <div class="file-input-container">
-            <input type="file" id="import-catalog-file" accept=".json" />
-          </div>
-          <button id="import-catalog-btn" class="btn-secondary">
-            Import Catalogs
-          </button>
-          <button id="export-catalog-btn" class="btn-secondary">
-            Export Catalogs
-          </button>
-          <p>Or edit JSON directly:</p>
-          <textarea id="json-editor"></textarea>
-          <button id="apply-json-btn" class="btn-warning">Apply JSON</button>
-        </div>
-      </div>
-
-      <!-- Form Container -->
-      <div class="form-container" id="form-container">
-        <div class="empty-message">
-          Drag sections from the catalog to begin building your form.
-        </div>
-      </div>
-    </div>
-
-    <div class="buttons">
-      <button id="generate-json" class="btn-primary">Generate Form JSON</button>
-      <button id="clear-form" class="btn-danger">Clear Form</button>
-      <button id="export-all-btn" class="btn-secondary">
-        Export Everything
-      </button>
-      <button id="import-all-btn" class="btn-warning">Import Everything</button>
-      <button id="load-form-json" class="btn-secondary">
-        Load Form from JSON
-      </button>
-    </div>
-
-    <div id="json-output-container">
-      <h3>JSON Output</h3>
-      <div class="json-output" id="json-output"></div>
-    </div>
-
-    <!-- Properties Panel -->
-    <div class="properties-panel" id="properties-panel">
-      <div class="properties-header">
-        Edit Properties <span class="close-panel" id="close-panel">×</span>
-      </div>
-
-      <div class="id-display" id="reference-id-display">
-        Reference ID: <span id="ref-id-value">SEC001</span>
-      </div>
-      <div class="id-display" id="instance-id-display">
-        Instance ID: <span id="instance-id-value">instance_123</span>
-      </div>
-
-      <div class="tabs">
-        <div class="tab active" data-tab="basic">Basic</div>
-        <div class="tab" data-tab="custom">Override Properties</div>
-      </div>
-
-      <div class="tab-content active" data-tab="basic">
-        <div class="property-field">
-          <label for="prop-name">Name:</label>
-          <input type="text" id="prop-name" />
-        </div>
-        <div class="property-field">
-          <label for="prop-label">Label:</label>
-          <input type="text" id="prop-label" />
-        </div>
-        <div class="property-field" id="prop-type-field">
-          <label for="prop-type">Type:</label>
-          <select id="prop-type">
-            <option value="text">Text</option>
-            <option value="email">Email</option>
-            <option value="number">Number</option>
-            <option value="date">Date</option>
-            <option value="select">Select</option>
-            <option value="checkbox">Checkbox</option>
-          </select>
-        </div>
-        <div class="property-field">
-          <label for="prop-required">Required:</label>
-          <input type="checkbox" id="prop-required" />
-        </div>
-        <div class="property-field">
-          <label for="prop-visible">Visible:</label>
-          <input type="checkbox" id="prop-visible" checked />
-        </div>
-        <div class="property-field">
-          <label for="prop-editable">Editable:</label>
-          <input type="checkbox" id="prop-editable" checked />
-        </div>
-      </div>
-
-      <div class="tab-content" data-tab="custom">
-        <div class="property-field">
-          <label>Override Properties:</label>
-          <div id="custom-properties-container">
-            <!-- Custom properties will be added here -->
-          </div>
-          <button class="add-property-btn" id="add-property-btn">
-            Add Property
-          </button>
-        </div>
-      </div>
-
-      <button id="save-properties">Save</button>
-    </div>
-
-    <!-- Override Panel -->
-    <div class="properties-panel" id="override-panel">
-      <div class="properties-header">
-        Override Properties
-        <span class="close-panel" id="close-override-panel">×</span>
-      </div>
-
-      <div class="id-display" id="override-id-display">
-        Reference ID: <span id="override-ref-id-value">SEC001</span>
-      </div>
-
-      <div class="tabs">
-        <div class="tab active" data-tab="override-basic">Basic</div>
-        <div class="tab" data-tab="override-custom">Catalog Properties</div>
-      </div>
-
-      <div class="tab-content active" data-tab="override-basic">
-        <p
-          class="override-note"
-          style="color: #777; font-style: italic; margin-bottom: 15px"
-        >
-          Override only what needs to be different from the catalog definition.
-          Leave unchanged to use catalog values.
-        </p>
-        <div class="property-field">
-          <label for="override-name">Name:</label>
-          <input type="text" id="override-name" />
-        </div>
-        <div class="property-field">
-          <label for="override-label">Label:</label>
-          <input type="text" id="override-label" />
-        </div>
-        <div class="property-field" id="override-type-field">
-          <label for="override-type">Type:</label>
-          <select id="override-type">
-            <option value="text">Text</option>
-            <option value="email">Email</option>
-            <option value="number">Number</option>
-            <option value="date">Date</option>
-            <option value="select">Select</option>
-            <option value="checkbox">Checkbox</option>
-          </select>
-        </div>
-        <div class="property-field">
-          <label for="override-required">Required:</label>
-          <input type="checkbox" id="override-required" />
-        </div>
-        <div class="property-field">
-          <label for="override-visible">Visible:</label>
-          <input type="checkbox" id="override-visible" checked />
-        </div>
-        <div class="property-field">
-          <label for="override-editable">Editable:</label>
-          <input type="checkbox" id="override-editable" checked />
-        </div>
-      </div>
-
-      <div class="tab-content" data-tab="override-custom">
-        <div class="property-field">
-          <p
-            class="override-note"
-            style="color: #777; font-style: italic; margin-bottom: 15px"
-          >
-            These properties are defined in the catalog. You can override their
-            values but cannot add new properties.
-          </p>
-          <div id="override-properties-container">
-            <!-- Custom properties will be added here -->
-          </div>
-        </div>
-      </div>
-
-      <button id="save-overrides">Save Overrides</button>
-      <button id="clear-overrides" style="background-color: #ff9800">
-        Clear Overrides
-      </button>
-    </div>
-
-    <script>
-      $(document).ready(function () {
-        // Initialize variables
-        let formData = [];
-        let instanceCounter = 1;
-        let currentEditItem = null;
-        let currentOverrideItem = null;
-        let fieldCounter = 1;
-        let sectionCounter = 1;
-
-        // Catalog data structure
-        let catalogData = {
-          sections: [],
-          fields: [],
-        };
-
-        // Initialize with some default catalog items
-        function initializeCatalog() {
-          // Add default sections
-          catalogData.sections = [
-            {
-              id: "SEC001",
-              name: "Basic Info",
-              label: "Basic Information",
-              description: "Basic information about the entity",
-              required: true,
-              visible: true,
-              editable: true,
-            },
-            {
-              id: "SEC002",
-              name: "Contact Details",
-              label: "Contact Information",
-              description: "Contact information for the entity",
-              required: false,
-              visible: true,
-              editable: true,
-            },
-            {
-              id: "SEC003",
-              name: "Additional Info",
-              label: "Additional Information",
-              description: "Additional information about the entity",
-              required: false,
-              visible: true,
-              editable: true,
-            },
-          ];
-
-          // Add default fields
-          catalogData.fields = [
-            {
-              id: "FLD001",
-              name: "Full Name",
-              label: "Full Name",
-              type: "text",
-              description: "Full name of the person",
-              required: true,
-              visible: true,
-              editable: true,
-              minLength: 2,
-              maxLength: 100,
-            },
-            {
-              id: "FLD002",
-              name: "Email",
-              label: "Email Address",
-              type: "email",
-              description: "Email address for contact",
-              required: true,
-              visible: true,
-              editable: true,
-            },
-            {
-              id: "FLD003",
-              name: "Date of Birth",
-              label: "Date of Birth",
-              type: "date",
-              description: "Date of birth",
-              required: false,
-              visible: true,
-              editable: true,
-            },
-            {
-              id: "FLD004",
-              name: "Status",
-              label: "Current Status",
-              type: "select",
-              description: "Current status of the entity",
-              required: true,
-              visible: true,
-              editable: true,
-              options: ["Active", "Inactive", "Pending"],
-            },
-            {
-              id: "FLD005",
-              name: "ID",
-              label: "Identification Number",
-              type: "number",
-              description: "Unique identification number",
-              required: true,
-              visible: true,
-              editable: true,
-              minValue: 1000,
-              maxValue: 9999,
-            },
-          ];
-
-          // Update counters
-          sectionCounter = catalogData.sections.length + 1;
-          fieldCounter = catalogData.fields.length + 1;
-
-          // Render catalog
-          renderCatalog();
-        }
-
-        // Function to render catalog items
-        function renderCatalog() {
-          // Clear existing catalogs
-          $("#section-catalog").empty();
-          $("#field-catalog").empty();
-
-          // Render sections
-          catalogData.sections.forEach((section) => {
-            let sectionHtml = `
-                <div class="section-catalog-item" data-id="${section.id}">
-                    <div class="catalog-item-details">
-                        ${section.label || section.name}
-                        <span class="catalog-item-id">ID: ${section.id}</span>
-                    </div>
-                    <div class="item-actions">
-                        <span class="override-item" data-id="${
-                          section.id
-                        }" data-type="section">🔄</span>
-                        <span class="edit-item" data-id="${
-                          section.id
-                        }" data-type="section">✏️</span>
-                        <span class="remove-item" data-id="${
-                          section.id
-                        }" data-type="section">🗑️</span>
-                    </div>
-                </div>
-            `;
-
-            $("#section-catalog").append(sectionHtml);
-          });
-
-          // Render fields
-          catalogData.fields.forEach((field) => {
-            let fieldHtml = `
-                <div class="field-catalog-item" data-id="${field.id}">
-                    <div class="catalog-item-details">
-                        ${
-                          field.label || field.name
-                        } <span class="field-type">(${field.type})</span>
-                        <span class="catalog-item-id">ID: ${field.id}</span>
-                    </div>
-                    <div class="item-actions">
-                        <span class="override-item" data-id="${
-                          field.id
-                        }" data-type="field">🔄</span>
-                        <span class="edit-item" data-id="${
-                          field.id
-                        }" data-type="field">✏️</span>
-                        <span class="remove-item" data-id="${
-                          field.id
-                        }" data-type="field">🗑️</span>
-                    </div>
-                </div>
-            `;
-
-            $("#field-catalog").append(fieldHtml);
-          });
-
-          // Make catalog items draggable with improved configuration
-          $(".section-catalog-item").draggable({
-            helper: "clone",
-            cursor: "move",
-            cursorAt: { top: 15, left: 50 },
-            zIndex: 9999,
-            appendTo: "body",
-            revert: "invalid",
-            start: function (event, ui) {
-              $(ui.helper).css("width", $(this).width());
-            },
-          });
-
-          $(".field-catalog-item").draggable({
-            helper: "clone",
-            cursor: "move",
-            cursorAt: { top: 15, left: 50 },
-            zIndex: 9999,
-            appendTo: "body",
-            revert: "invalid",
-            start: function (event, ui) {
-              $(ui.helper).css("width", $(this).width());
-            },
-          });
-
-          // Bind events for catalog items
-          bindCatalogEvents();
-        }
-
-        // Function to bind events to catalog items
-        function bindCatalogEvents() {
-          // Edit catalog item
-          $(".edit-item")
-            .off("click")
-            .on("click", function (e) {
-              e.stopPropagation();
-              let itemId = $(this).data("id");
-              let itemType = $(this).data("type");
-
-              if (itemType === "section") {
-                let section = catalogData.sections.find((s) => s.id === itemId);
-                if (section) {
-                  openPropertiesPanel(section, "catalog-section");
-                }
-              } else {
-                let field = catalogData.fields.find((f) => f.id === itemId);
-                if (field) {
-                  openPropertiesPanel(field, "catalog-field");
-                }
-              }
-            });
-
-          // Override catalog item
-          $(".override-item")
-            .off("click")
-            .on("click", function (e) {
-              e.stopPropagation();
-              let itemId = $(this).data("id");
-              let itemType = $(this).data("type");
-
-              if (itemType === "section") {
-                let section = catalogData.sections.find((s) => s.id === itemId);
-                if (section) {
-                  openOverridePanel(section, "section");
-                }
-              } else {
-                let field = catalogData.fields.find((f) => f.id === itemId);
-                if (field) {
-                  openOverridePanel(field, "field");
-                }
-              }
-            });
-
-          // Remove catalog item without confirmation
-          $(".remove-item")
-            .off("click")
-            .on("click", function (e) {
-              e.stopPropagation();
-              let itemId = $(this).data("id");
-              let itemType = $(this).data("type");
-
-              if (itemType === "section") {
-                catalogData.sections = catalogData.sections.filter(
-                  (s) => s.id !== itemId
-                );
-              } else {
-                catalogData.fields = catalogData.fields.filter(
-                  (f) => f.id !== itemId
-                );
-              }
-              renderCatalog();
-            });
-        }
-
-        // Initialize form container droppable functionality
-        function initializeFormContainerDroppable() {
-          try {
-            $("#form-container").droppable("destroy");
-          } catch (e) {
-            console.log("Form container not initialized as droppable yet");
-          }
-
-          $("#form-container").droppable({
-            accept: ".section-catalog-item",
-            tolerance: "pointer",
-            hoverClass: "dropzone-active",
-            greedy: false, // Main container should not be greedy
-            drop: function (event, ui) {
-              console.log("Dropped into form container");
-
-              if ($(this).find(".empty-message").length) {
-                $(this).find(".empty-message").remove();
-              }
-
-              let sectionId = ui.draggable.data("id");
-              let catalogSection = catalogData.sections.find(
-                (s) => s.id === sectionId
-              );
-
-              if (!catalogSection) return;
-
-              let instanceId = "instance_" + instanceCounter++;
-
-              let sectionData = {
-                instanceId: instanceId,
-                referenceId: sectionId,
-                type: "section",
-                name: catalogSection.name,
-                label: catalogSection.label || catalogSection.name,
-                fields: [],
-                subSections: [],
-                overrideProperties: {},
-              };
-
-              formData.push(sectionData);
-
-              let sectionHtml = `
-                <div class="section" id="${instanceId}" data-id="${instanceId}" data-reference-id="${sectionId}">
-                    <div class="section-header">
-                        <div class="section-title">
-                            ${sectionData.label}
-                            <span class="section-id">Ref ID: ${sectionId} | Instance ID: ${instanceId}</span>
-                        </div>
-                        <div>
-                            <span class="override-item" data-id="${instanceId}" data-type="instance-section">🔄</span>
-                            <span class="edit-item" data-id="${instanceId}" data-type="instance-section">✏️</span>
-                            <span class="remove-item" data-id="${instanceId}">🗑️</span>
-                        </div>
-                    </div>
-                    <div class="section-drop-area" data-section-id="${instanceId}">
-                        <div class="empty-message">Drop fields or sections here</div>
-                    </div>
-                </div>
-            `;
-
-              $(this).append(sectionHtml);
-
-              // Reinitialize droppable
-              setTimeout(initializeDroppable, 0);
-
-              // Rebind form events
-              setTimeout(bindFormEvents, 0);
-            },
-          });
-        }
-
-        // Function to initialize droppable areas
-        // Replace the initializeDroppable function with this fixed version
-        function initializeDroppable() {
-          try {
-            // Safely destroy any existing droppable functionality
-            $(".section-drop-area, .nested-section-drop-area").droppable(
-              "destroy"
-            );
-          } catch (e) {
-            // Element might not have been initialized as droppable yet
-            console.log("Some drop areas not initialized yet");
-          }
-
-          // Make section drop areas droppable for fields and sections
-          $(".section-drop-area, .nested-section-drop-area").droppable({
-            accept: ".section-catalog-item, .field-catalog-item",
-            tolerance: "pointer",
-            hoverClass: "dropzone-active",
-            greedy: true, // This is key to stop event propagation to parent droppables
-            drop: function (event, ui) {
-              // Stop event propagation to prevent drops in parent containers
-              event.stopPropagation();
-
-              // Get drop target info
-              let sectionId = $(this).data("section-id");
-              let itemType = ui.draggable.hasClass("section-catalog-item")
-                ? "section"
-                : "field";
-              let itemId = ui.draggable.data("id");
-
-              console.log("Dropping into section: " + sectionId);
-
-              // Remove empty message if present
-              if ($(this).find(".empty-message").length) {
-                $(this).find(".empty-message").remove();
-              }
-
-              // Find the parent section in formData
-              let parentSection = findSectionById(sectionId);
-              if (!parentSection) {
-                console.error("Parent section not found:", sectionId);
-                return;
-              }
-
-              if (itemType === "section") {
-                // Adding a subsection
-                let catalogSection = catalogData.sections.find(
-                  (s) => s.id === itemId
-                );
-                if (!catalogSection) {
-                  console.error("Catalog section not found:", itemId);
-                  return;
-                }
-
-                let instanceId = "instance_" + instanceCounter++;
-
-                let subSectionData = {
-                  instanceId: instanceId,
-                  referenceId: itemId,
-                  type: "section",
-                  name: catalogSection.name,
-                  label: catalogSection.label || catalogSection.name,
-                  fields: [],
-                  subSections: [],
-                  overrideProperties: {},
-                };
-
-                // Add to parent section's subSections
-                parentSection.subSections.push(subSectionData);
-
-                let subSectionHtml = `
-                    <div class="nested-section" id="${instanceId}" data-id="${instanceId}" data-reference-id="${itemId}">
-                        <div class="section-header">
-                            <div class="section-title">
-                                ${subSectionData.label}
-                                <span class="section-id">Ref ID: ${itemId} | Instance ID: ${instanceId}</span>
-                            </div>
-                            <div>
-                                <span class="override-item" data-id="${instanceId}" data-type="instance-section">🔄</span>
-                                <span class="edit-item" data-id="${instanceId}" data-type="instance-section">✏️</span>
-                                <span class="remove-item" data-id="${instanceId}">🗑️</span>
-                            </div>
-                        </div>
-                        <div class="nested-section-drop-area" data-section-id="${instanceId}">
-                            <div class="empty-message">Drop fields or sections here</div>
-                        </div>
-                    </div>
-                `;
-
-                $(this).append(subSectionHtml);
-              } else {
-                // Adding a field
-                let catalogField = catalogData.fields.find(
-                  (f) => f.id === itemId
-                );
-                if (!catalogField) {
-                  console.error("Catalog field not found:", itemId);
-                  return;
-                }
-
-                let instanceId = "instance_" + instanceCounter++;
-
-                let fieldData = {
-                  instanceId: instanceId,
-                  referenceId: itemId,
-                  type: catalogField.type,
-                  name: catalogField.name,
-                  label: catalogField.label || catalogField.name,
-                  overrideProperties: {},
-                };
-
-                // Add to parent section's fields
-                parentSection.fields.push(fieldData);
-
-                let fieldHtml = `
-                    <div class="field-item" data-id="${instanceId}" data-reference-id="${itemId}">
-                        ${fieldData.label} <span class="field-type">(${fieldData.type})</span>
-                        <span class="field-id">Ref ID: ${itemId} | Instance ID: ${instanceId}</span>
-                        <div class="item-actions">
-                            <span class="override-item" data-id="${instanceId}" data-type="instance-field">🔄</span>
-                            <span class="edit-item" data-id="${instanceId}" data-type="instance-field">✏️</span>
-                            <span class="remove-item" data-id="${instanceId}">🗑️</span>
-                        </div>
-                    </div>
-                `;
-
-                $(this).append(fieldHtml);
-              }
-
-              // Reinitialize droppables to include new areas
-              setTimeout(initializeDroppable, 0);
-
-              // Rebind form events
-              setTimeout(bindFormEvents, 0);
-            },
-          });
-        }
-
-        // Also modify the initializeFormContainerDroppable function
-        function initializeFormContainerDroppable() {
-          try {
-            $("#form-container").droppable("destroy");
-          } catch (e) {
-            console.log("Form container not initialized as droppable yet");
-          }
-
-          $("#form-container").droppable({
-            accept: ".section-catalog-item",
-            tolerance: "pointer",
-            hoverClass: "dropzone-active",
-            greedy: false, // Main container should not be greedy
-            drop: function (event, ui) {
-              console.log("Dropped into form container");
-
-              if ($(this).find(".empty-message").length) {
-                $(this).find(".empty-message").remove();
-              }
-
-              let sectionId = ui.draggable.data("id");
-              let catalogSection = catalogData.sections.find(
-                (s) => s.id === sectionId
-              );
-
-              if (!catalogSection) return;
-
-              let instanceId = "instance_" + instanceCounter++;
-
-              let sectionData = {
-                instanceId: instanceId,
-                referenceId: sectionId,
-                type: "section",
-                name: catalogSection.name,
-                label: catalogSection.label || catalogSection.name,
-                fields: [],
-                subSections: [],
-                overrideProperties: {},
-              };
-
-              formData.push(sectionData);
-
-              let sectionHtml = `
-                <div class="section" id="${instanceId}" data-id="${instanceId}" data-reference-id="${sectionId}">
-                    <div class="section-header">
-                        <div class="section-title">
-                            ${sectionData.label}
-                            <span class="section-id">Ref ID: ${sectionId} | Instance ID: ${instanceId}</span>
-                        </div>
-                        <div>
-                            <span class="override-item" data-id="${instanceId}" data-type="instance-section">🔄</span>
-                            <span class="edit-item" data-id="${instanceId}" data-type="instance-section">✏️</span>
-                            <span class="remove-item" data-id="${instanceId}">🗑️</span>
-                        </div>
-                    </div>
-                    <div class="section-drop-area" data-section-id="${instanceId}">
-                        <div class="empty-message">Drop fields or sections here</div>
-                    </div>
-                </div>
-            `;
-
-              $(this).append(sectionHtml);
-
-              // Reinitialize droppable
-              setTimeout(initializeDroppable, 0);
-
-              // Rebind form events
-              setTimeout(bindFormEvents, 0);
-            },
-          });
-        }
-        // Function to fully reinitialize all drag and drop functionality
-        function reinitializeDragDrop() {
-          console.log("Reinitializing drag and drop functionality");
-
-          // First destroy any existing interactions to avoid duplication
-          try {
-            $(".section-catalog-item, .field-catalog-item").draggable(
-              "destroy"
-            );
-          } catch (e) {
-            console.log("Some draggable elements not yet initialized");
-          }
-
-          try {
-            $(
-              ".section-drop-area, .nested-section-drop-area, #form-container"
-            ).droppable("destroy");
-          } catch (e) {
-            console.log("Some droppable areas not yet initialized");
-          }
-
-          // Re-render the catalog to refresh draggable elements
-          renderCatalog();
-
-          // Reinitialize all droppable areas
-          initializeFormContainerDroppable();
-          initializeDroppable();
-
-          // Rebind all event handlers
-          bindFormEvents();
-        }
-
-        // Function to find a section by ID in formData
-        function findSectionById(id, data = formData) {
-          for (let i = 0; i < data.length; i++) {
-            if (data[i].instanceId === id) {
-              return data[i];
-            }
-
-            // Check in subsections
-            if (data[i].subSections && data[i].subSections.length > 0) {
-              let found = findSectionById(id, data[i].subSections);
-              if (found) return found;
-            }
-          }
-          return null;
-        }
-
-        // Function to find a field by ID in formData
-        function findFieldById(id, data = formData) {
-          for (let i = 0; i < data.length; i++) {
-            // Check in fields
-            for (let j = 0; j < data[i].fields.length; j++) {
-              if (data[i].fields[j].instanceId === id) {
-                return {
-                  field: data[i].fields[j],
-                  parentArray: data[i].fields,
-                  index: j,
-                  parentSection: data[i],
-                };
-              }
-            }
-
-            // Check in subsections
-            if (data[i].subSections && data[i].subSections.length > 0) {
-              let found = findFieldById(id, data[i].subSections);
-              if (found) return found;
-            }
-          }
-          return null;
-        }
-
-        // Function to find an item (section or field) by instance ID
-        function findItemById(id) {
-          // Try to find as section first
-          let section = findSectionById(id);
-          if (section) {
-            return { item: section, type: "section" };
-          }
-
-          // Then try to find as field
-          let fieldInfo = findFieldById(id);
-          if (fieldInfo) {
-            return { item: fieldInfo.field, type: "field" };
-          }
-
-          return null;
-        }
-
-        // Function to remove an item by ID from formData
-        function removeItemById(id, data = formData) {
-          for (let i = 0; i < data.length; i++) {
-            if (data[i].instanceId === id) {
-              data.splice(i, 1);
-              return true;
-            }
-
-            // Check in fields
-            for (let j = 0; j < data[i].fields.length; j++) {
-              if (data[i].fields[j].instanceId === id) {
-                data[i].fields.splice(j, 1);
-                return true;
-              }
-            }
-
-            // Check in subsections
-            if (data[i].subSections && data[i].subSections.length > 0) {
-              let removed = removeItemById(id, data[i].subSections);
-              if (removed) return true;
-            }
-          }
-          return false;
-        }
-
-        // Bind event handlers for form items
-        function bindFormEvents() {
-          // Edit form item
-          $(
-            ".edit-item[data-type='instance-section'], .edit-item[data-type='instance-field']"
-          )
-            .off("click")
-            .on("click", function () {
-              let itemId = $(this).data("id");
-              let itemType =
-                $(this).data("type") === "instance-section"
-                  ? "section"
-                  : "field";
-
-              let itemInfo = findItemById(itemId);
-              if (itemInfo) {
-                openPropertiesPanel(itemInfo.item, itemType);
-              }
-            });
-
-          // Override form item
-          $(
-            ".override-item[data-type='instance-section'], .override-item[data-type='instance-field']"
-          )
-            .off("click")
-            .on("click", function () {
-              let itemId = $(this).data("id");
-              let itemInfo = findItemById(itemId);
-
-              if (itemInfo) {
-                let type = itemInfo.type;
-                let catalogItem;
-
-                if (type === "section") {
-                  catalogItem = catalogData.sections.find(
-                    (s) => s.id === itemInfo.item.referenceId
-                  );
-                } else {
-                  catalogItem = catalogData.fields.find(
-                    (f) => f.id === itemInfo.item.referenceId
-                  );
-                }
-
-                if (catalogItem) {
-                  openOverridePanel(itemInfo.item, type, catalogItem);
-                }
-              }
-            });
-
-          // Remove form item
-          $(".remove-item")
-            .off("click")
-            .on("click", function () {
-              let itemId = $(this).data("id");
-              let element = $(`#${itemId}`);
-
-              // If it's not a direct ID element, find the parent with data-id
-              if (element.length === 0) {
-                element = $(this).closest("[data-id]");
-              }
-
-              if (element.length) {
-                // Remove from DOM without confirmation
-                element.remove();
-
-                // Remove from data structure
-                removeItemById(itemId);
-
-                // Check if form is now empty
-                if ($("#form-container").children().length === 0) {
-                  $("#form-container").html(
-                    '<div class="empty-message">Drag sections from the catalog to begin building your form.</div>'
-                  );
-                }
-              }
-            });
-        }
-
-        // Function to populate custom properties in the properties panel
-        function populateCustomProperties(item) {
-          let container = $("#custom-properties-container");
-          container.empty();
-
-          if (item.overrideProperties) {
-            Object.entries(item.overrideProperties).forEach(([key, value]) => {
-              addCustomPropertyRow(key, value);
-            });
-          }
-        }
-
-        // Function to add a custom property row to the properties panel
-        function addCustomPropertyRow(key = "", value = "") {
-          let container = $("#custom-properties-container");
-
-          let row = $(`
-            <div class="custom-property-row">
-                <input type="text" class="prop-key" placeholder="Property name" value="${key}">
-                <input type="text" class="prop-value" placeholder="Value" value="${value}">
-                <span class="remove-prop">×</span>
-            </div>
-        `);
-
-          // Bind remove event
-          row.find(".remove-prop").on("click", function () {
-            $(this).closest(".custom-property-row").remove();
-          });
-
-          container.append(row);
-        }
-
-        // Function to populate override properties in the override panel
-        function populateOverrideProperties(item, existingOverrides = {}) {
-          let container = $("#override-properties-container");
-          container.empty();
-
-          // Get all properties from catalog item except the standard ones
-          Object.entries(item).forEach(([key, value]) => {
-            // Skip properties that are handled separately or are internal
-            if (
-              ![
-                "id",
-                "name",
-                "label",
-                "type",
-                "required",
-                "visible",
-                "editable",
-                "description",
-              ].includes(key)
-            ) {
-              // Use existing override value if available
-              const overrideValue =
-                existingOverrides[key] !== undefined
-                  ? existingOverrides[key]
-                  : value;
-              addOverridePropertyRow(key, overrideValue);
-            }
-          });
-        }
-
-        // Function to add an override property row to the properties panel
-        function addOverridePropertyRow(key = "", value = "") {
-          let container = $("#override-properties-container");
-
-          let row = $(`
-            <div class="custom-property-row">
-                <input type="text" class="prop-key" placeholder="Property name" value="${key}">
-                <input type="text" class="prop-value" placeholder="Value" value="${value}">
-                <span class="remove-prop">×</span>
-            </div>
-        `);
-
-          // Bind remove event
-          row.find(".remove-prop").on("click", function () {
-            $(this).closest(".custom-property-row").remove();
-          });
-
-          container.append(row);
-        }
-
-        // Function to open properties panel
-        function openPropertiesPanel(item, itemType) {
-          currentEditItem = { item, itemType };
-
-          // Set the reference and instance IDs
-          if (itemType === "catalog-section" || itemType === "catalog-field") {
-            $("#reference-id-display").hide();
-            $("#instance-id-display").show();
-            $("#instance-id-value").text(item.id);
-          } else {
-            $("#reference-id-display").show();
-            $("#instance-id-display").show();
-            $("#ref-id-value").text(item.referenceId);
-            $("#instance-id-value").text(item.instanceId);
-          }
-
-          // Set values in the panel
-          $("#prop-name").val(item.name || "");
-          $("#prop-label").val(item.label || "");
-
-          if (itemType === "catalog-section" || itemType === "catalog-field") {
-            $("#prop-required").prop(
-              "checked",
-              item.properties?.required || false
-            );
-            $("#prop-visible").prop(
-              "checked",
-              item.properties?.visible !== false
-            );
-            $("#prop-editable").prop(
-              "checked",
-              item.properties?.editable !== false
-            );
-          } else {
-            $("#prop-required").prop("checked", item.required || false);
-            $("#prop-visible").prop("checked", item.visible !== false);
-            $("#prop-editable").prop("checked", item.editable !== false);
-          }
-
-          // Show/hide type field based on item type
-          if (itemType === "field" || itemType === "catalog-field") {
-            $("#prop-type-field").show();
-            $("#prop-type").val(item.type || "text");
-          } else {
-            $("#prop-type-field").hide();
-          }
-
-          // Populate override properties
-          populateCustomProperties(item);
-
-          // Show the panel
-          $("#properties-panel").show();
-        }
-
-        // Function to open override panel
-        function openOverridePanel(item, itemType, catalogItem) {
-          currentOverrideItem = { item, itemType, catalogItem };
-
-          // Set the reference ID
-          $("#override-ref-id-value").text(
-            itemType === "section" ? item.referenceId : item.referenceId
-          );
-
-          // Set basic values based on existing overrides or catalog defaults
-          if (catalogItem) {
-            // Use existing overrides if available, otherwise use catalog values
-            $("#override-name").val(
-              item.overrideProperties?.name || catalogItem.name || ""
-            );
-            $("#override-label").val(
-              item.overrideProperties?.label || catalogItem.label || ""
-            );
-
-            if (itemType === "field") {
-              $("#override-type-field").show();
-              $("#override-type").val(
-                item.overrideProperties?.type || catalogItem.type || "text"
-              );
-            } else {
-              $("#override-type-field").hide();
-            }
-
-            $("#override-required").prop(
-              "checked",
-              item.overrideProperties?.required !== undefined
-                ? item.overrideProperties.required
-                : catalogItem.required || false
-            );
-
-            $("#override-visible").prop(
-              "checked",
-              item.overrideProperties?.visible !== undefined
-                ? item.overrideProperties.visible
-                : catalogItem.visible !== false
-            );
-
-            $("#override-editable").prop(
-              "checked",
-              item.overrideProperties?.editable !== undefined
-                ? item.overrideProperties.editable
-                : catalogItem.editable !== false
-            );
-
-            // Only show existing catalog properties for override
-            populateOverrideProperties(catalogItem, item.overrideProperties);
-          } else {
-            // Catalog item not found, use defaults
-            $("#override-name").val(item.name || "");
-            $("#override-label").val(item.label || "");
-
-            if (itemType === "field") {
-              $("#override-type-field").show();
-              $("#override-type").val(item.type || "text");
-            } else {
-              $("#override-type-field").hide();
-            }
-
-            $("#override-required").prop(
-              "checked",
-              item.overrideProperties?.required || false
-            );
-            $("#override-visible").prop(
-              "checked",
-              item.overrideProperties?.visible !== false
-            );
-            $("#override-editable").prop(
-              "checked",
-              item.overrideProperties?.editable !== false
-            );
-
-            // Clear custom properties
-            $("#override-properties-container").empty();
-          }
-
-          // Show the panel
-          $("#override-panel").show();
-        }
-
-        // Close properties panel
-        $("#close-panel").click(function () {
-          $("#properties-panel").hide();
-          currentEditItem = null;
-        });
-
-        // Close override panel
-        $("#close-override-panel").click(function () {
-          $("#override-panel").hide();
-          currentOverrideItem = null;
-        });
-
-        // Clear overrides button
-        $("#clear-overrides").click(function () {
-          if (!currentOverrideItem) return;
-
-          let { item } = currentOverrideItem;
-
-          // Clear all overrides
-          item.overrideProperties = {};
-
-          // Update UI
-          updateItemDisplay(item, currentOverrideItem.itemType);
-
-          // Close the panel
-          $("#override-panel").hide();
-          currentOverrideItem = null;
-        });
-
-        // Tab switching in properties panel
-        $(".tab").click(function () {
-          let panel = $(this).closest(".properties-panel");
-          panel.find(".tab").removeClass("active");
-          $(this).addClass("active");
-
-          let tabId = $(this).data("tab");
-          panel.find(".tab-content").removeClass("active");
-          panel.find(`.tab-content[data-tab="${tabId}"]`).addClass("active");
-        });
-
-        // Add property button
-        $("#add-property-btn").click(function () {
-          addCustomPropertyRow();
-        });
-
-        // Add override property button
-        $("#add-override-property-btn").click(function () {
-          addOverridePropertyRow();
-        });
-
-        // Save properties from properties panel
-        $("#save-properties").click(function () {
-          if (!currentEditItem) return;
-
-          let { item, itemType } = currentEditItem;
-
-          // Update common properties
-          item.name = $("#prop-name").val();
-          item.label = $("#prop-label").val();
-
-          if (itemType === "catalog-section" || itemType === "catalog-field") {
-            // Updating a catalog item
-            item.required = $("#prop-required").is(":checked");
-            item.visible = $("#prop-visible").is(":checked");
-            item.editable = $("#prop-editable").is(":checked");
-
-            if (itemType === "catalog-field") {
-              item.type = $("#prop-type").val();
-            }
-
-            // Update custom properties
-            $("#custom-properties-container .custom-property-row").each(
-              function () {
-                let key = $(this).find(".prop-key").val().trim();
-                let value = $(this).find(".prop-value").val().trim();
-
-                if (key) {
-                  // Try to convert value to proper type
-                  if (!isNaN(value) && value.trim() !== "") {
-                    item[key] = Number(value);
-                  } else if (
-                    value.toLowerCase() === "true" ||
-                    value.toLowerCase() === "false"
-                  ) {
-                    item[key] = value.toLowerCase() === "true";
-                  } else {
-                    item[key] = value;
-                  }
-                }
-              }
-            );
-
-            // Update catalog UI
-            renderCatalog();
-          } else {
-            // Updating a form instance - everything goes to overrideProperties
-            let catalogItem;
-
-            if (itemType === "section") {
-              catalogItem = catalogData.sections.find(
-                (s) => s.id === item.referenceId
-              );
-            } else {
-              catalogItem = catalogData.fields.find(
-                (f) => f.id === item.referenceId
-              );
-            }
-
-            // Only create overrides if different from catalog
-            if (catalogItem) {
-              // Initialize or get existing overrideProperties
-              let overrides = item.overrideProperties || {};
-
-              // Check name and label
-              if (item.name !== catalogItem.name) {
-                overrides.name = item.name;
-              } else {
-                delete overrides.name;
-              }
-
-              if (item.label !== catalogItem.label) {
-                overrides.label = item.label;
-              } else {
-                delete overrides.label;
-              }
-
-              // For fields, check type
-              if (itemType === "field") {
-                let newType = $("#prop-type").val();
-                if (newType !== catalogItem.type) {
-                  overrides.type = newType;
-                  item.type = newType; // Update for display
-                } else {
-                  delete overrides.type;
-                }
-              }
-
-              // Check all custom properties
-              $("#custom-properties-container .custom-property-row").each(
-                function () {
-                  let key = $(this).find(".prop-key").val().trim();
-                  let value = $(this).find(".prop-value").val().trim();
-
-                  if (key) {
-                    // Convert value to the right type
-                    let typedValue;
-                    if (!isNaN(value) && value.trim() !== "") {
-                      typedValue = Number(value);
-                    } else if (value.toLowerCase() === "true") {
-                      typedValue = true;
-                    } else if (value.toLowerCase() === "false") {
-                      typedValue = false;
-                    } else {
-                      typedValue = value;
-                    }
-
-                    // Add override only if different from catalog
-                    if (
-                      JSON.stringify(typedValue) !==
-                      JSON.stringify(catalogItem[key])
-                    ) {
-                      overrides[key] = typedValue;
-                    } else {
-                      delete overrides[key];
-                    }
-                  }
-                }
-              );
-
-              // Update the item's overrideProperties
-              item.overrideProperties = overrides;
-            }
-
-            // Update UI
-            updateItemDisplay(item, itemType);
-          }
-
-          // Close the panel
-          $("#properties-panel").hide();
-          currentEditItem = null;
-        });
-
-        // Save overrides
-        $("#save-overrides").click(function () {
-          if (!currentOverrideItem) return;
-
-          let { item, itemType, catalogItem } = currentOverrideItem;
-
-          // Get new values
-          let newName = $("#override-name").val();
-          let newLabel = $("#override-label").val();
-          let newRequired = $("#override-required").is(":checked");
-          let newVisible = $("#override-visible").is(":checked");
-          let newEditable = $("#override-editable").is(":checked");
-          let newType = itemType === "field" ? $("#override-type").val() : null;
-
-          // Determine which properties have changed
-          let changedProperties = item.overrideProperties || {};
-
-          if (catalogItem) {
-            // Only add overrides if values are different from catalog
-            if (newName !== catalogItem.name) {
-              changedProperties.name = newName;
-            } else {
-              delete changedProperties.name;
-            }
-
-            if (newLabel !== catalogItem.label) {
-              changedProperties.label = newLabel;
-            } else {
-              delete changedProperties.label;
-            }
-
-            if (newRequired !== catalogItem.required) {
-              changedProperties.required = newRequired;
-            } else {
-              delete changedProperties.required;
-            }
-
-            if (newVisible !== catalogItem.visible) {
-              changedProperties.visible = newVisible;
-            } else {
-              delete changedProperties.visible;
-            }
-
-            if (newEditable !== catalogItem.editable) {
-              changedProperties.editable = newEditable;
-            } else {
-              delete changedProperties.editable;
-            }
-
-            if (itemType === "field" && newType !== catalogItem.type) {
-              changedProperties.type = newType;
-            } else if (itemType === "field") {
-              delete changedProperties.type;
-            }
-          }
-
-          // Add custom override properties, but only if different from catalog
-          $("#override-properties-container .custom-property-row").each(
-            function () {
-              let key = $(this).find(".prop-key").val().trim();
-              let value = $(this).find(".prop-value").val().trim();
-              let originalValue = catalogItem?.[key];
-
-              if (key && value !== String(originalValue)) {
-                // Try to convert value to proper type based on original value
-                if (typeof originalValue === "number") {
-                  changedProperties[key] = Number(value);
-                } else if (typeof originalValue === "boolean") {
-                  changedProperties[key] = value.toLowerCase() === "true";
-                } else {
-                  changedProperties[key] = value;
-                }
-              } else if (key) {
-                // If same as catalog, remove the override
-                delete changedProperties[key];
-              }
-            }
-          );
-
-          // Update the item's overrideProperties
-          item.overrideProperties = changedProperties;
-
-          // Update the item's display properties if there are overrides
-          if (changedProperties.name) item.name = changedProperties.name;
-          if (changedProperties.label) item.label = changedProperties.label;
-          if (changedProperties.type) item.type = changedProperties.type;
-
-          // Update UI
-          updateItemDisplay(item, itemType);
-
-          // Close the panel
-          $("#override-panel").hide();
-          currentOverrideItem = null;
-        });
-
-        // Function to update item display after editing
-        function updateItemDisplay(item, itemType) {
-          let element;
-
-          if (itemType === "section") {
-            element = $(`#${item.instanceId}`).find(".section-title").first();
-            element
-              .contents()
-              .filter(function () {
-                return this.nodeType === 3; // Text nodes only
-              })
-              .first()
-              .replaceWith(item.label);
-
-            // Add "has-overrides" class if there are overrides
-            if (Object.keys(item.overrideProperties).length > 0) {
-              $(`#${item.instanceId}`).addClass("has-overrides");
-            } else {
-              $(`#${item.instanceId}`).removeClass("has-overrides");
-            }
-          } else if (itemType === "field") {
-            element = $(`.field-item[data-id="${item.instanceId}"]`);
-
-            // Update label and type display
-            let displayType = item.overrideProperties.type || item.type;
-
-            element
-              .contents()
-              .filter(function () {
-                return this.nodeType === 3; // Text nodes only
-              })
-              .first()
-              .replaceWith(`${item.label} `);
-
-            element.find(".field-type").text(`(${displayType})`);
-
-            // Add "has-overrides" class if there are overrides
-            if (Object.keys(item.overrideProperties).length > 0) {
-              element.addClass("has-overrides");
-            } else {
-              element.removeClass("has-overrides");
-            }
-          }
-        }
-
-        // Function to generate form JSON
-        function generateFormJson() {
-          function prepareJson(items) {
-            return items.map((item) => {
-              let jsonItem = {
-                sectionId: item.referenceId,
-                instanceId: item.instanceId,
-              };
-
-              // Add override properties if they exist
-              if (Object.keys(item.overrideProperties).length > 0) {
-                jsonItem.overrideProperties = { ...item.overrideProperties };
-              }
-
-              // Add fields if they exist
-              if (item.fields && item.fields.length > 0) {
-                jsonItem.fields = item.fields
-                  .map((field) => ({
-                    fieldId: field.referenceId,
-                    instanceId: field.instanceId,
-                    overrideProperties:
-                      Object.keys(field.overrideProperties).length > 0
-                        ? { ...field.overrideProperties }
-                        : undefined,
-                  }))
-                  .filter((f) => f.overrideProperties || true);
-              }
-
-              // Add subsections if they exist
-              if (item.subSections && item.subSections.length > 0) {
-                jsonItem.subSections = prepareJson(item.subSections);
-              }
-
-              return jsonItem;
-            });
-          }
-
-          return prepareJson(formData);
-        }
-
-        // Generate JSON
-        $("#generate-json").click(function () {
-          let jsonData = generateFormJson();
-          let jsonOutput = JSON.stringify(jsonData, null, 2);
-
-          $("#json-output").text(jsonOutput);
-          $("#json-output-container").show();
-
-          // Save to local storage
-          localStorage.setItem("formBuilderData", jsonOutput);
-        });
-
-        // Clear form without confirmation
-        $("#clear-form").click(function () {
-          formData = [];
-          $("#form-container").html(
-            '<div class="empty-message">Drag sections from the catalog to begin building your form.</div>'
-          );
-          $("#json-output-container").hide();
-        });
-
-        // Export catalogs as JSON
-        $("#export-catalog-btn").click(function () {
-          let jsonData = JSON.stringify(catalogData, null, 2);
-          $("#json-editor").val(jsonData);
-
-          // Create download link
-          let blob = new Blob([jsonData], { type: "application/json" });
-          let url = URL.createObjectURL(blob);
-          let a = document.createElement("a");
-          a.download = "form_catalog.json";
-          a.href = url;
-          a.click();
-        });
-
-        // Import catalogs from JSON file
-        $("#import-catalog-file").change(function (e) {
-          let file = e.target.files[0];
-          if (!file) return;
-
-          let reader = new FileReader();
-          reader.onload = function (e) {
-            try {
-              let json = JSON.parse(e.target.result);
-              $("#json-editor").val(JSON.stringify(json, null, 2));
-            } catch (err) {
-              alert("Error parsing JSON file: " + err.message);
-            }
-          };
-          reader.readAsText(file);
-        });
-
-        // Import catalogs from JSON string
-        $("#import-catalog-btn").click(function () {
-          try {
-            let json = $("#json-editor").val();
-            if (!json) {
-              alert("Please enter JSON or import a file first");
-              return;
-            }
-
-            let parsedData = JSON.parse(json);
-
-            // Validate the JSON format
-            if (!parsedData.sections || !parsedData.fields) {
-              alert(
-                "Invalid catalog JSON format. Must contain 'sections' and 'fields' arrays."
-              );
-              return;
-            }
-
-            // Update catalog data
-            catalogData = parsedData;
-
-            // Update counters
-            updateCounters();
-
-            // Render the updated catalog
-            renderCatalog();
-
-            alert("Catalog imported successfully!");
-          } catch (err) {
-            alert("Error parsing JSON: " + err.message);
-          }
-        });
-
-        // Apply JSON directly
-        $("#apply-json-btn").click(function () {
-          try {
-            let json = $("#json-editor").val();
-            if (!json) {
-              alert("Please enter JSON first");
-              return;
-            }
-
-            let parsedData = JSON.parse(json);
-
-            // Validate the JSON format
-            if (!parsedData.sections || !parsedData.fields) {
-              alert(
-                "Invalid catalog JSON format. Must contain 'sections' and 'fields' arrays."
-              );
-              return;
-            }
-
-            // Update catalog data
-            catalogData = parsedData;
-
-            // Update counters
-            updateCounters();
-
-            // Render the updated catalog
-            renderCatalog();
-
-            alert("JSON applied successfully!");
-          } catch (err) {
-            alert("Error parsing JSON: " + err.message);
-          }
-        });
-
-        // Export everything (catalog + form)
-        $("#export-all-btn").click(function () {
-          let formJson = generateFormJson();
-
-          let exportData = {
-            catalog: catalogData,
-            form: formJson,
-          };
-
-          let jsonData = JSON.stringify(exportData, null, 2);
-
-          // Create download link
-          let blob = new Blob([jsonData], { type: "application/json" });
-          let url = URL.createObjectURL(blob);
-          let a = document.createElement("a");
-          a.download = "form_complete.json";
-          a.href = url;
-          a.click();
-        });
-
-        // Function to update counters based on catalog data
-        function updateCounters() {
-          // Get highest section ID
-          let maxSectionId = 0;
-          catalogData.sections.forEach((section) => {
-            let idNum = parseInt(section.id.replace("SEC", ""));
-            if (idNum > maxSectionId) maxSectionId = idNum;
-          });
-          sectionCounter = maxSectionId + 1;
-
-          // Get highest field ID
-          let maxFieldId = 0;
-          catalogData.fields.forEach((field) => {
-            let idNum = parseInt(field.id.replace("FLD", ""));
-            if (idNum > maxFieldId) maxFieldId = idNum;
-          });
-          fieldCounter = maxFieldId + 1;
-        }
-
-        // Add new section to catalog
-        $("#add-section").click(function () {
-          let sectionId = "SEC" + String(sectionCounter++).padStart(3, "0");
-
-          // Create a new section object with default properties
-          let newSection = {
-            id: sectionId,
-            name: "New Section",
-            label: "New Section",
-            description: "",
-            required: false,
-            visible: true,
-            editable: true,
-          };
-
-          // Add to catalog data
-          catalogData.sections.push(newSection);
-
-          // Render catalog to update UI
-          renderCatalog();
-
-          // Open properties panel to edit the new section
-          openPropertiesPanel(newSection, "catalog-section");
-        });
-
-        // Add new field to catalog
-        $("#add-field").click(function () {
-          let fieldId = "FLD" + String(fieldCounter++).padStart(3, "0");
-
-          // Create new field with default properties
-          let newField = {
-            id: fieldId,
-            name: "New Field",
-            label: "New Field",
-            type: "text",
-            description: "",
-            required: false,
-            visible: true,
-            editable: true,
-          };
-
-          // Add to catalog data
-          catalogData.fields.push(newField);
-
-          // Render catalog to update UI
-          renderCatalog();
-
-          // Open properties panel to edit the new field
-          openPropertiesPanel(newField, "catalog-field");
-        });
-
-        // Add "Reinitialize Drag & Drop" button
-        $(".buttons").append(
-          '<button id="reinit-drag-drop" class="btn-warning">Reinitialize Drag & Drop</button>'
-        );
-
-        // Bind the reinitialize button
-        $("#reinit-drag-drop").click(function () {
-          reinitializeDragDrop();
-        });
-
-        // Initialize the form builder
-        initializeCatalog();
-        initializeFormContainerDroppable();
-        initializeDroppable();
-
-        // Update the JSON editor with the initial catalog data
-        $("#json-editor").val(JSON.stringify(catalogData, null, 2));
-
-        // Hide JSON output container initially
-        $("#json-output-container").hide();
-
-        // Add a delayed initialization to ensure everything is properly set up
-        setTimeout(reinitializeDragDrop, 500);
+// pdf-generator.component.ts
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { PdfService, PDFContent, FormData, TableData } from '../services/pdf.service';
+import { Subject } from 'rxjs';
+import { takeUntil, finalize } from 'rxjs/operators';
+
+interface Product {
+  id: number;
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+@Component({
+  selector: 'app-pdf-generator',
+  templateUrl: './pdf-generator.component.html',
+  styleUrls: ['./pdf-generator.component.scss']
+})
+export class PdfGeneratorComponent implements OnInit, OnDestroy {
+  customerForm: FormGroup;
+  productForm: FormGroup;
+  products: Product[] = [];
+  isGenerating = false;
+  notes: string = '';
+  
+  // Color selection options
+  colorOptions = [
+    { name: 'Blue', value: '#3366cc' },
+    { name: 'Green', value: '#339933' },
+    { name: 'Red', value: '#cc3333' },
+    { name: 'Purple', value: '#9933cc' }
+  ];
+  
+  private destroy$ = new Subject<void>();
+  
+  constructor(
+    private fb: FormBuilder,
+    private pdfService: PdfService
+  ) {
+    // Initialize the customer form
+    this.customerForm = this.fb.group({
+      name: ['John Doe', [Validators.required]],
+      email: ['john@example.com', [Validators.required, Validators.email]],
+      phone: ['(123) 456-7890', [Validators.required]],
+      address: ['123 Main St, Anytown, ST 12345'],
+      category: ['premium', [Validators.required]]
+    });
+    
+    // Initialize the product form
+    this.productForm = this.fb.group({
+      name: ['', [Validators.required]],
+      quantity: [1, [Validators.required, Validators.min(1)]],
+      price: [0, [Validators.required, Validators.min(0)]]
+    });
+    
+    // Add some initial products
+    this.products = [
+      { id: 1, name: 'Laptop', quantity: 2, price: 800 },
+      { id: 2, name: 'Mouse', quantity: 5, price: 20 },
+      { id: 3, name: 'Keyboard', quantity: 3, price: 50 }
+    ];
+  }
+
+  ngOnInit(): void {}
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+  
+  addProduct(): void {
+    if (this.productForm.valid) {
+      const product = this.productForm.value;
+      const newId = this.products.length > 0 
+        ? Math.max(...this.products.map(p => p.id)) + 1 
+        : 1;
+      
+      this.products.push({
+        id: newId,
+        name: product.name,
+        quantity: product.quantity,
+        price: product.price
       });
-    </script>
-  </body>
-</html>
+      
+      // Reset the form
+      this.productForm.reset({
+        name: '',
+        quantity: 1,
+        price: 0
+      });
+    }
+  }
+  
+  removeProduct(id: number): void {
+    this.products = this.products.filter(p => p.id !== id);
+  }
+  
+  getTotal(product: Product): number {
+    return product.quantity * product.price;
+  }
+  
+  getOrderTotal(): number {
+    return this.products.reduce((sum, product) => 
+      sum + this.getTotal(product), 0);
+  }
+  
+  generatePDF(): void {
+    if (this.isGenerating || !this.customerForm.valid) {
+      return;
+    }
+    
+    this.isGenerating = true;
+    
+    // Prepare customer form data
+    const customer = this.customerForm.value;
+    const customerFields: FormData = {
+      title: 'Customer Information',
+      fields: [
+        { label: 'Name', value: customer.name },
+        { label: 'Email', value: customer.email },
+        { label: 'Phone', value: customer.phone }
+      ]
+    };
+    
+    // Add address if provided
+    if (customer.address) {
+      customerFields.fields.push({ label: 'Address', value: customer.address });
+    }
+    
+    // Add category with formatted text
+    let categoryText = 'Standard';
+    if (customer.category === 'premium') {
+      categoryText = 'Premium';
+    } else if (customer.category === 'basic') {
+      categoryText = 'Basic';
+    }
+    customerFields.fields.push({ label: 'Customer Category', value: categoryText });
+    
+    // Prepare order table data
+    const orderTableData: TableData = {
+      title: 'Order Details',
+      headers: ['Product', 'Quantity', 'Price', 'Total'],
+      rows: this.products.map(product => [
+        product.name,
+        product.quantity.toString(),
+        `$${product.price.toFixed(2)}`,
+        `$${this.getTotal(product).toFixed(2)}`
+      ])
+    };
+    
+    // Prepare summary data
+    const summaryData = [
+      { label: 'Total Items', value: this.products.reduce((sum, p) => sum + p.quantity, 0).toString() },
+      { label: 'Order Total', value: `$${this.getOrderTotal().toFixed(2)}` }
+    ];
+    
+    // Create PDF content structure
+    const pdfContent: PDFContent = {
+      forms: [customerFields],
+      tables: [orderTableData],
+      summary: summaryData
+    };
+    
+    // Add notes if provided
+    if (this.notes && this.notes.trim()) {
+      pdfContent.notes = this.notes;
+    }
+    
+    // Generate the PDF
+    this.pdfService.generateDataPDF(pdfContent, {
+      headerTitle: 'ACME CORPORATION',
+      customerName: customer.name,
+      filename: `${customer.name.replace(/\s+/g, '_').toLowerCase()}_order.pdf`,
+      primaryColor: this.colorOptions[0].value, // Default to first color
+      includeHeader: true,
+      includeFooter: true
+    })
+    .pipe(
+      takeUntil(this.destroy$),
+      finalize(() => this.isGenerating = false)
+    )
+    .subscribe({
+      error: (err) => {
+        console.error('PDF generation failed:', err);
+        this.isGenerating = false;
+      }
+    });
+  }
+  
+  customerFormIsValid(): boolean {
+    return this.customerForm.valid;
+  }
+  
+  productFormIsValid(): boolean {
+    return this.productForm.valid;
+  }
+  
+  hasProducts(): boolean {
+    return this.products.length > 0;
+  }
+}
+
+// pdf-generator.component.html
+<div class="container">
+  <h1>PDF Generator</h1>
+  
+  <!-- Customer Information Form -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Customer Information</h2>
+    </div>
+    <div class="card-body">
+      <form [formGroup]="customerForm">
+        <div class="form-row">
+          <div class="form-group col-md-6">
+            <label for="name">Name</label>
+            <input type="text" id="name" formControlName="name" class="form-control" 
+                   [ngClass]="{'is-invalid': customerForm.get('name')?.invalid && customerForm.get('name')?.touched}">
+            <div class="invalid-feedback" *ngIf="customerForm.get('name')?.invalid && customerForm.get('name')?.touched">
+              Name is required
+            </div>
+          </div>
+          
+          <div class="form-group col-md-6">
+            <label for="email">Email</label>
+            <input type="email" id="email" formControlName="email" class="form-control"
+                   [ngClass]="{'is-invalid': customerForm.get('email')?.invalid && customerForm.get('email')?.touched}">
+            <div class="invalid-feedback" *ngIf="customerForm.get('email')?.invalid && customerForm.get('email')?.touched">
+              Valid email is required
+            </div>
+          </div>
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group col-md-6">
+            <label for="phone">Phone</label>
+            <input type="text" id="phone" formControlName="phone" class="form-control"
+                   [ngClass]="{'is-invalid': customerForm.get('phone')?.invalid && customerForm.get('phone')?.touched}">
+            <div class="invalid-feedback" *ngIf="customerForm.get('phone')?.invalid && customerForm.get('phone')?.touched">
+              Phone number is required
+            </div>
+          </div>
+          
+          <div class="form-group col-md-6">
+            <label for="category">Category</label>
+            <select id="category" formControlName="category" class="form-control">
+              <option value="premium">Premium</option>
+              <option value="standard">Standard</option>
+              <option value="basic">Basic</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label for="address">Address</label>
+          <input type="text" id="address" formControlName="address" class="form-control">
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Products Section -->
+  <div class="card mt-4">
+    <div class="card-header">
+      <h2>Order Details</h2>
+    </div>
+    <div class="card-body">
+      <!-- Add Product Form -->
+      <form [formGroup]="productForm" (ngSubmit)="addProduct()">
+        <div class="form-row">
+          <div class="form-group col-md-5">
+            <label for="productName">Product Name</label>
+            <input type="text" id="productName" formControlName="name" class="form-control"
+                   [ngClass]="{'is-invalid': productForm.get('name')?.invalid && productForm.get('name')?.touched}">
+          </div>
+          
+          <div class="form-group col-md-3">
+            <label for="quantity">Quantity</label>
+            <input type="number" id="quantity" formControlName="quantity" class="form-control" min="1"
+                   [ngClass]="{'is-invalid': productForm.get('quantity')?.invalid && productForm.get('quantity')?.touched}">
+          </div>
+          
+          <div class="form-group col-md-3">
+            <label for="price">Price</label>
+            <div class="input-group">
+              <div class="input-group-prepend">
+                <span class="input-group-text">$</span>
+              </div>
+              <input type="number" id="price" formControlName="price" class="form-control" step="0.01" min="0"
+                     [ngClass]="{'is-invalid': productForm.get('price')?.invalid && productForm.get('price')?.touched}">
+            </div>
+          </div>
+          
+          <div class="form-group col-md-1 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary" [disabled]="!productFormIsValid()">Add</button>
+          </div>
+        </div>
+      </form>
+      
+      <!-- Products Table -->
+      <div class="table-responsive mt-3">
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Total</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let product of products">
+              <td>{{ product.name }}</td>
+              <td>{{ product.quantity }}</td>
+              <td>${{ product.price.toFixed(2) }}</td>
+              <td>${{ getTotal(product).toFixed(2) }}</td>
+              <td>
+                <button class="btn btn-sm btn-danger" (click)="removeProduct(product.id)">Remove</button>
+              </td>
+            </tr>
+            <tr *ngIf="products.length === 0">
+              <td colspan="5" class="text-center">No products added</td>
+            </tr>
+            <tr *ngIf="products.length > 0" class="table-active">
+              <td colspan="3" class="text-right"><strong>Order Total:</strong></td>
+              <td><strong>${{ getOrderTotal().toFixed(2) }}</strong></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Notes Section -->
+  <div class="card mt-4">
+    <div class="card-header">
+      <h2>Additional Notes</h2>
+    </div>
+    <div class="card-body">
+      <textarea class="form-control" rows="3" [(ngModel)]="notes" 
+                placeholder="Enter any additional notes here..."></textarea>
+    </div>
+  </div>
+  
+  <!-- Generate PDF Button -->
+  <div class="text-center mt-4 mb-5">
+    <button class="btn btn-lg btn-success" 
+            [disabled]="isGenerating || !customerFormIsValid() || !hasProducts()" 
+            (click)="generatePDF()">
+      <span *ngIf="isGenerating" class="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true"></span>
+      {{ isGenerating ? 'Generating PDF...' : 'Generate PDF' }}
+    </button>
+  </div>
+</div>
+
+// pdf-generator.component.scss
+.container {
+  max-width: 900px;
+  margin: 0
