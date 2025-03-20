@@ -4,18 +4,26 @@ private renderFormAsTable(
   yPos: number,
   options: PDFGenerationOptions,
   leftMargin: number,
-  rightMargin: number,
-  pageWidth: number,
-  pageHeight: number
+  rightMargin: number
 ): number {
-  let pageNum = pdf.internal.getNumberOfPages();
+  // Get page dimensions from the PDF instance
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  
+  // Get current page number
+  let pageNum = 1;
+  try {
+    pageNum = pdf.internal.pages.length - 1 || 1;
+  } catch (e) {
+    pageNum = 1;
+  }
   
   // Calculate available width for the table
   const availableWidth = pageWidth - leftMargin - rightMargin;
   
   // Calculate column widths in pixels
-  const labelWidth = availableWidth * 0.4; // 40% of available width
-  const valueWidth = availableWidth * 0.6; // 60% of available width
+  const labelWidth = availableWidth * 0.4;
+  const valueWidth = availableWidth * 0.6;
   
   // Add form title if provided
   if (form.title) {
@@ -24,6 +32,15 @@ private renderFormAsTable(
     pdf.setTextColor(options.primaryColor || '#3366cc');
     pdf.text(form.title, leftMargin, yPos);
     yPos += 20;
+    
+    // Add subtitle if provided
+    if (form.subtitle) {
+      pdf.setFont('helvetica', 'italic');
+      pdf.setFontSize(10);
+      pdf.setTextColor(options.secondaryColor || '#666666');
+      pdf.text(form.subtitle, leftMargin, yPos);
+      yPos += 15;
+    }
   }
   
   // Convert form fields to table rows
@@ -45,36 +62,43 @@ private renderFormAsTable(
         }
       }]);
     } else {
+      // Create the styles for both cells
+      const labelStyles: any = { 
+        fontStyle: 'bold', 
+        halign: 'left'
+      };
+      
+      const valueStyles: any = { 
+        halign: 'right'
+      };
+      
+      // If this field needs a divider, add bottom border to both cells
+      if (field.addDivider) {
+        // Add bottom border properties
+        labelStyles.lineWidth = 0.5;
+        labelStyles.lineColor = [220, 220, 220];
+        labelStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
+        
+        valueStyles.lineWidth = 0.5;
+        valueStyles.lineColor = [220, 220, 220];
+        valueStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
+        
+        // Only draw the bottom border for both cells
+        labelStyles.bottomLine = true;
+        valueStyles.bottomLine = true;
+      }
+      
       // Add regular field as a row
       tableRows.push([
         { 
           content: `${field.label}:`, 
-          styles: { 
-            fontStyle: 'bold', 
-            halign: 'left'
-          }
+          styles: labelStyles
         },
         { 
           content: field.value, 
-          styles: { 
-            halign: 'right'
-          }
+          styles: valueStyles
         }
       ]);
-      
-      // Add a divider row if specified
-      if (field.addDivider) {
-        tableRows.push([{
-          content: '',
-          colSpan: 2,
-          styles: {
-            cellPadding: 0,
-            lineWidth: 0.5,
-            lineColor: [220, 220, 220],
-            drawLine: true // Custom property we'll handle in willDrawCell
-          }
-        }]);
-      }
     }
     
     // Check for subheaders defined in subheaders array
@@ -138,22 +162,6 @@ private renderFormAsTable(
             options.footerOptions
           );
         }
-      }
-    },
-    willDrawCell: (data) => {
-      // Custom handling for divider lines
-      if (data.row.raw && data.row.raw[0] && data.row.raw[0].styles && data.row.raw[0].styles.drawLine) {
-        // Draw a divider line across the cell
-        const x1 = data.cell.x;
-        const x2 = data.cell.x + data.cell.width;
-        const y = data.cell.y + data.cell.height / 2;
-        
-        pdf.setDrawColor(220, 220, 220);
-        pdf.setLineWidth(0.5);
-        pdf.line(x1, y, x2, y);
-        
-        // Add extra spacing after divider
-        data.row.height += 8; // Add extra space after divider
       }
     }
   });
