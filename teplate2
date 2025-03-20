@@ -1,18 +1,22 @@
-if (item.type === 'form') {
-  yPos = this.renderFormAsTable(pdf, item, yPos, options, leftMargin, rightMargin);
-} else if (item.type === 'table') {
-  // Existing table logic
-}
-
-// In your PDF service
 private renderFormAsTable(
   pdf: jsPDF,
   form: FormData,
   yPos: number,
   options: PDFGenerationOptions,
   leftMargin: number,
-  rightMargin: number
+  rightMargin: number,
+  pageWidth: number,
+  pageHeight: number
 ): number {
+  let pageNum = pdf.internal.getNumberOfPages();
+  
+  // Calculate available width for the table
+  const availableWidth = pageWidth - leftMargin - rightMargin;
+  
+  // Calculate column widths in pixels
+  const labelWidth = availableWidth * 0.4; // 40% of available width
+  const valueWidth = availableWidth * 0.6; // 60% of available width
+  
   // Add form title if provided
   if (form.title) {
     pdf.setFont('helvetica', 'bold');
@@ -24,7 +28,6 @@ private renderFormAsTable(
   
   // Convert form fields to table rows
   const tableRows: any[][] = [];
-  let currentSubheader = null;
   
   for (let i = 0; i < form.fields.length; i++) {
     const field = form.fields[i];
@@ -32,29 +35,45 @@ private renderFormAsTable(
     // Check if this is a subheader field
     if (field.type === 'subheader') {
       // Add a subheader row (spans both columns)
-      tableRows.push([{ content: field.label, colSpan: 2, styles: { 
-        fontStyle: 'bold', 
-        textColor: options.secondaryColor || [100, 100, 100],
-        cellPadding: { top: 5, bottom: 2 }
-      }}]);
+      tableRows.push([{
+        content: field.label,
+        colSpan: 2,
+        styles: { 
+          fontStyle: 'bold', 
+          textColor: options.secondaryColor || [100, 100, 100],
+          cellPadding: { top: 5, bottom: 2 }
+        }
+      }]);
     } else {
       // Add regular field as a row
       tableRows.push([
-        { content: `${field.label}:`, styles: { 
-          fontStyle: 'bold', 
-          halign: 'left'
-        }},
-        { content: field.value, styles: { 
-          halign: 'right'
-        }}
+        { 
+          content: `${field.label}:`, 
+          styles: { 
+            fontStyle: 'bold', 
+            halign: 'left'
+          }
+        },
+        { 
+          content: field.value, 
+          styles: { 
+            halign: 'right'
+          }
+        }
       ]);
       
       // Add a divider row if specified
       if (field.addDivider) {
-        tableRows.push([{ content: '', colSpan: 2, styles: {
-          cellPadding: { top: 0, bottom: 10 },
-          cellWidth: 'auto'
-        }}]);
+        tableRows.push([{
+          content: '',
+          colSpan: 2,
+          styles: {
+            cellPadding: 0,
+            lineWidth: 0.5,
+            lineColor: [220, 220, 220],
+            drawLine: true // Custom property we'll handle in willDrawCell
+          }
+        }]);
       }
     }
     
@@ -62,11 +81,15 @@ private renderFormAsTable(
     if (form.subheaders) {
       const subheader = form.subheaders.find(sh => sh.afterFieldIndex === i);
       if (subheader) {
-        tableRows.push([{ content: subheader.text, colSpan: 2, styles: { 
-          fontStyle: 'bold', 
-          textColor: options.secondaryColor || [100, 100, 100],
-          cellPadding: { top: 5, bottom: 2 }
-        }}]);
+        tableRows.push([{
+          content: subheader.text,
+          colSpan: 2,
+          styles: { 
+            fontStyle: 'bold', 
+            textColor: options.secondaryColor || [100, 100, 100],
+            cellPadding: { top: 10, bottom: 5 }
+          }
+        }]);
       }
     }
   }
@@ -78,18 +101,60 @@ private renderFormAsTable(
     theme: 'plain',
     styles: {
       fontSize: 10,
-      cellPadding: 5
+      cellPadding: 5,
+      lineWidth: 0 // No borders by default
     },
     columnStyles: {
-      0: { cellWidth: '40%' },
-      1: { cellWidth: '60%' }
+      0: { cellWidth: labelWidth },
+      1: { cellWidth: valueWidth }
     },
     margin: { left: leftMargin, right: rightMargin },
     showHead: false,
-    tableWidth: 'auto',
     didDrawPage: (data) => {
-      // Add header and footer on new pages
-      // (Similar to table rendering logic)
+      // If a new page was created, add header and footer
+      if (data.pageNumber > pageNum) {
+        pageNum = data.pageNumber;
+        
+        if (options.includeHeader) {
+          this.addHeaderToPDF(
+            pdf, 
+            pageWidth, 
+            options.customerName || 'Customer', 
+            new Date().toLocaleDateString(), 
+            options.headerTitle || 'COMPANY NAME',
+            options.primaryColor || '#3366cc', 
+            options.companyLogo, 
+            options.headerText
+          );
+        }
+        
+        if (options.includeFooter) {
+          this.addFooterToPDF(
+            pdf, 
+            pageWidth, 
+            pageHeight, 
+            pageNum, 
+            options.secondaryColor || '#666666', 
+            options.footerOptions
+          );
+        }
+      }
+    },
+    willDrawCell: (data) => {
+      // Custom handling for divider lines
+      if (data.row.raw && data.row.raw[0] && data.row.raw[0].styles && data.row.raw[0].styles.drawLine) {
+        // Draw a divider line across the cell
+        const x1 = data.cell.x;
+        const x2 = data.cell.x + data.cell.width;
+        const y = data.cell.y + data.cell.height / 2;
+        
+        pdf.setDrawColor(220, 220, 220);
+        pdf.setLineWidth(0.5);
+        pdf.line(x1, y, x2, y);
+        
+        // Add extra spacing after divider
+        data.row.height += 8; // Add extra space after divider
+      }
     }
   });
   
