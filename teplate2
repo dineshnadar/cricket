@@ -1,15 +1,22 @@
 // pdf-generator.component.ts
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { PdfService, PDFContent, FormData, TableData } from '../services/pdf.service';
 import { Subject } from 'rxjs';
 import { takeUntil, finalize } from 'rxjs/operators';
+import { PdfService, PDFContent, FormData, TableData, ContentItem } from '../services/pdf.service';
 
 interface Product {
   id: number;
   name: string;
   quantity: number;
   price: number;
+}
+
+interface Address {
+  street: string;
+  city: string;
+  state: string;
+  zipCode: string;
 }
 
 @Component({
@@ -19,17 +26,28 @@ interface Product {
 })
 export class PdfGeneratorComponent implements OnInit, OnDestroy {
   customerForm: FormGroup;
+  shippingForm: FormGroup;
   productForm: FormGroup;
   products: Product[] = [];
   isGenerating = false;
-  notes: string = '';
   
-  // Color selection options
-  colorOptions = [
-    { name: 'Blue', value: '#3366cc' },
-    { name: 'Green', value: '#339933' },
-    { name: 'Red', value: '#cc3333' },
-    { name: 'Purple', value: '#9933cc' }
+  // Company colors
+  primaryColor = '#3366cc';
+  secondaryColor = '#666666';
+  
+  // Customer types
+  customerTypes = [
+    { value: 'premium', label: 'Premium' },
+    { value: 'standard', label: 'Standard' },
+    { value: 'basic', label: 'Basic' }
+  ];
+  
+  // US States for dropdown
+  states = [
+    { value: 'AL', label: 'Alabama' },
+    { value: 'AK', label: 'Alaska' },
+    // Add other states here
+    { value: 'WY', label: 'Wyoming' }
   ];
   
   private destroy$ = new Subject<void>();
@@ -37,144 +55,158 @@ export class PdfGeneratorComponent implements OnInit, OnDestroy {
   constructor(
     private fb: FormBuilder,
     private pdfService: PdfService
-  ) {
-    // Initialize the customer form
-    this.customerForm = this.fb.group({
-      name: ['John Doe', [Validators.required]],
-      email: ['john@example.com', [Validators.required, Validators.email]],
-      phone: ['(123) 456-7890', [Validators.required]],
-      address: ['123 Main St, Anytown, ST 12345'],
-      category: ['premium', [Validators.required]]
-    });
-    
-    // Initialize the product form
-    this.productForm = this.fb.group({
-      name: ['', [Validators.required]],
-      quantity: [1, [Validators.required, Validators.min(1)]],
-      price: [0, [Validators.required, Validators.min(0)]]
-    });
-    
-    // Add some initial products
-    this.products = [
-      { id: 1, name: 'Laptop', quantity: 2, price: 800 },
-      { id: 2, name: 'Mouse', quantity: 5, price: 20 },
-      { id: 3, name: 'Keyboard', quantity: 3, price: 50 }
-    ];
+  ) { }
+
+  ngOnInit(): void {
+    this.initForms();
+    this.loadSampleData();
   }
-
-  ngOnInit(): void {}
-
+  
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
   }
   
+  private initForms(): void {
+    // Initialize customer form
+    this.customerForm = this.fb.group({
+      name: ['', [Validators.required]],
+      email: ['', [Validators.required, Validators.email]],
+      phone: ['', [Validators.required, Validators.pattern(/^\(\d{3}\) \d{3}-\d{4}$/)]],
+      customerType: ['standard', Validators.required],
+      referenceNumber: ['', Validators.maxLength(20)]
+    });
+    
+    // Initialize shipping form
+    this.shippingForm = this.fb.group({
+      street: ['', Validators.required],
+      city: ['', Validators.required],
+      state: ['', Validators.required],
+      zipCode: ['', [Validators.required, Validators.pattern(/^\d{5}(-\d{4})?$/)]]
+    });
+    
+    // Initialize product form
+    this.productForm = this.fb.group({
+      name: ['', Validators.required],
+      quantity: [1, [Validators.required, Validators.min(1)]],
+      price: [0, [Validators.required, Validators.min(0.01)]]
+    });
+  }
+  
+  private loadSampleData(): void {
+    // Load sample data for demo
+    this.customerForm.patchValue({
+      name: 'John Doe',
+      email: 'john.doe@example.com',
+      phone: '(555) 123-4567',
+      customerType: 'premium',
+      referenceNumber: 'REF-12345'
+    });
+    
+    this.shippingForm.patchValue({
+      street: '123 Main Street',
+      city: 'Anytown',
+      state: 'CA',
+      zipCode: '12345'
+    });
+    
+    // Add sample products
+    this.products = [
+      { id: 1, name: 'Premium Laptop', quantity: 1, price: 1299.99 },
+      { id: 2, name: 'Wireless Mouse', quantity: 2, price: 24.99 },
+      { id: 3, name: 'USB-C Adapter', quantity: 3, price: 19.95 }
+    ];
+  }
+  
   addProduct(): void {
-    if (this.productForm.valid) {
-      const product = this.productForm.value;
-      const newId = this.products.length > 0 
-        ? Math.max(...this.products.map(p => p.id)) + 1 
-        : 1;
-      
-      this.products.push({
-        id: newId,
-        name: product.name,
-        quantity: product.quantity,
-        price: product.price
-      });
-      
-      // Reset the form
-      this.productForm.reset({
-        name: '',
-        quantity: 1,
-        price: 0
-      });
+    if (this.productForm.invalid) {
+      this.markFormGroupTouched(this.productForm);
+      return;
     }
+    
+    const formValue = this.productForm.value;
+    const newId = this.getNextProductId();
+    
+    this.products.push({
+      id: newId,
+      name: formValue.name,
+      quantity: formValue.quantity,
+      price: formValue.price
+    });
+    
+    // Reset form after adding
+    this.productForm.reset({
+      name: '',
+      quantity: 1,
+      price: 0
+    });
   }
   
   removeProduct(id: number): void {
     this.products = this.products.filter(p => p.id !== id);
   }
   
-  getTotal(product: Product): number {
+  private getNextProductId(): number {
+    return this.products.length > 0 
+      ? Math.max(...this.products.map(p => p.id)) + 1 
+      : 1;
+  }
+  
+  calculateProductTotal(product: Product): number {
     return product.quantity * product.price;
   }
   
-  getOrderTotal(): number {
+  calculateSubtotal(): number {
     return this.products.reduce((sum, product) => 
-      sum + this.getTotal(product), 0);
+      sum + this.calculateProductTotal(product), 0);
+  }
+  
+  calculateTax(): number {
+    return this.calculateSubtotal() * 0.07; // 7% tax
+  }
+  
+  calculateShipping(): number {
+    return this.products.length > 0 ? 15.00 : 0.00;
+  }
+  
+  calculateTotal(): number {
+    return this.calculateSubtotal() + this.calculateTax() + this.calculateShipping();
   }
   
   generatePDF(): void {
-    if (this.isGenerating || !this.customerForm.valid) {
+    if (this.isGenerating) return;
+    
+    if (this.customerForm.invalid || this.shippingForm.invalid) {
+      this.markFormGroupTouched(this.customerForm);
+      this.markFormGroupTouched(this.shippingForm);
+      return;
+    }
+    
+    if (this.products.length === 0) {
+      alert('Please add at least one product to the order.');
       return;
     }
     
     this.isGenerating = true;
     
-    // Prepare customer form data
-    const customer = this.customerForm.value;
-    const customerFields: FormData = {
-      title: 'Customer Information',
-      fields: [
-        { label: 'Name', value: customer.name },
-        { label: 'Email', value: customer.email },
-        { label: 'Phone', value: customer.phone }
-      ]
-    };
+    const pdfContent = this.preparePdfContent();
     
-    // Add address if provided
-    if (customer.address) {
-      customerFields.fields.push({ label: 'Address', value: customer.address });
-    }
-    
-    // Add category with formatted text
-    let categoryText = 'Standard';
-    if (customer.category === 'premium') {
-      categoryText = 'Premium';
-    } else if (customer.category === 'basic') {
-      categoryText = 'Basic';
-    }
-    customerFields.fields.push({ label: 'Customer Category', value: categoryText });
-    
-    // Prepare order table data
-    const orderTableData: TableData = {
-      title: 'Order Details',
-      headers: ['Product', 'Quantity', 'Price', 'Total'],
-      rows: this.products.map(product => [
-        product.name,
-        product.quantity.toString(),
-        `$${product.price.toFixed(2)}`,
-        `$${this.getTotal(product).toFixed(2)}`
-      ])
-    };
-    
-    // Prepare summary data
-    const summaryData = [
-      { label: 'Total Items', value: this.products.reduce((sum, p) => sum + p.quantity, 0).toString() },
-      { label: 'Order Total', value: `$${this.getOrderTotal().toFixed(2)}` }
-    ];
-    
-    // Create PDF content structure
-    const pdfContent: PDFContent = {
-      forms: [customerFields],
-      tables: [orderTableData],
-      summary: summaryData
-    };
-    
-    // Add notes if provided
-    if (this.notes && this.notes.trim()) {
-      pdfContent.notes = this.notes;
-    }
-    
-    // Generate the PDF
     this.pdfService.generateDataPDF(pdfContent, {
       headerTitle: 'ACME CORPORATION',
-      customerName: customer.name,
-      filename: `${customer.name.replace(/\s+/g, '_').toLowerCase()}_order.pdf`,
-      primaryColor: this.colorOptions[0].value, // Default to first color
-      includeHeader: true,
-      includeFooter: true
+      headerText: 'Order Processing System',
+      customerName: this.customerForm.get('name')?.value || 'Customer',
+      filename: this.generateFilename(),
+      primaryColor: this.primaryColor,
+      secondaryColor: this.secondaryColor,
+      footerOptions: {
+        leftText: 'ACME Corporation',
+        leftSecondaryText: 'Customer Support: (800) 555-1234',
+        rightText: 'Thank you for your business',
+        topText: 'Keep this document for your records',
+        showTimestamp: true,
+        timestampPrefix: 'Generated on:',
+        showPageNumber: true
+      }
     })
     .pipe(
       takeUntil(this.destroy$),
@@ -188,175 +220,102 @@ export class PdfGeneratorComponent implements OnInit, OnDestroy {
     });
   }
   
-  customerFormIsValid(): boolean {
-    return this.customerForm.valid;
+  private preparePdfContent(): PDFContent {
+    const customerData = this.customerForm.value;
+    const shippingData = this.shippingForm.value;
+    
+    // Create content items in desired order
+    const contentItems: ContentItem[] = [];
+    
+    // 1. Customer Information Form
+    const customerInfoForm: FormData = {
+      type: 'form',
+      title: 'Customer Information',
+      fields: [
+        { label: 'Name', value: customerData.name || '' },
+        { label: 'Email', value: customerData.email || '', addDivider: true },
+        { label: 'Phone', value: customerData.phone || '' },
+        { label: 'Customer Type', value: this.getCustomerTypeLabel(customerData.customerType) || 'Standard' },
+        { label: 'Reference Number', value: customerData.referenceNumber || 'N/A' }
+      ],
+      subheaders: [
+        { text: 'Contact Details', afterFieldIndex: 0 }
+      ]
+    };
+    contentItems.push(customerInfoForm);
+    
+    // 2. Products Table
+    const productsTable: TableData = {
+      type: 'table',
+      title: 'Order Items',
+      headers: ['Item', 'Quantity', 'Unit Price', 'Total'],
+      rows: this.products.map(product => [
+        product.name,
+        product.quantity.toString(),
+        `$${product.price.toFixed(2)}`,
+        `$${this.calculateProductTotal(product).toFixed(2)}`
+      ])
+    };
+    contentItems.push(productsTable);
+    
+    // 3. Shipping Information Form
+    const shippingInfoForm: FormData = {
+      type: 'form',
+      title: 'Shipping Information',
+      fields: [
+        { label: 'Street Address', value: shippingData.street || '' },
+        { label: 'City', value: shippingData.city || '' },
+        { label: 'State', value: shippingData.state || '' },
+        { label: 'Zip Code', value: shippingData.zipCode || '' }
+      ]
+    };
+    contentItems.push(shippingInfoForm);
+    
+    // 4. Order Summary Table
+    const orderSummaryTable: TableData = {
+      type: 'table',
+      title: 'Order Summary',
+      headers: ['Description', 'Amount'],
+      rows: [
+        ['Subtotal', `$${this.calculateSubtotal().toFixed(2)}`],
+        ['Tax (7%)', `$${this.calculateTax().toFixed(2)}`],
+        ['Shipping & Handling', `$${this.calculateShipping().toFixed(2)}`],
+        ['Total', `$${this.calculateTotal().toFixed(2)}`]
+      ]
+    };
+    contentItems.push(orderSummaryTable);
+    
+    return { contentItems };
   }
   
-  productFormIsValid(): boolean {
-    return this.productForm.valid;
+  private generateFilename(): string {
+    const customerName = this.customerForm.get('name')?.value || 'customer';
+    const timestamp = new Date().toISOString().split('T')[0];
+    const sanitizedName = customerName.toLowerCase().replace(/\s+/g, '_');
+    
+    return `order_${sanitizedName}_${timestamp}.pdf`;
   }
   
-  hasProducts(): boolean {
-    return this.products.length > 0;
+  private getCustomerTypeLabel(value: string): string {
+    const type = this.customerTypes.find(t => t.value === value);
+    return type ? type.label : 'Standard';
+  }
+  
+  private markFormGroupTouched(formGroup: FormGroup): void {
+    Object.keys(formGroup.controls).forEach(key => {
+      const control = formGroup.get(key);
+      control?.markAsTouched();
+      
+      if (control instanceof FormGroup) {
+        this.markFormGroupTouched(control);
+      }
+    });
+  }
+  
+  formatCurrency(value: number): string {
+    return value.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    });
   }
 }
-
-// pdf-generator.component.html
-<div class="container">
-  <h1>PDF Generator</h1>
-  
-  <!-- Customer Information Form -->
-  <div class="card">
-    <div class="card-header">
-      <h2>Customer Information</h2>
-    </div>
-    <div class="card-body">
-      <form [formGroup]="customerForm">
-        <div class="form-row">
-          <div class="form-group col-md-6">
-            <label for="name">Name</label>
-            <input type="text" id="name" formControlName="name" class="form-control" 
-                   [ngClass]="{'is-invalid': customerForm.get('name')?.invalid && customerForm.get('name')?.touched}">
-            <div class="invalid-feedback" *ngIf="customerForm.get('name')?.invalid && customerForm.get('name')?.touched">
-              Name is required
-            </div>
-          </div>
-          
-          <div class="form-group col-md-6">
-            <label for="email">Email</label>
-            <input type="email" id="email" formControlName="email" class="form-control"
-                   [ngClass]="{'is-invalid': customerForm.get('email')?.invalid && customerForm.get('email')?.touched}">
-            <div class="invalid-feedback" *ngIf="customerForm.get('email')?.invalid && customerForm.get('email')?.touched">
-              Valid email is required
-            </div>
-          </div>
-        </div>
-        
-        <div class="form-row">
-          <div class="form-group col-md-6">
-            <label for="phone">Phone</label>
-            <input type="text" id="phone" formControlName="phone" class="form-control"
-                   [ngClass]="{'is-invalid': customerForm.get('phone')?.invalid && customerForm.get('phone')?.touched}">
-            <div class="invalid-feedback" *ngIf="customerForm.get('phone')?.invalid && customerForm.get('phone')?.touched">
-              Phone number is required
-            </div>
-          </div>
-          
-          <div class="form-group col-md-6">
-            <label for="category">Category</label>
-            <select id="category" formControlName="category" class="form-control">
-              <option value="premium">Premium</option>
-              <option value="standard">Standard</option>
-              <option value="basic">Basic</option>
-            </select>
-          </div>
-        </div>
-        
-        <div class="form-group">
-          <label for="address">Address</label>
-          <input type="text" id="address" formControlName="address" class="form-control">
-        </div>
-      </form>
-    </div>
-  </div>
-  
-  <!-- Products Section -->
-  <div class="card mt-4">
-    <div class="card-header">
-      <h2>Order Details</h2>
-    </div>
-    <div class="card-body">
-      <!-- Add Product Form -->
-      <form [formGroup]="productForm" (ngSubmit)="addProduct()">
-        <div class="form-row">
-          <div class="form-group col-md-5">
-            <label for="productName">Product Name</label>
-            <input type="text" id="productName" formControlName="name" class="form-control"
-                   [ngClass]="{'is-invalid': productForm.get('name')?.invalid && productForm.get('name')?.touched}">
-          </div>
-          
-          <div class="form-group col-md-3">
-            <label for="quantity">Quantity</label>
-            <input type="number" id="quantity" formControlName="quantity" class="form-control" min="1"
-                   [ngClass]="{'is-invalid': productForm.get('quantity')?.invalid && productForm.get('quantity')?.touched}">
-          </div>
-          
-          <div class="form-group col-md-3">
-            <label for="price">Price</label>
-            <div class="input-group">
-              <div class="input-group-prepend">
-                <span class="input-group-text">$</span>
-              </div>
-              <input type="number" id="price" formControlName="price" class="form-control" step="0.01" min="0"
-                     [ngClass]="{'is-invalid': productForm.get('price')?.invalid && productForm.get('price')?.touched}">
-            </div>
-          </div>
-          
-          <div class="form-group col-md-1 d-flex align-items-end">
-            <button type="submit" class="btn btn-primary" [disabled]="!productFormIsValid()">Add</button>
-          </div>
-        </div>
-      </form>
-      
-      <!-- Products Table -->
-      <div class="table-responsive mt-3">
-        <table class="table table-striped">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>Quantity</th>
-              <th>Price</th>
-              <th>Total</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let product of products">
-              <td>{{ product.name }}</td>
-              <td>{{ product.quantity }}</td>
-              <td>${{ product.price.toFixed(2) }}</td>
-              <td>${{ getTotal(product).toFixed(2) }}</td>
-              <td>
-                <button class="btn btn-sm btn-danger" (click)="removeProduct(product.id)">Remove</button>
-              </td>
-            </tr>
-            <tr *ngIf="products.length === 0">
-              <td colspan="5" class="text-center">No products added</td>
-            </tr>
-            <tr *ngIf="products.length > 0" class="table-active">
-              <td colspan="3" class="text-right"><strong>Order Total:</strong></td>
-              <td><strong>${{ getOrderTotal().toFixed(2) }}</strong></td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Notes Section -->
-  <div class="card mt-4">
-    <div class="card-header">
-      <h2>Additional Notes</h2>
-    </div>
-    <div class="card-body">
-      <textarea class="form-control" rows="3" [(ngModel)]="notes" 
-                placeholder="Enter any additional notes here..."></textarea>
-    </div>
-  </div>
-  
-  <!-- Generate PDF Button -->
-  <div class="text-center mt-4 mb-5">
-    <button class="btn btn-lg btn-success" 
-            [disabled]="isGenerating || !customerFormIsValid() || !hasProducts()" 
-            (click)="generatePDF()">
-      <span *ngIf="isGenerating" class="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true"></span>
-      {{ isGenerating ? 'Generating PDF...' : 'Generate PDF' }}
-    </button>
-  </div>
-</div>
-
-// pdf-generator.component.scss
-.container {
-  max-width: 900px;
-  margin: 0
