@@ -38,12 +38,14 @@ export interface TableData {
 
 export interface FormData {
   title?: string;
+  subtitle?: string;
   fields: FormField[];
   subheaders?: SubheaderData[];
   type: 'form';
 }
 
 export interface FormField {
+  type?: 'field' | 'subheader';
   label: string; 
   value: string;
   addDivider?: boolean;
@@ -100,172 +102,101 @@ export class PdfService {
       
       const leftMargin = 40;
       const rightMargin = 40;
-      const contentWidth = pageWidth - leftMargin - rightMargin;
+      
+      // Calculate header and footer heights to prevent overlap
+      const headerHeight = options.includeHeader ? 60 : 20;
+      const footerHeight = options.includeFooter ? 60 : 20;
       
       let yPos = options.includeHeader ? 80 : 40;
       let pageNum = 1;
       
       if (options.includeHeader) {
-        this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                           new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                           options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
+        this.addHeaderToPDF(
+          pdf, 
+          pageWidth, 
+          options.customerName || 'Customer', 
+          new Date().toLocaleDateString(), 
+          options.headerTitle || 'COMPANY NAME',
+          options.primaryColor || '#3366cc', 
+          options.companyLogo, 
+          options.headerText
+        );
       }
       
       for (const item of content.contentItems) {
         if (item.type === 'form') {
-          const form = item;
-          
-          if (yPos + 20 + (form.fields.length * 20) > pageHeight - 60) {
-            if (options.includeFooter) {
-              this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum, options.secondaryColor || '#666666', options.footerOptions);
-            }
-            pdf.addPage();
-            pageNum++;
-            yPos = options.includeHeader ? 80 : 40;
-            
-            if (options.includeHeader) {
-              this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                                 new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                                 options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
-            }
-          }
-          
-          if (form.title) {
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(12);
-            pdf.setTextColor(options.primaryColor || '#3366cc');
-            pdf.text(form.title, leftMargin, yPos);
-            yPos += 20;
-          }
-          
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(10);
-          pdf.setTextColor(0, 0, 0);
-          
-          let fieldCounter = 0;
-          for (const field of form.fields) {
-            if (yPos + 20 > pageHeight - 60) {
-              if (options.includeFooter) {
-                this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum, options.secondaryColor || '#666666', options.footerOptions);
-              }
-              pdf.addPage();
-              pageNum++;
-              yPos = options.includeHeader ? 80 : 40;
-              
-              if (options.includeHeader) {
-                this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                                   new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                                   options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
-              }
-            }
-            
-            pdf.setFont('helvetica', 'bold');
-            pdf.text(`${field.label}:`, leftMargin, yPos);
-            
-            pdf.setFont('helvetica', 'normal');
-            pdf.text(field.value, pageWidth - rightMargin, yPos, { align: 'right' });
-            yPos += 20;
-            
-            if (field.addDivider) {
-              pdf.setDrawColor(220, 220, 220);
-              pdf.setLineWidth(0.5);
-              pdf.line(leftMargin, yPos - 10, pageWidth - rightMargin, yPos - 10);
-            }
-            
-            if (form.subheaders) {
-              const subheader = form.subheaders.find(sh => sh.afterFieldIndex === fieldCounter);
-              if (subheader) {
-                yPos += 10;
-                pdf.setFont('helvetica', 'bold');
-                pdf.setFontSize(11);
-                pdf.setTextColor(options.secondaryColor || '#666666');
-                pdf.text(subheader.text, leftMargin, yPos);
-                yPos += 15;
-                
-                pdf.setTextColor(0, 0, 0);
-              }
-            }
-            
-            fieldCounter++;
-          }
-          
-          yPos += 20;
-          
+          yPos = this.renderFormAsTable(
+            pdf, 
+            item, 
+            yPos, 
+            options, 
+            leftMargin, 
+            rightMargin,
+            pageWidth,
+            pageHeight,
+            headerHeight,
+            footerHeight
+          );
         } else if (item.type === 'table') {
-          const table = item;
-          
-          if (table.title) {
-            if (yPos + 30 > pageHeight - 60) {
-              if (options.includeFooter) {
-                this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum, options.secondaryColor || '#666666', options.footerOptions);
-              }
-              pdf.addPage();
-              pageNum++;
-              yPos = options.includeHeader ? 80 : 40;
-              
-              if (options.includeHeader) {
-                this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                                   new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                                   options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
-              }
-            }
-            
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(12);
-            pdf.setTextColor(options.primaryColor || '#3366cc');
-            pdf.text(table.title, leftMargin, yPos);
-            yPos += 20;
+          yPos = this.renderTableWithPagination(
+            pdf,
+            item,
+            yPos,
+            options,
+            leftMargin,
+            rightMargin,
+            pageWidth,
+            pageHeight,
+            headerHeight,
+            footerHeight
+          );
+        }
+        
+        // Add spacing between content items
+        yPos += 20;
+        
+        // Check if we need a page break before the next content item
+        if (yPos > pageHeight - footerHeight - 40) {
+          if (options.includeFooter) {
+            this.addFooterToPDF(
+              pdf, 
+              pageWidth, 
+              pageHeight, 
+              pageNum, 
+              options.secondaryColor || '#666666', 
+              options.footerOptions
+            );
           }
           
-          autoTable(pdf, {
-            startY: yPos,
-            head: [table.headers],
-            body: table.rows,
-            theme: 'grid',
-            headStyles: {
-              fillColor: options.primaryColor || '#3366cc',
-              textColor: 255,
-              fontStyle: 'bold'
-            },
-            margin: { left: leftMargin, right: rightMargin },
-            didDrawPage: (data) => {
-              if (data.pageNumber > pageNum) {
-                if (options.includeHeader) {
-                  this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                                     new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                                     options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
-                }
-                
-                if (options.includeFooter) {
-                  this.addFooterToPDF(pdf, pageWidth, pageHeight, data.pageNumber, options.secondaryColor || '#666666', options.footerOptions);
-                }
-                
-                pageNum = data.pageNumber;
-              }
-            }
-          });
+          pdf.addPage();
+          pageNum++;
           
-          yPos = (pdf as any).lastAutoTable.finalY + 20;
-          
-          if (yPos > pageHeight - 80) {
-            if (options.includeFooter) {
-              this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum, options.secondaryColor || '#666666', options.footerOptions);
-            }
-            pdf.addPage();
-            pageNum++;
-            yPos = options.includeHeader ? 80 : 40;
-            
-            if (options.includeHeader) {
-              this.addHeaderToPDF(pdf, pageWidth, options.customerName || 'Customer', 
-                                 new Date().toLocaleDateString(), options.headerTitle || 'COMPANY NAME',
-                                 options.primaryColor || '#3366cc', options.companyLogo, options.headerText);
-            }
+          if (options.includeHeader) {
+            this.addHeaderToPDF(
+              pdf, 
+              pageWidth, 
+              options.customerName || 'Customer', 
+              new Date().toLocaleDateString(), 
+              options.headerTitle || 'COMPANY NAME',
+              options.primaryColor || '#3366cc', 
+              options.companyLogo, 
+              options.headerText
+            );
           }
+          
+          yPos = headerHeight;
         }
       }
       
       if (options.includeFooter) {
-        this.addFooterToPDF(pdf, pageWidth, pageHeight, pageNum, options.secondaryColor || '#666666', options.footerOptions);
+        this.addFooterToPDF(
+          pdf, 
+          pageWidth, 
+          pageHeight, 
+          pageNum, 
+          options.secondaryColor || '#666666', 
+          options.footerOptions
+        );
       }
       
       pdf.save(options.filename);
@@ -273,6 +204,372 @@ export class PdfService {
       console.error('Error generating PDF:', error);
       throw error;
     }
+  }
+  
+  private renderFormAsTable(
+    pdf: jsPDF,
+    form: FormData,
+    yPos: number,
+    options: PDFGenerationOptions,
+    leftMargin: number,
+    rightMargin: number,
+    pageWidth: number,
+    pageHeight: number,
+    headerHeight: number,
+    footerHeight: number
+  ): number {
+    // Get current page number
+    let pageNum = 1;
+    try {
+      pageNum = pdf.internal.pages.length - 1 || 1;
+    } catch (e) {
+      pageNum = 1;
+    }
+    
+    // Calculate available width for the table
+    const availableWidth = pageWidth - leftMargin - rightMargin;
+    
+    // Calculate column widths in pixels
+    const labelWidth = availableWidth * 0.4;
+    const valueWidth = availableWidth * 0.6;
+    
+    // Add form title if provided
+    if (form.title) {
+      // Check if we have enough space for title
+      if (yPos + 35 > pageHeight - footerHeight) {
+        if (options.includeFooter) {
+          this.addFooterToPDF(
+            pdf, 
+            pageWidth, 
+            pageHeight, 
+            pageNum, 
+            options.secondaryColor || '#666666', 
+            options.footerOptions
+          );
+        }
+        
+        pdf.addPage();
+        pageNum++;
+        
+        if (options.includeHeader) {
+          this.addHeaderToPDF(
+            pdf, 
+            pageWidth, 
+            options.customerName || 'Customer', 
+            new Date().toLocaleDateString(), 
+            options.headerTitle || 'COMPANY NAME',
+            options.primaryColor || '#3366cc', 
+            options.companyLogo, 
+            options.headerText
+          );
+        }
+        
+        yPos = headerHeight;
+      }
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(options.primaryColor || '#3366cc');
+      pdf.text(form.title, leftMargin, yPos);
+      yPos += 20;
+      
+      // Add subtitle if provided
+      if (form.subtitle) {
+        pdf.setFont('helvetica', 'italic');
+        pdf.setFontSize(10);
+        pdf.setTextColor(options.secondaryColor || '#666666');
+        pdf.text(form.subtitle, leftMargin, yPos);
+        yPos += 15;
+      }
+    }
+    
+    // Convert form fields to table rows
+    const tableRows: any[][] = [];
+    
+    for (let i = 0; i < form.fields.length; i++) {
+      const field = form.fields[i];
+      
+      // Check if this is a subheader field
+      if (field.type === 'subheader') {
+        // Add a subheader row (spans both columns)
+        tableRows.push([{
+          content: field.label,
+          colSpan: 2,
+          styles: { 
+            fontStyle: 'bold', 
+            textColor: options.secondaryColor || [100, 100, 100],
+            cellPadding: { top: 5, bottom: 2 }
+          }
+        }]);
+      } else {
+        // Create the styles for both cells
+        const labelStyles: any = { 
+          fontStyle: 'bold', 
+          halign: 'left'
+        };
+        
+        const valueStyles: any = { 
+          halign: 'right'
+        };
+        
+        // If this field needs a divider, add bottom border to both cells
+        if (field.addDivider) {
+          // Add bottom border properties
+          labelStyles.lineWidth = 0.5;
+          labelStyles.lineColor = [220, 220, 220];
+          labelStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
+          
+          valueStyles.lineWidth = 0.5;
+          valueStyles.lineColor = [220, 220, 220];
+          valueStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
+          
+          // Only draw the bottom border for both cells
+          labelStyles.lineWidths = { bottom: 0.5, top: 0, left: 0, right: 0 };
+          valueStyles.lineWidths = { bottom: 0.5, top: 0, left: 0, right: 0 };
+        }
+        
+        // Add regular field as a row
+        tableRows.push([
+          { 
+            content: `${field.label}:`, 
+            styles: labelStyles
+          },
+          { 
+            content: field.value, 
+            styles: valueStyles
+          }
+        ]);
+      }
+      
+      // Check for subheaders defined in subheaders array
+      if (form.subheaders) {
+        const subheader = form.subheaders.find(sh => sh.afterFieldIndex === i);
+        if (subheader) {
+          tableRows.push([{
+            content: subheader.text,
+            colSpan: 2,
+            styles: { 
+              fontStyle: 'bold', 
+              textColor: options.secondaryColor || [100, 100, 100],
+              cellPadding: { top: 10, bottom: 5 }
+            }
+          }]);
+        }
+      }
+    }
+    
+    // Use autotable to render the form
+    autoTable(pdf, {
+      startY: yPos,
+      body: tableRows,
+      theme: 'plain',
+      styles: {
+        fontSize: 10,
+        cellPadding: 5,
+        lineWidth: 0 // No borders by default
+      },
+      columnStyles: {
+        0: { cellWidth: labelWidth },
+        1: { cellWidth: valueWidth }
+      },
+      margin: { 
+        left: leftMargin, 
+        right: rightMargin,
+        top: headerHeight, 
+        bottom: footerHeight 
+      },
+      showHead: false,
+      didParseCell: (data) => {
+        // Check if this cell would be too close to the footer
+        const cellBottom = data.row.height + data.cursor.y;
+        if (cellBottom > pageHeight - footerHeight - 10) {
+          // Force a page break before this cell
+          data.cell.styles.addPageBreak = true;
+        }
+      },
+      didDrawCell: (data) => {
+        // For cells with dividers, ensure the border is drawn properly
+        if (data.cell.styles.lineWidths && data.cell.styles.lineWidths.bottom > 0) {
+          // Draw a consistent border line
+          const x1 = data.cell.x;
+          const x2 = data.cell.x + data.cell.width;
+          const y = data.cell.y + data.cell.height;
+          
+          pdf.setDrawColor(
+            data.cell.styles.lineColor[0], 
+            data.cell.styles.lineColor[1], 
+            data.cell.styles.lineColor[2]
+          );
+          pdf.setLineWidth(data.cell.styles.lineWidths.bottom);
+          pdf.line(x1, y, x2, y);
+        }
+      },
+      didDrawPage: (data) => {
+        // If a new page was created
+        if (data.pageNumber > pageNum) {
+          pageNum = data.pageNumber;
+          
+          // Add header to new page
+          if (options.includeHeader) {
+            this.addHeaderToPDF(
+              pdf, 
+              pageWidth, 
+              options.customerName || 'Customer', 
+              new Date().toLocaleDateString(), 
+              options.headerTitle || 'COMPANY NAME',
+              options.primaryColor || '#3366cc', 
+              options.companyLogo, 
+              options.headerText
+            );
+          }
+          
+          // Add footer to new page
+          if (options.includeFooter) {
+            this.addFooterToPDF(
+              pdf, 
+              pageWidth, 
+              pageHeight, 
+              pageNum, 
+              options.secondaryColor || '#666666', 
+              options.footerOptions
+            );
+          }
+          
+          // Reset cursor position to avoid header overlap
+          data.cursor.y = headerHeight;
+        }
+      }
+    });
+    
+    // Return new Y position
+    return (pdf as any).lastAutoTable.finalY + 10;
+  }
+  
+  private renderTableWithPagination(
+    pdf: jsPDF,
+    table: TableData,
+    yPos: number,
+    options: PDFGenerationOptions,
+    leftMargin: number,
+    rightMargin: number,
+    pageWidth: number,
+    pageHeight: number,
+    headerHeight: number,
+    footerHeight: number
+  ): number {
+    // Get current page number
+    let pageNum = 1;
+    try {
+      pageNum = pdf.internal.pages.length - 1 || 1;
+    } catch (e) {
+      pageNum = 1;
+    }
+    
+    // Add table title if provided
+    if (table.title) {
+      // Check if we have enough space for title
+      if (yPos + 35 > pageHeight - footerHeight) {
+        if (options.includeFooter) {
+          this.addFooterToPDF(
+            pdf, 
+            pageWidth, 
+            pageHeight, 
+            pageNum, 
+            options.secondaryColor || '#666666', 
+            options.footerOptions
+          );
+        }
+        
+        pdf.addPage();
+        pageNum++;
+        
+        if (options.includeHeader) {
+          this.addHeaderToPDF(
+            pdf, 
+            pageWidth, 
+            options.customerName || 'Customer', 
+            new Date().toLocaleDateString(), 
+            options.headerTitle || 'COMPANY NAME',
+            options.primaryColor || '#3366cc', 
+            options.companyLogo, 
+            options.headerText
+          );
+        }
+        
+        yPos = headerHeight;
+      }
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(options.primaryColor || '#3366cc');
+      pdf.text(table.title, leftMargin, yPos);
+      yPos += 20;
+    }
+    
+    // Use autotable to render the table
+    autoTable(pdf, {
+      startY: yPos,
+      head: [table.headers],
+      body: table.rows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: options.primaryColor || [51, 102, 204],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold'
+      },
+      margin: { 
+        left: leftMargin, 
+        right: rightMargin,
+        top: headerHeight, 
+        bottom: footerHeight 
+      },
+      didParseCell: (data) => {
+        // Check if this cell would be too close to the footer
+        const cellBottom = data.row.height + data.cursor.y;
+        if (cellBottom > pageHeight - footerHeight - 10) {
+          // Force a page break before this cell
+          data.cell.styles.addPageBreak = true;
+        }
+      },
+      didDrawPage: (data) => {
+        // If a new page was created
+        if (data.pageNumber > pageNum) {
+          pageNum = data.pageNumber;
+          
+          // Add header to new page
+          if (options.includeHeader) {
+            this.addHeaderToPDF(
+              pdf, 
+              pageWidth, 
+              options.customerName || 'Customer', 
+              new Date().toLocaleDateString(), 
+              options.headerTitle || 'COMPANY NAME',
+              options.primaryColor || '#3366cc', 
+              options.companyLogo, 
+              options.headerText
+            );
+          }
+          
+          // Add footer to new page
+          if (options.includeFooter) {
+            this.addFooterToPDF(
+              pdf, 
+              pageWidth, 
+              pageHeight, 
+              pageNum, 
+              options.secondaryColor || '#666666', 
+              options.footerOptions
+            );
+          }
+          
+          // Reset cursor position to avoid header overlap
+          data.cursor.y = headerHeight;
+        }
+      }
+    });
+    
+    // Return new Y position
+    return (pdf as any).lastAutoTable.finalY + 10;
   }
   
   private addHeaderToPDF(
