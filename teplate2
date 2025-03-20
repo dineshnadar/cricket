@@ -1,321 +1,98 @@
-// pdf-generator.component.ts
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Subject } from 'rxjs';
-import { takeUntil, finalize } from 'rxjs/operators';
-import { PdfService, PDFContent, FormData, TableData, ContentItem } from '../services/pdf.service';
-
-interface Product {
-  id: number;
-  name: string;
-  quantity: number;
-  price: number;
+if (item.type === 'form') {
+  yPos = this.renderFormAsTable(pdf, item, yPos, options, leftMargin, rightMargin);
+} else if (item.type === 'table') {
+  // Existing table logic
 }
 
-interface Address {
-  street: string;
-  city: string;
-  state: string;
-  zipCode: string;
-}
-
-@Component({
-  selector: 'app-pdf-generator',
-  templateUrl: './pdf-generator.component.html',
-  styleUrls: ['./pdf-generator.component.scss']
-})
-export class PdfGeneratorComponent implements OnInit, OnDestroy {
-  customerForm: FormGroup;
-  shippingForm: FormGroup;
-  productForm: FormGroup;
-  products: Product[] = [];
-  isGenerating = false;
-  
-  // Company colors
-  primaryColor = '#3366cc';
-  secondaryColor = '#666666';
-  
-  // Customer types
-  customerTypes = [
-    { value: 'premium', label: 'Premium' },
-    { value: 'standard', label: 'Standard' },
-    { value: 'basic', label: 'Basic' }
-  ];
-  
-  // US States for dropdown
-  states = [
-    { value: 'AL', label: 'Alabama' },
-    { value: 'AK', label: 'Alaska' },
-    // Add other states here
-    { value: 'WY', label: 'Wyoming' }
-  ];
-  
-  private destroy$ = new Subject<void>();
-  
-  constructor(
-    private fb: FormBuilder,
-    private pdfService: PdfService
-  ) { }
-
-  ngOnInit(): void {
-    this.initForms();
-    this.loadSampleData();
+// In your PDF service
+private renderFormAsTable(
+  pdf: jsPDF,
+  form: FormData,
+  yPos: number,
+  options: PDFGenerationOptions,
+  leftMargin: number,
+  rightMargin: number
+): number {
+  // Add form title if provided
+  if (form.title) {
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(12);
+    pdf.setTextColor(options.primaryColor || '#3366cc');
+    pdf.text(form.title, leftMargin, yPos);
+    yPos += 20;
   }
   
-  ngOnDestroy(): void {
-    this.destroy$.next();
-    this.destroy$.complete();
-  }
+  // Convert form fields to table rows
+  const tableRows: any[][] = [];
+  let currentSubheader = null;
   
-  private initForms(): void {
-    // Initialize customer form
-    this.customerForm = this.fb.group({
-      name: ['', [Validators.required]],
-      email: ['', [Validators.required, Validators.email]],
-      phone: ['', [Validators.required, Validators.pattern(/^\(\d{3}\) \d{3}-\d{4}$/)]],
-      customerType: ['standard', Validators.required],
-      referenceNumber: ['', Validators.maxLength(20)]
-    });
+  for (let i = 0; i < form.fields.length; i++) {
+    const field = form.fields[i];
     
-    // Initialize shipping form
-    this.shippingForm = this.fb.group({
-      street: ['', Validators.required],
-      city: ['', Validators.required],
-      state: ['', Validators.required],
-      zipCode: ['', [Validators.required, Validators.pattern(/^\d{5}(-\d{4})?$/)]]
-    });
-    
-    // Initialize product form
-    this.productForm = this.fb.group({
-      name: ['', Validators.required],
-      quantity: [1, [Validators.required, Validators.min(1)]],
-      price: [0, [Validators.required, Validators.min(0.01)]]
-    });
-  }
-  
-  private loadSampleData(): void {
-    // Load sample data for demo
-    this.customerForm.patchValue({
-      name: 'John Doe',
-      email: 'john.doe@example.com',
-      phone: '(555) 123-4567',
-      customerType: 'premium',
-      referenceNumber: 'REF-12345'
-    });
-    
-    this.shippingForm.patchValue({
-      street: '123 Main Street',
-      city: 'Anytown',
-      state: 'CA',
-      zipCode: '12345'
-    });
-    
-    // Add sample products
-    this.products = [
-      { id: 1, name: 'Premium Laptop', quantity: 1, price: 1299.99 },
-      { id: 2, name: 'Wireless Mouse', quantity: 2, price: 24.99 },
-      { id: 3, name: 'USB-C Adapter', quantity: 3, price: 19.95 }
-    ];
-  }
-  
-  addProduct(): void {
-    if (this.productForm.invalid) {
-      this.markFormGroupTouched(this.productForm);
-      return;
-    }
-    
-    const formValue = this.productForm.value;
-    const newId = this.getNextProductId();
-    
-    this.products.push({
-      id: newId,
-      name: formValue.name,
-      quantity: formValue.quantity,
-      price: formValue.price
-    });
-    
-    // Reset form after adding
-    this.productForm.reset({
-      name: '',
-      quantity: 1,
-      price: 0
-    });
-  }
-  
-  removeProduct(id: number): void {
-    this.products = this.products.filter(p => p.id !== id);
-  }
-  
-  private getNextProductId(): number {
-    return this.products.length > 0 
-      ? Math.max(...this.products.map(p => p.id)) + 1 
-      : 1;
-  }
-  
-  calculateProductTotal(product: Product): number {
-    return product.quantity * product.price;
-  }
-  
-  calculateSubtotal(): number {
-    return this.products.reduce((sum, product) => 
-      sum + this.calculateProductTotal(product), 0);
-  }
-  
-  calculateTax(): number {
-    return this.calculateSubtotal() * 0.07; // 7% tax
-  }
-  
-  calculateShipping(): number {
-    return this.products.length > 0 ? 15.00 : 0.00;
-  }
-  
-  calculateTotal(): number {
-    return this.calculateSubtotal() + this.calculateTax() + this.calculateShipping();
-  }
-  
-  generatePDF(): void {
-    if (this.isGenerating) return;
-    
-    if (this.customerForm.invalid || this.shippingForm.invalid) {
-      this.markFormGroupTouched(this.customerForm);
-      this.markFormGroupTouched(this.shippingForm);
-      return;
-    }
-    
-    if (this.products.length === 0) {
-      alert('Please add at least one product to the order.');
-      return;
-    }
-    
-    this.isGenerating = true;
-    
-    const pdfContent = this.preparePdfContent();
-    
-    this.pdfService.generateDataPDF(pdfContent, {
-      headerTitle: 'ACME CORPORATION',
-      headerText: 'Order Processing System',
-      customerName: this.customerForm.get('name')?.value || 'Customer',
-      filename: this.generateFilename(),
-      primaryColor: this.primaryColor,
-      secondaryColor: this.secondaryColor,
-      footerOptions: {
-        leftText: 'ACME Corporation',
-        leftSecondaryText: 'Customer Support: (800) 555-1234',
-        rightText: 'Thank you for your business',
-        topText: 'Keep this document for your records',
-        showTimestamp: true,
-        timestampPrefix: 'Generated on:',
-        showPageNumber: true
-      }
-    })
-    .pipe(
-      takeUntil(this.destroy$),
-      finalize(() => this.isGenerating = false)
-    )
-    .subscribe({
-      error: (err) => {
-        console.error('PDF generation failed:', err);
-        this.isGenerating = false;
-      }
-    });
-  }
-  
-  private preparePdfContent(): PDFContent {
-    const customerData = this.customerForm.value;
-    const shippingData = this.shippingForm.value;
-    
-    // Create content items in desired order
-    const contentItems: ContentItem[] = [];
-    
-    // 1. Customer Information Form
-    const customerInfoForm: FormData = {
-      type: 'form',
-      title: 'Customer Information',
-      fields: [
-        { label: 'Name', value: customerData.name || '' },
-        { label: 'Email', value: customerData.email || '', addDivider: true },
-        { label: 'Phone', value: customerData.phone || '' },
-        { label: 'Customer Type', value: this.getCustomerTypeLabel(customerData.customerType) || 'Standard' },
-        { label: 'Reference Number', value: customerData.referenceNumber || 'N/A' }
-      ],
-      subheaders: [
-        { text: 'Contact Details', afterFieldIndex: 0 }
-      ]
-    };
-    contentItems.push(customerInfoForm);
-    
-    // 2. Products Table
-    const productsTable: TableData = {
-      type: 'table',
-      title: 'Order Items',
-      headers: ['Item', 'Quantity', 'Unit Price', 'Total'],
-      rows: this.products.map(product => [
-        product.name,
-        product.quantity.toString(),
-        `$${product.price.toFixed(2)}`,
-        `$${this.calculateProductTotal(product).toFixed(2)}`
-      ])
-    };
-    contentItems.push(productsTable);
-    
-    // 3. Shipping Information Form
-    const shippingInfoForm: FormData = {
-      type: 'form',
-      title: 'Shipping Information',
-      fields: [
-        { label: 'Street Address', value: shippingData.street || '' },
-        { label: 'City', value: shippingData.city || '' },
-        { label: 'State', value: shippingData.state || '' },
-        { label: 'Zip Code', value: shippingData.zipCode || '' }
-      ]
-    };
-    contentItems.push(shippingInfoForm);
-    
-    // 4. Order Summary Table
-    const orderSummaryTable: TableData = {
-      type: 'table',
-      title: 'Order Summary',
-      headers: ['Description', 'Amount'],
-      rows: [
-        ['Subtotal', `$${this.calculateSubtotal().toFixed(2)}`],
-        ['Tax (7%)', `$${this.calculateTax().toFixed(2)}`],
-        ['Shipping & Handling', `$${this.calculateShipping().toFixed(2)}`],
-        ['Total', `$${this.calculateTotal().toFixed(2)}`]
-      ]
-    };
-    contentItems.push(orderSummaryTable);
-    
-    return { contentItems };
-  }
-  
-  private generateFilename(): string {
-    const customerName = this.customerForm.get('name')?.value || 'customer';
-    const timestamp = new Date().toISOString().split('T')[0];
-    const sanitizedName = customerName.toLowerCase().replace(/\s+/g, '_');
-    
-    return `order_${sanitizedName}_${timestamp}.pdf`;
-  }
-  
-  private getCustomerTypeLabel(value: string): string {
-    const type = this.customerTypes.find(t => t.value === value);
-    return type ? type.label : 'Standard';
-  }
-  
-  private markFormGroupTouched(formGroup: FormGroup): void {
-    Object.keys(formGroup.controls).forEach(key => {
-      const control = formGroup.get(key);
-      control?.markAsTouched();
+    // Check if this is a subheader field
+    if (field.type === 'subheader') {
+      // Add a subheader row (spans both columns)
+      tableRows.push([{ content: field.label, colSpan: 2, styles: { 
+        fontStyle: 'bold', 
+        textColor: options.secondaryColor || [100, 100, 100],
+        cellPadding: { top: 5, bottom: 2 }
+      }}]);
+    } else {
+      // Add regular field as a row
+      tableRows.push([
+        { content: `${field.label}:`, styles: { 
+          fontStyle: 'bold', 
+          halign: 'left'
+        }},
+        { content: field.value, styles: { 
+          halign: 'right'
+        }}
+      ]);
       
-      if (control instanceof FormGroup) {
-        this.markFormGroupTouched(control);
+      // Add a divider row if specified
+      if (field.addDivider) {
+        tableRows.push([{ content: '', colSpan: 2, styles: {
+          cellPadding: { top: 0, bottom: 10 },
+          cellWidth: 'auto'
+        }}]);
       }
-    });
+    }
+    
+    // Check for subheaders defined in subheaders array
+    if (form.subheaders) {
+      const subheader = form.subheaders.find(sh => sh.afterFieldIndex === i);
+      if (subheader) {
+        tableRows.push([{ content: subheader.text, colSpan: 2, styles: { 
+          fontStyle: 'bold', 
+          textColor: options.secondaryColor || [100, 100, 100],
+          cellPadding: { top: 5, bottom: 2 }
+        }}]);
+      }
+    }
   }
   
-  formatCurrency(value: number): string {
-    return value.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    });
-  }
+  // Use autotable to render the form
+  autoTable(pdf, {
+    startY: yPos,
+    body: tableRows,
+    theme: 'plain',
+    styles: {
+      fontSize: 10,
+      cellPadding: 5
+    },
+    columnStyles: {
+      0: { cellWidth: '40%' },
+      1: { cellWidth: '60%' }
+    },
+    margin: { left: leftMargin, right: rightMargin },
+    showHead: false,
+    tableWidth: 'auto',
+    didDrawPage: (data) => {
+      // Add header and footer on new pages
+      // (Similar to table rendering logic)
+    }
+  });
+  
+  // Return new Y position
+  return (pdf as any).lastAutoTable.finalY + 10;
 }
