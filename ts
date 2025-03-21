@@ -314,18 +314,13 @@ export class PdfService {
         
         // If this field needs a divider, add bottom border to both cells
         if (field.addDivider) {
-          // Add bottom border properties
-          labelStyles.lineWidth = 0.5;
-          labelStyles.lineColor = [220, 220, 220];
+          // Instead of using lineWidths, set direct border properties
           labelStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
-          
-          valueStyles.lineWidth = 0.5;
-          valueStyles.lineColor = [220, 220, 220];
           valueStyles.cellPadding = { top: 5, right: 5, bottom: 10, left: 5 };
           
-          // Only draw the bottom border for both cells
-          labelStyles.lineWidths = { bottom: 0.5, top: 0, left: 0, right: 0 };
-          valueStyles.lineWidths = { bottom: 0.5, top: 0, left: 0, right: 0 };
+          // Mark cells to have divider drawn later
+          labelStyles.drawDivider = true;
+          valueStyles.drawDivider = true;
         }
         
         // Add regular field as a row
@@ -379,28 +374,51 @@ export class PdfService {
         bottom: footerHeight 
       },
       showHead: false,
-      didParseCell: (data) => {
-        // Check if this cell would be too close to the footer
-        const cellBottom = data.row.height + data.cursor.y;
-        if (cellBottom > pageHeight - footerHeight - 10) {
-          // Force a page break before this cell
-          data.cell.styles.addPageBreak = true;
+      willDrawCell: (data) => {
+        // Check if content would overlap with footer
+        if (data.cursor.y + data.row.height > pageHeight - footerHeight - 10) {
+          // We need to move to next page
+          if (options.includeFooter) {
+            this.addFooterToPDF(
+              pdf, 
+              pageWidth, 
+              pageHeight, 
+              pageNum, 
+              options.secondaryColor || '#666666', 
+              options.footerOptions
+            );
+          }
+          
+          pdf.addPage();
+          pageNum++;
+          
+          if (options.includeHeader) {
+            this.addHeaderToPDF(
+              pdf, 
+              pageWidth, 
+              options.customerName || 'Customer', 
+              new Date().toLocaleDateString(), 
+              options.headerTitle || 'COMPANY NAME',
+              options.primaryColor || '#3366cc', 
+              options.companyLogo, 
+              options.headerText
+            );
+          }
+          
+          // Reset cursor position
+          data.cursor.y = headerHeight + 10;
         }
       },
       didDrawCell: (data) => {
-        // For cells with dividers, ensure the border is drawn properly
-        if (data.cell.styles.lineWidths && data.cell.styles.lineWidths.bottom > 0) {
-          // Draw a consistent border line
+        // For cells with dividers, manually draw the divider
+        if (data.cell.raw && data.cell.raw.styles && data.cell.raw.styles.drawDivider) {
+          // Draw a divider line under the cell
           const x1 = data.cell.x;
           const x2 = data.cell.x + data.cell.width;
           const y = data.cell.y + data.cell.height;
           
-          pdf.setDrawColor(
-            data.cell.styles.lineColor[0], 
-            data.cell.styles.lineColor[1], 
-            data.cell.styles.lineColor[2]
-          );
-          pdf.setLineWidth(data.cell.styles.lineWidths.bottom);
+          pdf.setDrawColor(220, 220, 220);
+          pdf.setLineWidth(0.5);
           pdf.line(x1, y, x2, y);
         }
       },
@@ -523,12 +541,39 @@ export class PdfService {
         top: headerHeight, 
         bottom: footerHeight 
       },
-      didParseCell: (data) => {
-        // Check if this cell would be too close to the footer
-        const cellBottom = data.row.height + data.cursor.y;
-        if (cellBottom > pageHeight - footerHeight - 10) {
-          // Force a page break before this cell
-          data.cell.styles.addPageBreak = true;
+      willDrawCell: (data) => {
+        // Check if content would overlap with footer
+        if (data.cursor.y + data.row.height > pageHeight - footerHeight - 10) {
+          // We need to move to next page
+          if (options.includeFooter) {
+            this.addFooterToPDF(
+              pdf, 
+              pageWidth, 
+              pageHeight, 
+              pageNum, 
+              options.secondaryColor || '#666666', 
+              options.footerOptions
+            );
+          }
+          
+          pdf.addPage();
+          pageNum++;
+          
+          if (options.includeHeader) {
+            this.addHeaderToPDF(
+              pdf, 
+              pageWidth, 
+              options.customerName || 'Customer', 
+              new Date().toLocaleDateString(), 
+              options.headerTitle || 'COMPANY NAME',
+              options.primaryColor || '#3366cc', 
+              options.companyLogo, 
+              options.headerText
+            );
+          }
+          
+          // Reset cursor position
+          data.cursor.y = headerHeight + 10;
         }
       },
       didDrawPage: (data) => {
