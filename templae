@@ -1,3 +1,226 @@
+// Fix 1: The saveProperties method has errors with catalogItem.type and targetArray[index]
+// Fix 2: Type safety issues in the overridePanel methods
+
+// Updated saveProperties method:
+saveProperties(): void {
+  if (!this.currentItem) return;
+  
+  const { name, label, type, required, visible, editable } = this.currentItem;
+  
+  if (this.currentItemType === 'catalog-section' || this.currentItemType === 'catalog-field') {
+    // Updating a catalog item
+    const targetArray = this.currentItemType === 'catalog-section' 
+      ? this.catalogData.sections 
+      : this.catalogData.fields;
+    
+    const index = targetArray.findIndex(item => item.id === this.currentItem.id);
+    if (index !== -1) {
+      // Fix: Use spread operator properly and conditionally include type only for fields
+      if (this.currentItemType === 'catalog-field') {
+        targetArray[index] = { ...targetArray[index], name, label, type, required, visible, editable };
+      } else {
+        targetArray[index] = { ...targetArray[index], name, label, required, visible, editable };
+      }
+    }
+  } else {
+    // Updating a form instance
+    const itemId = this.currentItem.instanceId;
+    const referenceId = this.currentItem.referenceId;
+    
+    // Find the item to update
+    const updateItem = (items: any[]): boolean => {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].instanceId === itemId) {
+          // Get the catalog item
+          const catalogItem = this.currentItemType === 'section'
+            ? this.catalogData.sections.find(s => s.id === referenceId)
+            : this.catalogData.fields.find(f => f.id === referenceId);
+          
+          // Only create overrides if different from catalog
+          if (catalogItem) {
+            const overrides: any = { ...items[i].overrideProperties || {} };
+            
+            if (name !== catalogItem.name) overrides.name = name;
+            else delete overrides.name;
+            
+            if (label !== catalogItem.label) overrides.label = label;
+            else delete overrides.label;
+            
+            // Fix: Only compare type for fields
+            if (this.currentItemType === 'field' && type && type !== (catalogItem as any).type) {
+              overrides.type = type;
+            } else if (this.currentItemType === 'field') {
+              delete overrides.type;
+            }
+            
+            if (required !== catalogItem.required) overrides.required = required;
+            else delete overrides.required;
+            
+            if (visible !== catalogItem.visible) overrides.visible = visible;
+            else delete overrides.visible;
+            
+            if (editable !== catalogItem.editable) overrides.editable = editable;
+            else delete overrides.editable;
+            
+            // Update the item with spread operator to avoid mutation issues
+            items[i] = { 
+              ...items[i], 
+              name, 
+              label, 
+              required, 
+              visible, 
+              editable,
+              // Only include type for fields
+              ...(this.currentItemType === 'field' ? { type: type || items[i].type } : {}),
+              overrideProperties: overrides 
+            };
+            
+            return true;
+          }
+          
+          return false;
+        }
+        
+        // Check in fields
+        if (items[i].fields && items[i].fields.length > 0) {
+          const found = updateItem(items[i].fields);
+          if (found) return true;
+        }
+        
+        // Check in subsections
+        if (items[i].subSections && items[i].subSections.length > 0) {
+          const found = updateItem(items[i].subSections);
+          if (found) return true;
+        }
+      }
+      
+      return false;
+    };
+    
+    updateItem(this.formData);
+  }
+  
+  this.closePropertiesPanel();
+}
+
+// Updated openInstanceOverridePanel method:
+openInstanceOverridePanel(item: any, type: string): void {
+  this.currentOverrideItem = item;
+  this.currentOverrideType = type;
+  
+  // Find the catalog item
+  const catalogItem = type === 'section'
+    ? this.catalogData.sections.find(s => s.id === item.referenceId)
+    : this.catalogData.fields.find(f => f.id === item.referenceId);
+  
+  if (catalogItem) {
+    // Initialize override values with existing overrides or catalog values
+    this.overrideValues = {
+      name: item.overrideProperties?.name || catalogItem.name,
+      label: item.overrideProperties?.label || catalogItem.label,
+      // Fix: Only include type for fields
+      ...(type === 'field' ? {
+        type: item.overrideProperties?.type || (catalogItem as any).type
+      } : {}),
+      required: item.overrideProperties?.required !== undefined 
+               ? item.overrideProperties.required 
+               : catalogItem.required,
+      visible: item.overrideProperties?.visible !== undefined 
+              ? item.overrideProperties.visible 
+              : catalogItem.visible,
+      editable: item.overrideProperties?.editable !== undefined 
+               ? item.overrideProperties.editable 
+               : catalogItem.editable
+    };
+    
+    // Load custom properties
+    this.customOverrideProperties = [];
+    Object.entries(catalogItem).forEach(([key, value]) => {
+      if (!['id', 'name', 'label', 'type', 'required', 'visible', 'editable', 'description'].includes(key)) {
+        const overrideValue = item.overrideProperties ? item.overrideProperties[key] : undefined;
+        this.customOverrideProperties.push({ 
+          key, 
+          value: overrideValue !== undefined ? overrideValue : value 
+        });
+      }
+    });
+  }
+  
+  this.showOverridePanel = true;
+}
+
+// Updated saveOverrides method:
+saveOverrides(): void {
+  if (!this.currentOverrideItem) return;
+  
+  const item = this.currentOverrideItem;
+  
+  if (!item.overrideProperties) {
+    item.overrideProperties = {};
+  }
+  
+  // If it's a catalog item being used as a template
+  if (!item.instanceId) {
+    // We don't modify catalog items directly, just close the panel
+    this.closeOverridePanel();
+    return;
+  }
+  
+  // Find the catalog item
+  const catalogItem = this.currentOverrideType === 'section'
+    ? this.catalogData.sections.find(s => s.id === item.referenceId)
+    : this.catalogData.fields.find(f => f.id === item.referenceId);
+  
+  if (catalogItem) {
+    // Compare with catalog and add overrides only if different
+    const { name, label, required, visible, editable } = this.overrideValues;
+    const type = this.currentOverrideType === 'field' ? this.overrideValues.type : undefined;
+    
+    if (name !== catalogItem.name) item.overrideProperties.name = name;
+    else delete item.overrideProperties.name;
+    
+    if (label !== catalogItem.label) item.overrideProperties.label = label;
+    else delete item.overrideProperties.label;
+    
+    // Fix: Only check type for fields
+    if (this.currentOverrideType === 'field' && type && type !== (catalogItem as any).type) {
+      item.overrideProperties.type = type;
+    } else if (this.currentOverrideType === 'field') {
+      delete item.overrideProperties.type;
+    }
+    
+    if (required !== catalogItem.required) item.overrideProperties.required = required;
+    else delete item.overrideProperties.required;
+    
+    if (visible !== catalogItem.visible) item.overrideProperties.visible = visible;
+    else delete item.overrideProperties.visible;
+    
+    if (editable !== catalogItem.editable) item.overrideProperties.editable = editable;
+    else delete item.overrideProperties.editable;
+    
+    // Process custom properties
+    this.customOverrideProperties.forEach(prop => {
+      if (JSON.stringify(prop.value) !== JSON.stringify(catalogItem[prop.key])) {
+        item.overrideProperties[prop.key] = prop.value;
+      } else {
+        delete item.overrideProperties[prop.key];
+      }
+    });
+    
+    // Update the display properties
+    item.name = item.overrideProperties.name || catalogItem.name;
+    item.label = item.overrideProperties.label || catalogItem.label;
+    
+    // Fix: Only update type for fields
+    if (this.currentOverrideType === 'field') {
+      item.type = item.overrideProperties.type || (catalogItem as any).type;
+    }
+  }
+  
+  this.closeOverridePanel();
+}
+
+----------
 import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
