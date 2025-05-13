@@ -1,0 +1,582 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Know Your System - Service Hierarchy</title>
+    <!-- jQuery CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Left Panel - Services List */
+        .services-panel {
+            width: 300px;
+            background-color: #f0f8ff;
+            border-right: 1px solid #d1e5f9;
+            overflow-y: auto;
+            height: 100%;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        }
+        .services-header {
+            padding: 15px;
+            background-color: #2196F3;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            font-size: 18px;
+            border-bottom: 1px solid #1565C0;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .search-box {
+            padding: 10px 15px;
+            background-color: #e3f2fd;
+            border-bottom: 1px solid #d1e5f9;
+            position: sticky;
+            top: 53px;
+            z-index: 10;
+        }
+        .search-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #bbdefb;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .services-list {
+            padding: 10px 0;
+        }
+        .service-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e1f5fe;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .service-item:hover {
+            background-color: #e3f2fd;
+        }
+        .service-item.active {
+            background-color: #bbdefb;
+            border-left: 4px solid #1565C0;
+            font-weight: bold;
+        }
+        .service-name {
+            font-size: 14px;
+            margin-bottom: 3px;
+        }
+        .service-url {
+            font-size: 12px;
+            color: #555;
+            word-break: break-all;
+        }
+        
+        /* Main Content Panel */
+        .content-panel {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: white;
+        }
+        .content-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .header-title {
+            font-size: 22px;
+            font-weight: bold;
+            color: #333;
+        }
+        .service-count {
+            background-color: #e3f2fd;
+            color: #1565C0;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        
+        /* Service Details */
+        .service-details {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .detail-name {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #1565C0;
+        }
+        .detail-url {
+            font-size: 14px;
+            color: #555;
+            padding: 8px 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            word-break: break-all;
+        }
+        
+        /* FSNs Display */
+        .fsn-section {
+            margin-top: 30px;
+        }
+        .fsn-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+        }
+        .fsn-count {
+            background-color: #f1f8e9;
+            color: #558b2f;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .fsn-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .fsn-card {
+            border: 1px solid #dcedc8;
+            border-radius: 6px;
+            padding: 15px;
+            background-color: #f1f8e9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .fsn-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .fsn-name {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #558b2f;
+        }
+        .fsn-info {
+            font-size: 13px;
+            color: #555;
+        }
+        .no-fsn-message {
+            padding: 20px;
+            text-align: center;
+            color: #777;
+            font-style: italic;
+            background-color: #f5f5f5;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e0e0e0;
+            background-color: #f9f9f9;
+            border-radius: 8px 8px 0 0;
+        }
+        .modal-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        .close-modal {
+            cursor: pointer;
+            font-size: 24px;
+            color: #777;
+        }
+        .modal-body {
+            padding: 20px;
+        }
+        .detail-group {
+            margin-bottom: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            padding-bottom: 15px;
+        }
+        .detail-group:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        .detail-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        .detail-value {
+            padding: 8px 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        /* Visual Flow */
+        .flow-indicator {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+            justify-content: center;
+        }
+        .flow-line {
+            height: 2px;
+            background-color: #2196F3;
+            flex-grow: 1;
+            max-width: 100px;
+        }
+        .flow-arrow {
+            margin: 0 10px;
+            color: #2196F3;
+            font-size: 20px;
+        }
+        .flow-text {
+            background-color: #e3f2fd;
+            color: #1565C0;
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+                height: auto;
+            }
+            .services-panel {
+                width: 100%;
+                height: 300px;
+                border-right: none;
+                border-bottom: 1px solid #d1e5f9;
+            }
+            .content-panel {
+                padding: 15px;
+            }
+            .fsn-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Services List -->
+        <div class="services-panel">
+            <div class="services-header">Service Directory</div>
+            
+            <div class="search-box">
+                <input type="text" class="search-input" id="serviceSearch" placeholder="Search services...">
+            </div>
+            
+            <div class="services-list" id="servicesList">
+                <!-- Service items will be generated here -->
+            </div>
+        </div>
+        
+        <!-- Main Content Panel -->
+        <div class="content-panel">
+            <div class="content-header">
+                <div class="header-title">Know Your System</div>
+                <div class="service-count" id="serviceCount">0 Services</div>
+            </div>
+            
+            <div id="serviceContent">
+                <!-- Selected service content will appear here -->
+                <div class="initial-message">
+                    <p>Select a service from the left panel to view its details and downstream FSNs.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal for detailed FSN view -->
+    <div class="modal" id="fsnModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">FSN Details</div>
+                <div class="close-modal" id="closeModal">&times;</div>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- FSN details will be inserted here -->
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Sample data structure - In production, this would come from an API
+        const data = {
+            services: [
+                {
+                    serviceName: "Authentication Service",
+                    serviceUrl: "/auth-service",
+                    downstream: [
+                        { 
+                            fsName: "User Database", 
+                            fsnDetails: "Stores user credentials and authentication data",
+                            fsnUsage: "Used for validating user identities and managing sessions" 
+                        },
+                        { 
+                            fsName: "Token Store", 
+                            fsnDetails: "Maintains authentication tokens and session data",
+                            fsnUsage: "Manages token lifecycle and validation" 
+                        }
+                    ]
+                },
+                {
+                    serviceName: "Payment Processing",
+                    serviceUrl: "/payment-api",
+                    downstream: [
+                        { 
+                            fsName: "Transaction Database", 
+                            fsnDetails: "Stores payment transaction records",
+                            fsnUsage: "Used for recording and auditing payment activities" 
+                        },
+                        { 
+                            fsName: "Payment Gateway Connector", 
+                            fsnDetails: "Interface to external payment processors",
+                            fsnUsage: "Handles communication with external payment services" 
+                        },
+                        { 
+                            fsName: "Fraud Detection System", 
+                            fsnDetails: "Analyzes transactions for suspicious patterns",
+                            fsnUsage: "Flags potentially fraudulent transactions for review" 
+                        }
+                    ]
+                },
+                {
+                    serviceName: "User Profile Management",
+                    serviceUrl: "/user-profiles",
+                    downstream: [
+                        { 
+                            fsName: "Profile Database", 
+                            fsnDetails: "Stores user profile information",
+                            fsnUsage: "Maintains user preferences and account details" 
+                        }
+                    ]
+                },
+                {
+                    serviceName: "Content Delivery",
+                    serviceUrl: "/content-api",
+                    downstream: []
+                },
+                {
+                    serviceName: "Notification Service",
+                    serviceUrl: "/notifications",
+                    downstream: [
+                        { 
+                            fsName: "Notification Queue", 
+                            fsnDetails: "Message queue for pending notifications",
+                            fsnUsage: "Ensures reliable delivery of notifications" 
+                        },
+                        { 
+                            fsName: "Template Storage", 
+                            fsnDetails: "Stores notification templates",
+                            fsnUsage: "Provides standardized formats for different notification types" 
+                        }
+                    ]
+                }
+                // In a real system, there could be 100+ services here
+            ]
+        };
+        
+        // Initialize the UI
+        $(document).ready(function() {
+            // Update service count
+            $('#serviceCount').text(`${data.services.length} Services`);
+            
+            // Populate services list
+            populateServicesList(data.services);
+            
+            // Set up search functionality
+            $('#serviceSearch').on('input', function() {
+                const searchTerm = $(this).val().toLowerCase();
+                filterServices(searchTerm);
+            });
+            
+            // Set up modal close
+            $('#closeModal').click(function() {
+                $('#fsnModal').hide();
+            });
+            
+            // Close modal when clicking outside
+            $(window).click(function(e) {
+                if (e.target === document.getElementById('fsnModal')) {
+                    $('#fsnModal').hide();
+                }
+            });
+        });
+        
+        // Populate the services list
+        function populateServicesList(services) {
+            let servicesHtml = '';
+            
+            services.forEach(function(service, index) {
+                servicesHtml += `
+                    <div class="service-item" data-index="${index}">
+                        <div class="service-name">${service.serviceName}</div>
+                        <div class="service-url">${service.serviceUrl}</div>
+                    </div>
+                `;
+            });
+            
+            $('#servicesList').html(servicesHtml);
+            
+            // Add click handlers to service items
+            $('.service-item').click(function() {
+                const index = $(this).data('index');
+                
+                // Update active state
+                $('.service-item').removeClass('active');
+                $(this).addClass('active');
+                
+                // Display service details
+                displayServiceDetails(data.services[index]);
+            });
+        }
+        
+        // Filter services based on search term
+        function filterServices(searchTerm) {
+            $('.service-item').each(function() {
+                const serviceName = $(this).find('.service-name').text().toLowerCase();
+                const serviceUrl = $(this).find('.service-url').text().toLowerCase();
+                
+                if (serviceName.includes(searchTerm) || serviceUrl.includes(searchTerm)) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+        
+        // Display selected service details
+        function displayServiceDetails(service) {
+            let detailsHtml = `
+                <div class="service-details">
+                    <div class="detail-name">${service.serviceName}</div>
+                    <div class="detail-url">${service.serviceUrl}</div>
+                </div>
+                
+                <div class="flow-indicator">
+                    <div class="flow-line"></div>
+                    <div class="flow-arrow">▼</div>
+                    <div class="flow-text">Uses</div>
+                    <div class="flow-arrow">▼</div>
+                    <div class="flow-line"></div>
+                </div>
+                
+                <div class="fsn-section">
+                    <div class="fsn-header">
+                        Downstream FSNs
+                        <div class="fsn-count">${service.downstream.length}</div>
+                    </div>
+            `;
+            
+            if (service.downstream && service.downstream.length > 0) {
+                detailsHtml += '<div class="fsn-grid">';
+                
+                service.downstream.forEach(function(fsn, index) {
+                    detailsHtml += `
+                        <div class="fsn-card" data-index="${index}">
+                            <div class="fsn-name">${fsn.fsName}</div>
+                            <div class="fsn-info">Click to view details</div>
+                        </div>
+                    `;
+                });
+                
+                detailsHtml += '</div>';
+            } else {
+                detailsHtml += `
+                    <div class="no-fsn-message">
+                        This service does not have any registered downstream FSNs.
+                    </div>
+                `;
+            }
+            
+            detailsHtml += '</div>';
+            
+            $('#serviceContent').html(detailsHtml);
+            
+            // Add click handlers to FSN cards
+            $('.fsn-card').click(function() {
+                const index = $(this).data('index');
+                showFsnDetails(service, service.downstream[index]);
+            });
+        }
+        
+        // Show FSN details in modal
+        function showFsnDetails(service, fsn) {
+            $('#modalTitle').text(fsn.fsName);
+            
+            let modalContent = `
+                <div class="detail-group">
+                    <div class="detail-label">Parent Service</div>
+                    <div class="detail-value">${service.serviceName} (${service.serviceUrl})</div>
+                </div>
+                <div class="detail-group">
+                    <div class="detail-label">FSN Name</div>
+                    <div class="detail-value">${fsn.fsName}</div>
+                </div>
+                <div class="detail-group">
+                    <div class="detail-label">FSN Details</div>
+                    <div class="detail-value">${fsn.fsnDetails}</div>
+                </div>
+                <div class="detail-group">
+                    <div class="detail-label">FSN Usage</div>
+                    <div class="detail-value">${fsn.fsnUsage}</div>
+                </div>
+            `;
+            
+            $('#modalBody').html(modalContent);
+            $('#fsnModal').css('display', 'flex');
+        }
+    </script>
+</body>
+</html>
