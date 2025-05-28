@@ -1,0 +1,86 @@
+// In UnifiedValidationService
+private createValidators(rules: ValidationRule[]): ValidatorFn[] {
+  return rules.map(rule => {
+    let validator: ValidatorFn;
+    
+    switch (rule.type) {
+      case 'required':
+        validator = Validators.required;
+        break;
+      case 'email':
+        validator = Validators.email;
+        break;
+      case 'minLength':
+        validator = Validators.minLength(rule.value);
+        break;
+      case 'maxLength':
+        validator = Validators.maxLength(rule.value);
+        break;
+      case 'pattern':
+        validator = Validators.pattern(rule.value);
+        break;
+      case 'custom':
+        if (rule.customValidatorName && this.customValidators[rule.customValidatorName]) {
+          validator = this.customValidators[rule.customValidatorName](rule.params);
+        } else {
+          validator = () => null;
+        }
+        break;
+      default:
+        validator = () => null;
+    }
+    
+    // Wrap validator to provide custom message if specified
+    if (rule.message && validator !== (() => null)) {
+      return (control: AbstractControl) => {
+        const result = validator(control);
+        if (result) {
+          // Replace default error message with custom message
+          const errorKey = Object.keys(result)[0];
+          return { [errorKey]: { message: rule.message, ...result[errorKey] } };
+        }
+        return null;
+      };
+    }
+    
+    return validator;
+  });
+}
+
+
+typescript// In your component
+getErrorMessages(fieldName: string): string[] {
+  const control = this.form.get(fieldName);
+  const messages: string[] = [];
+  
+  if (control && control.errors) {
+    Object.keys(control.errors).forEach(errorKey => {
+      const error = control.errors![errorKey];
+      if (error.message) {
+        messages.push(error.message);
+      } else {
+        // Fallback to default messages
+        messages.push(this.getDefaultErrorMessage(errorKey, error));
+      }
+    });
+  }
+  
+  return messages;
+}
+
+private getDefaultErrorMessage(errorKey: string, error: any): string {
+  switch (errorKey) {
+    case 'required':
+      return 'This field is required';
+    case 'email':
+      return 'Please enter a valid email address';
+    case 'minlength':
+      return `Minimum length is ${error.requiredLength} characters`;
+    case 'maxlength':
+      return `Maximum length is ${error.requiredLength} characters`;
+    case 'pattern':
+      return 'Invalid format';
+    default:
+      return 'Invalid input';
+  }
+}
