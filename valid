@@ -1,86 +1,1057 @@
-// In UnifiedValidationService
-private createValidators(rules: ValidationRule[]): ValidatorFn[] {
-  return rules.map(rule => {
-    let validator: ValidatorFn;
-    
-    switch (rule.type) {
-      case 'required':
-        validator = Validators.required;
-        break;
-      case 'email':
-        validator = Validators.email;
-        break;
-      case 'minLength':
-        validator = Validators.minLength(rule.value);
-        break;
-      case 'maxLength':
-        validator = Validators.maxLength(rule.value);
-        break;
-      case 'pattern':
-        validator = Validators.pattern(rule.value);
-        break;
-      case 'custom':
-        if (rule.customValidatorName && this.customValidators[rule.customValidatorName]) {
-          validator = this.customValidators[rule.customValidatorName](rule.params);
-        } else {
-          validator = () => null;
+// framework-validators.ts - All custom validators in one place
+import { AbstractControl, FormGroup, ValidationErrors, ValidatorFn } from '@angular/forms';
+import { CustomValidatorFn } from './unified-validation.service';
+
+/**
+ * ============================================================================
+ * FRAMEWORK LEVEL CUSTOM VALIDATORS COLLECTION
+ * ============================================================================
+ * This file contains all custom validators that are part of the validation framework.
+ * No need to import these in app.module - they're automatically available.
+ */
+
+/**
+ * At Least One Required Validator
+ * Ensures that at least one (or minimum number) of specified fields has a value
+ */
+export const atLeastOneRequiredValidator: CustomValidatorFn = (params: {
+  fieldNames: string[];
+  minimum?: number;
+  message?: string;
+  label?: string;
+  customCheck?: 'any' | 'email' | 'phone';
+  trimStrings?: boolean;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    if (!(control instanceof FormGroup)) {
+      return null;
+    }
+
+    const {
+      fieldNames = [],
+      minimum = 1,
+      message,
+      label,
+      customCheck = 'any',
+      trimStrings = true
+    } = params;
+
+    if (fieldNames.length === 0) {
+      return null;
+    }
+
+    let validFieldsCount = 0;
+    const fieldValues: Record<string, any> = {};
+    const fieldStatuses: Record<string, boolean> = {};
+
+    fieldNames.forEach(fieldName => {
+      const fieldControl = control.get(fieldName);
+      let value = fieldControl?.value;
+      
+      fieldValues[fieldName] = value;
+      
+      if (trimStrings && typeof value === 'string') {
+        value = value.trim();
+      }
+      
+      let hasValue = isValuePresent(value);
+      
+      if (hasValue && customCheck !== 'any') {
+        hasValue = applyCustomCheck(value, fieldName, customCheck);
+      }
+      
+      fieldStatuses[fieldName] = hasValue;
+      
+      if (hasValue) {
+        validFieldsCount++;
+      }
+    });
+
+    if (validFieldsCount < minimum) {
+      const errorLabel = label || fieldNames.join(', ');
+      const defaultMessage = minimum === 1 
+        ? `At least one of the following fields is required: ${errorLabel}`
+        : `At least ${minimum} of the following fields are required: ${errorLabel}`;
+      
+      return {
+        atLeastOneRequired: {
+          message: message || defaultMessage,
+          requiredFields: fieldNames,
+          minimum: minimum,
+          actualCount: validFieldsCount,
+          fieldValues: fieldValues,
+          fieldStatuses: fieldStatuses
         }
-        break;
-      default:
-        validator = () => null;
+      };
+    }
+
+    return null;
+  };
+};
+
+/**
+ * SSN Validator
+ * Validates US Social Security Number format (XXX-XX-XXXX)
+ */
+export const ssnValidator: CustomValidatorFn = (params?: any) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const ssnPattern = /^\d{3}-\d{2}-\d{4}$/;
+    return ssnPattern.test(value) ? null : { 
+      ssn: { 
+        message: 'SSN must be in format: XXX-XX-XXXX',
+        actualValue: value 
+      } 
+    };
+  };
+};
+
+/**
+ * Phone Validator
+ * Validates phone number with different format options
+ */
+export const phoneValidator: CustomValidatorFn = (params?: { 
+  format?: 'us' | 'international';
+  allowExtension?: boolean;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const { format = 'us', allowExtension = false } = params || {};
+    
+    let pattern: RegExp;
+    let message: string;
+    
+    if (format === 'international') {
+      pattern = /^\+\d{1,3}\s?\d{1,14}(\s?ext\.?\s?\d{1,6})?$/;
+      message = 'Phone must be in international format: +1 1234567890';
+    } else {
+      if (allowExtension) {
+        pattern = /^(\(\d{3}\)\s?|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}(\s?ext\.?\s?\d{1,6})?$/;
+        message = 'Phone must be in format: (123) 456-7890 or 123-456-7890 (ext. optional)';
+      } else {
+        pattern = /^(\(\d{3}\)\s?|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}$/;
+        message = 'Phone must be in format: (123) 456-7890 or 123-456-7890';
+      }
     }
     
-    // Wrap validator to provide custom message if specified
-    if (rule.message && validator !== (() => null)) {
-      return (control: AbstractControl) => {
-        const result = validator(control);
-        if (result) {
-          // Replace default error message with custom message
-          const errorKey = Object.keys(result)[0];
-          return { [errorKey]: { message: rule.message, ...result[errorKey] } };
-        }
-        return null;
+    return pattern.test(value) ? null : { 
+      phone: { 
+        message,
+        actualValue: value 
+      } 
+    };
+  };
+};
+
+/**
+ * Age Range Validator
+ * Validates age within specified range
+ */
+export const ageRangeValidator: CustomValidatorFn = (params?: { 
+  min?: number; 
+  max?: number;
+  allowDecimals?: boolean;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = params?.allowDecimals ? parseFloat(control.value) : parseInt(control.value, 10);
+    if (isNaN(value)) return null;
+    
+    const min = params?.min || 0;
+    const max = params?.max || 120;
+    
+    if (value < min || value > max) {
+      return { 
+        ageRange: { 
+          message: `Age must be between ${min} and ${max}`,
+          actualValue: value,
+          min,
+          max
+        } 
       };
     }
     
-    return validator;
-  });
+    return null;
+  };
+};
+
+/**
+ * Password Strength Validator
+ * Validates password complexity requirements
+ */
+export const passwordStrengthValidator: CustomValidatorFn = (params?: { 
+  minLength?: number;
+  requireUppercase?: boolean;
+  requireLowercase?: boolean;
+  requireNumbers?: boolean;
+  requireSpecialChars?: boolean;
+  specialChars?: string;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const {
+      minLength = 8,
+      requireUppercase = true,
+      requireLowercase = true,
+      requireNumbers = true,
+      requireSpecialChars = true,
+      specialChars = '!@#$%^&*(),.?":{}|<>'
+    } = params || {};
+    
+    const errors: string[] = [];
+    
+    if (value.length < minLength) {
+      errors.push(`Password must be at least ${minLength} characters long`);
+    }
+    
+    if (requireUppercase && !/[A-Z]/.test(value)) {
+      errors.push('Password must contain at least one uppercase letter');
+    }
+    
+    if (requireLowercase && !/[a-z]/.test(value)) {
+      errors.push('Password must contain at least one lowercase letter');
+    }
+    
+    if (requireNumbers && !/\d/.test(value)) {
+      errors.push('Password must contain at least one number');
+    }
+    
+    if (requireSpecialChars) {
+      const specialCharsRegex = new RegExp(`[${specialChars.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}]`);
+      if (!specialCharsRegex.test(value)) {
+        errors.push(`Password must contain at least one special character (${specialChars})`);
+      }
+    }
+    
+    return errors.length > 0 ? { 
+      passwordStrength: { 
+        message: errors.join('. '),
+        errors,
+        actualValue: value 
+      } 
+    } : null;
+  };
+};
+
+/**
+ * Credit Card Validator
+ * Validates credit card number using Luhn algorithm
+ */
+export const creditCardValidator: CustomValidatorFn = (params?: {
+  acceptedTypes?: Array<'visa' | 'mastercard' | 'amex' | 'discover'>;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const cleanValue = value.replace(/[\s-]/g, '');
+    
+    if (!/^\d+$/.test(cleanValue)) {
+      return { 
+        creditCard: { 
+          message: 'Credit card number must contain only digits',
+          actualValue: value 
+        } 
+      };
+    }
+    
+    if (cleanValue.length < 13 || cleanValue.length > 19) {
+      return { 
+        creditCard: { 
+          message: 'Credit card number must be between 13 and 19 digits',
+          actualValue: value 
+        } 
+      };
+    }
+    
+    // Luhn algorithm
+    let sum = 0;
+    let shouldDouble = false;
+    
+    for (let i = cleanValue.length - 1; i >= 0; i--) {
+      let digit = parseInt(cleanValue.charAt(i), 10);
+      
+      if (shouldDouble) {
+        digit *= 2;
+        if (digit > 9) {
+          digit -= 9;
+        }
+      }
+      
+      sum += digit;
+      shouldDouble = !shouldDouble;
+    }
+    
+    if (sum % 10 !== 0) {
+      return { 
+        creditCard: { 
+          message: 'Invalid credit card number',
+          actualValue: value 
+        } 
+      };
+    }
+    
+    // Check card type if specified
+    if (params?.acceptedTypes) {
+      const cardType = detectCardType(cleanValue);
+      if (cardType && !params.acceptedTypes.includes(cardType)) {
+        return {
+          creditCard: {
+            message: `Only ${params.acceptedTypes.join(', ')} cards are accepted`,
+            actualValue: value,
+            detectedType: cardType
+          }
+        };
+      }
+    }
+    
+    return null;
+  };
+};
+
+/**
+ * Date Range Validator
+ * Validates that a date is within a specified range
+ */
+export const dateRangeValidator: CustomValidatorFn = (params?: { 
+  minDate?: Date | string; 
+  maxDate?: Date | string;
+  format?: string;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const inputDate = new Date(value);
+    if (isNaN(inputDate.getTime())) {
+      return { 
+        dateRange: { 
+          message: 'Invalid date format',
+          actualValue: value 
+        } 
+      };
+    }
+    
+    const minDate = params?.minDate ? new Date(params.minDate) : null;
+    const maxDate = params?.maxDate ? new Date(params.maxDate) : null;
+    
+    if (minDate && inputDate < minDate) {
+      return { 
+        dateRange: { 
+          message: `Date must be after ${minDate.toLocaleDateString()}`,
+          actualValue: value,
+          minDate: minDate.toISOString()
+        } 
+      };
+    }
+    
+    if (maxDate && inputDate > maxDate) {
+      return { 
+        dateRange: { 
+          message: `Date must be before ${maxDate.toLocaleDateString()}`,
+          actualValue: value,
+          maxDate: maxDate.toISOString()
+        } 
+      };
+    }
+    
+    return null;
+  };
+};
+
+/**
+ * Match Field Validator
+ * Validates that two fields match (e.g., password confirmation)
+ */
+export const matchFieldValidator: CustomValidatorFn = (params: { 
+  matchField: string; 
+  matchFieldLabel?: string;
+  caseSensitive?: boolean;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    if (!control.parent) return null;
+    
+    const value = control.value;
+    const matchControl = control.parent.get(params.matchField);
+    const matchValue = matchControl?.value;
+    
+    if (!value || !matchValue) return null;
+    
+    const fieldLabel = params.matchFieldLabel || params.matchField;
+    const caseSensitive = params.caseSensitive !== false; // Default to true
+    
+    const valuesMatch = caseSensitive 
+      ? value === matchValue 
+      : String(value).toLowerCase() === String(matchValue).toLowerCase();
+    
+    return valuesMatch ? null : { 
+      matchField: { 
+        message: `This field must match ${fieldLabel}`,
+        actualValue: value,
+        expectedValue: matchValue 
+      } 
+    };
+  };
+};
+
+/**
+ * URL Validator
+ * Validates URL format with various options
+ */
+export const urlValidator: CustomValidatorFn = (params?: { 
+  requireProtocol?: boolean;
+  allowedProtocols?: string[];
+  requireWWW?: boolean;
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value) return null;
+    
+    const {
+      requireProtocol = true,
+      allowedProtocols = ['http', 'https'],
+      requireWWW = false
+    } = params || {};
+    
+    let url = value;
+    
+    // Add protocol if not present and not required
+    if (!requireProtocol && !url.match(/^https?:\/\//)) {
+      url = 'http://' + url;
+    }
+    
+    try {
+      const urlObj = new URL(url);
+      
+      // Check protocol
+      if (allowedProtocols.length > 0) {
+        const protocol = urlObj.protocol.slice(0, -1); // Remove trailing ':'
+        if (!allowedProtocols.includes(protocol)) {
+          return {
+            url: {
+              message: `URL must use one of these protocols: ${allowedProtocols.join(', ')}`,
+              actualValue: value
+            }
+          };
+        }
+      }
+      
+      // Check WWW requirement
+      if (requireWWW && !urlObj.hostname.startsWith('www.')) {
+        return {
+          url: {
+            message: 'URL must include www.',
+            actualValue: value
+          }
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      return { 
+        url: { 
+          message: requireProtocol 
+            ? 'Please enter a valid URL with http:// or https://' 
+            : 'Please enter a valid URL',
+          actualValue: value 
+        } 
+      };
+    }
+  };
+};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+function isValuePresent(value: any): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  
+  if (typeof value === 'string' && value.trim() === '') {
+    return false;
+  }
+  
+  if (Array.isArray(value) && value.length === 0) {
+    return false;
+  }
+  
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+    return false;
+  }
+  
+  return true;
 }
 
-
-typescript// In your component
-getErrorMessages(fieldName: string): string[] {
-  const control = this.form.get(fieldName);
-  const messages: string[] = [];
+function applyCustomCheck(value: any, fieldName: string, customCheck: 'email' | 'phone'): boolean {
+  const stringValue = String(value);
   
-  if (control && control.errors) {
-    Object.keys(control.errors).forEach(errorKey => {
-      const error = control.errors![errorKey];
-      if (error.message) {
-        messages.push(error.message);
-      } else {
-        // Fallback to default messages
-        messages.push(this.getDefaultErrorMessage(errorKey, error));
+  switch (customCheck) {
+    case 'email':
+      if (fieldName.toLowerCase().includes('email') || customCheck === 'email') {
+        const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        return emailPattern.test(stringValue);
+      }
+      break;
+      
+    case 'phone':
+      if (fieldName.toLowerCase().includes('phone') || 
+          fieldName.toLowerCase().includes('mobile') || 
+          fieldName.toLowerCase().includes('tel') ||
+          customCheck === 'phone') {
+        const phonePattern = /^[\+]?[\d\s\-\(\)\.]{10,}$/;
+        const digitCount = stringValue.replace(/\D/g, '').length;
+        return phonePattern.test(stringValue) && digitCount >= 10;
+      }
+      break;
+  }
+  
+  return true;
+}
+
+function detectCardType(cardNumber: string): 'visa' | 'mastercard' | 'amex' | 'discover' | null {
+  if (/^4/.test(cardNumber)) return 'visa';
+  if (/^5[1-5]/.test(cardNumber) || /^2[2-7]/.test(cardNumber)) return 'mastercard';
+  if (/^3[47]/.test(cardNumber)) return 'amex';
+  if (/^6(?:011|5)/.test(cardNumber)) return 'discover';
+  return null;
+}
+
+// ============================================================================
+// FRAMEWORK VALIDATORS COLLECTION - AUTOMATICALLY AVAILABLE
+// ============================================================================
+
+/**
+ * This collection is automatically loaded by the UnifiedValidationService
+ * No need to import in app.module.ts
+ */
+export const FRAMEWORK_VALIDATORS_COLLECTION: Record<string, CustomValidatorFn> = {
+  atLeastOneRequiredValidator,
+  ssnValidator,
+  phoneValidator,
+  ageRangeValidator,
+  passwordStrengthValidator,
+  creditCardValidator,
+  dateRangeValidator,
+  matchFieldValidator,
+  urlValidator
+};
+
+/**
+ * Convenience validators for quick use
+ */
+export const quickValidators = {
+  // Contact validation
+  requireAnyContact: (fields: string[] = ['phone', 'email']) => ({
+    type: 'custom' as const,
+    customValidatorName: 'atLeastOneRequiredValidator',
+    params: { fieldNames: fields, message: 'At least one contact method is required' }
+  }),
+  
+  // Password matching
+  confirmPassword: (passwordField: string = 'password') => ({
+    type: 'custom' as const,
+    customValidatorName: 'matchFieldValidator',
+    params: { matchField: passwordField, matchFieldLabel: 'Password' }
+  }),
+  
+  // Strong password
+  strongPassword: () => ({
+    type: 'custom' as const,
+    customValidatorName: 'passwordStrengthValidator',
+    params: { minLength: 8, requireUppercase: true, requireLowercase: true, requireNumbers: true, requireSpecialChars: true }
+  }),
+  
+  // US SSN
+  usSSN: () => ({
+    type: 'custom' as const,
+    customValidatorName: 'ssnValidator'
+  }),
+  
+  // US Phone
+  usPhone: () => ({
+    type: 'custom' as const,
+    customValidatorName: 'phoneValidator',
+    params: { format: 'us' }
+  }),
+  
+  // Adult age
+  adultAge: () => ({
+    type: 'custom' as const,
+    customValidatorName: 'ageRangeValidator',
+    params: { min: 18, max: 100 }
+  })
+};
+
+
+------------------
+
+// unified-validation.service.ts - Updated to include framework validators automatically
+import { Injectable, Inject, Optional, InjectionToken } from '@angular/core';
+import { AbstractControl, FormGroup, FormArray, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
+import { FormExtensionService } from './form-extension.service';
+import { BehaviorSubject, Observable, Subject, Subscription } from 'rxjs';
+import { FRAMEWORK_VALIDATORS_COLLECTION } from './framework-validators';
+
+// ... (keep all existing interfaces: LookupItem, FieldOperator, ValidationRule, etc.)
+
+/**
+ * Custom validator function interface
+ */
+export interface CustomValidatorFn {
+  (params?: any): ValidatorFn;
+}
+
+/**
+ * InjectionToken for additional custom validators (optional)
+ */
+export const CUSTOM_VALIDATORS = new InjectionToken<Record<string, CustomValidatorFn>>(
+  'CUSTOM_VALIDATORS'
+);
+
+/**
+ * InjectionToken for lookup service
+ */
+export const LOOKUP_SERVICE = new InjectionToken<LookupService>(
+  'LOOKUP_SERVICE'
+);
+
+/**
+ * Interface for lookup service
+ */
+export interface LookupService {
+  getLookupData(lookupName: string, params?: any): LookupItem[];
+}
+
+/**
+ * Unified validation service with built-in framework validators
+ */
+@Injectable({ providedIn: 'root' })
+export class UnifiedValidationService {
+  private formRegistry = new Map<string, FormGroup>();
+  private rulesRegistry = new Map<string, Record<string, FieldRule>>();
+  private fieldChangeSubject = new Subject<FieldChangeEvent>();
+  private subscriptions = new Map<string, Subscription[]>();
+  private valueCache = new Map<string, Map<string, any>>();
+  private formValueChangeSubscriptions = new Map<string, Subscription>();
+  private originalValidators = new Map<string, Map<string, ValidatorFn[]>>();
+  
+  // Combined validators: Framework validators + Optional custom validators
+  private allCustomValidators: Record<string, CustomValidatorFn>;
+  
+  /**
+   * Get field change events as Observable
+   */
+  public fieldChanges: Observable<FieldChangeEvent> = this.fieldChangeSubject.asObservable();
+  
+  constructor(
+    private formExtension: FormExtensionService,
+    @Optional() @Inject(LOOKUP_SERVICE) private lookupService: LookupService,
+    @Optional() @Inject(CUSTOM_VALIDATORS) private additionalCustomValidators: Record<string, CustomValidatorFn>
+  ) {
+    // Combine framework validators with any additional custom validators
+    this.allCustomValidators = {
+      ...FRAMEWORK_VALIDATORS_COLLECTION, // Framework validators (always available)
+      ...(this.additionalCustomValidators || {}) // Optional additional validators
+    };
+    
+    console.log('🎯 Unified Validation Service initialized with validators:', Object.keys(this.allCustomValidators));
+  }
+  
+  /**
+   * Get list of available custom validators
+   */
+  getAvailableValidators(): string[] {
+    return Object.keys(this.allCustomValidators);
+  }
+  
+  /**
+   * Check if a custom validator exists
+   */
+  hasValidator(validatorName: string): boolean {
+    return validatorName in this.allCustomValidators;
+  }
+  
+  /**
+   * Add a custom validator at runtime
+   */
+  addCustomValidator(name: string, validator: CustomValidatorFn): void {
+    this.allCustomValidators[name] = validator;
+    console.log(`✅ Added custom validator: ${name}`);
+  }
+  
+  /**
+   * Remove a custom validator
+   */
+  removeCustomValidator(name: string): boolean {
+    if (name in FRAMEWORK_VALIDATORS_COLLECTION) {
+      console.warn(`⚠️ Cannot remove framework validator: ${name}`);
+      return false;
+    }
+    
+    if (name in this.allCustomValidators) {
+      delete this.allCustomValidators[name];
+      console.log(`🗑️ Removed custom validator: ${name}`);
+      return true;
+    }
+    
+    return false;
+  }
+
+  // ... (keep all existing methods: registerForm, unregisterForm, etc.)
+  
+  /**
+   * Create validators from validation rules - Updated to use combined validators
+   */
+  private createValidators(rules: ValidationRule[]): ValidatorFn[] {
+    return rules.map(rule => {
+      switch (rule.type) {
+        case 'required':
+          return Validators.required;
+        case 'email':
+          return Validators.email;
+        case 'minLength':
+          return Validators.minLength(rule.value);
+        case 'maxLength':
+          return Validators.maxLength(rule.value);
+        case 'pattern':
+          return Validators.pattern(rule.value);
+        case 'custom':
+          // Use combined validators (framework + additional)
+          if (rule.customValidatorName && this.allCustomValidators[rule.customValidatorName]) {
+            const validator = this.allCustomValidators[rule.customValidatorName](rule.params);
+            
+            // Wrap validator to provide custom message if specified
+            if (rule.message) {
+              return (control: AbstractControl) => {
+                const result = validator(control);
+                if (result) {
+                  // Replace or enhance error message
+                  const errorKey = Object.keys(result)[0];
+                  const errorValue = result[errorKey];
+                  
+                  // If error value is an object, update the message property
+                  if (typeof errorValue === 'object' && errorValue !== null) {
+                    return { 
+                      [errorKey]: { 
+                        ...errorValue, 
+                        message: rule.message 
+                      } 
+                    };
+                  } else {
+                    // If error value is primitive, create object with custom message
+                    return { 
+                      [errorKey]: { 
+                        message: rule.message,
+                        value: errorValue 
+                      } 
+                    };
+                  }
+                }
+                return null;
+              };
+            }
+            
+            return validator;
+          } else {
+            console.warn(`⚠️ Custom validator '${rule.customValidatorName}' not found. Available validators:`, Object.keys(this.allCustomValidators));
+            return () => null; // No-op validator
+          }
+        default:
+          console.warn(`⚠️ Unknown validation rule type: ${rule.type}`);
+          return () => null;
       }
     });
   }
   
-  return messages;
+  // ... (keep all other existing methods)
+  
+  /**
+   * Helper method to create validation rules using framework validators
+   */
+  createValidationRule(validatorName: keyof typeof FRAMEWORK_VALIDATORS_COLLECTION, params?: any, message?: string): ValidationRule {
+    return {
+      type: 'custom',
+      customValidatorName: validatorName,
+      params: params,
+      message: message
+    };
+  }
+  
+  /**
+   * Quick access to common validation rules
+   */
+  static rules = {
+    // At least one required
+    atLeastOne: (fieldNames: string[], message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'atLeastOneRequiredValidator',
+      params: { fieldNames, message }
+    }),
+    
+    // Contact methods
+    requireContact: (fields: string[] = ['phone', 'email'], message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'atLeastOneRequiredValidator',
+      params: { 
+        fieldNames: fields, 
+        message: message || 'At least one contact method is required' 
+      }
+    }),
+    
+    // SSN validation
+    ssn: (message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'ssnValidator',
+      message: message
+    }),
+    
+    // Phone validation
+    phone: (format: 'us' | 'international' = 'us', message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'phoneValidator',
+      params: { format },
+      message: message
+    }),
+    
+    // Age validation
+    age: (min: number = 18, max: number = 100, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'ageRangeValidator',
+      params: { min, max },
+      message: message
+    }),
+    
+    // Password strength
+    strongPassword: (options?: {
+      minLength?: number;
+      requireUppercase?: boolean;
+      requireLowercase?: boolean;
+      requireNumbers?: boolean;
+      requireSpecialChars?: boolean;
+    }, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'passwordStrengthValidator',
+      params: options,
+      message: message
+    }),
+    
+    // Match field
+    matchField: (fieldToMatch: string, label?: string, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'matchFieldValidator',
+      params: { matchField: fieldToMatch, matchFieldLabel: label },
+      message: message
+    }),
+    
+    // Date range
+    dateRange: (minDate?: Date | string, maxDate?: Date | string, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'dateRangeValidator',
+      params: { minDate, maxDate },
+      message: message
+    }),
+    
+    // URL validation
+    url: (requireProtocol: boolean = true, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'urlValidator',
+      params: { requireProtocol },
+      message: message
+    }),
+    
+    // Credit card
+    creditCard: (acceptedTypes?: Array<'visa' | 'mastercard' | 'amex' | 'discover'>, message?: string) => ({
+      type: 'custom' as const,
+      customValidatorName: 'creditCardValidator',
+      params: { acceptedTypes },
+      message: message
+    })
+  };
 }
 
-private getDefaultErrorMessage(errorKey: string, error: any): string {
-  switch (errorKey) {
-    case 'required':
-      return 'This field is required';
-    case 'email':
-      return 'Please enter a valid email address';
-    case 'minlength':
-      return `Minimum length is ${error.requiredLength} characters`;
-    case 'maxlength':
-      return `Maximum length is ${error.requiredLength} characters`;
-    case 'pattern':
-      return 'Invalid format';
-    default:
-      return 'Invalid input';
+// ============================================================================
+// USAGE EXAMPLES
+// ============================================================================
+
+/*
+
+// EXAMPLE 1: Basic usage - no imports needed, validators are automatically available
+const rules = {
+  '': { // Apply to form group
+    validation: {
+      rules: [
+        {
+          type: 'custom',
+          customValidatorName: 'passwordStrengthValidator',
+          params: {
+            minLength: 8,
+            requireUppercase: true,
+            requireLowercase: true,
+            requireNumbers: true,
+            requireSpecialChars: true
+          },
+          message: 'Password must be strong'
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'confirmPassword': {
+    validation: {
+      rules: [
+        { type: 'required', message: 'Please confirm your password' },
+        {
+          type: 'custom',
+          customValidatorName: 'matchFieldValidator',
+          params: {
+            matchField: 'password',
+            matchFieldLabel: 'Password'
+          },
+          message: 'Passwords do not match'
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
   }
-}
+};
+
+// EXAMPLE 2: Using the static helper methods
+const quickRules = {
+  '': {
+    validation: {
+      rules: [
+        UnifiedValidationService.rules.requireContact(['phone', 'email', 'mobile'])
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'ssn': {
+    validation: {
+      rules: [
+        { type: 'required' },
+        UnifiedValidationService.rules.ssn('Invalid SSN format')
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'age': {
+    validation: {
+      rules: [
+        UnifiedValidationService.rules.age(21, 65, 'Age must be between 21 and 65')
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'website': {
+    validation: {
+      rules: [
+        UnifiedValidationService.rules.url(true, 'Please enter a valid URL with http:// or https://')
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  }
+};
+
+// EXAMPLE 3: Conditional validation with framework validators
+const conditionalRules = {
+  'businessTaxId': {
+    conditions: [
+      { field: 'entityType', operator: 'equals', value: 'business' }
+    ],
+    visibility: {
+      value: true,
+      clearOnHide: true
+    },
+    validation: {
+      rules: [
+        { type: 'required', message: 'Tax ID is required for businesses' },
+        {
+          type: 'custom',
+          customValidatorName: 'ssnValidator', // Can reuse SSN validator for EIN format
+          message: 'Tax ID must be in format: XX-XXXXXXX'
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
+  },
+  
+  'emergencyContacts': {
+    conditions: [
+      { field: 'needsEmergencyContact', operator: 'equals', value: true }
+    ],
+    validation: {
+      rules: [
+        {
+          type: 'custom',
+          customValidatorName: 'atLeastOneRequiredValidator',
+          params: {
+            fieldNames: ['emergencyPhone', 'emergencyEmail', 'emergencyAddress'],
+            minimum: 2,
+            message: 'Please provide at least 2 emergency contact methods'
+          }
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onDependencyChange: true }
+  }
+};
+
+// EXAMPLE 4: Register and use (no module imports needed!)
+this.validationService.registerForm('myForm', this.myForm);
+const controller = this.validationService.registerRules('myForm', rules);
+
+// EXAMPLE 5: Adding your own custom validator at runtime (optional)
+this.validationService.addCustomValidator('myCustomValidator', (params) => {
+  return (control) => {
+    // Your custom validation logic
+    return control.value === 'valid' ? null : { myCustom: { message: 'Invalid value' } };
+  };
+});
+
+// EXAMPLE 6: Check available validators
+console.log('Available validators:', this.validationService.getAvailableValidators());
+// Output: ['atLeastOneRequiredValidator', 'ssnValidator', 'phoneValidator', 'ageRangeValidator', ...]
+
+*/atLeastOneRequiredValidator',
+          params: {
+            fieldNames: ['phone', 'email', 'fax'],
+            message: 'Please provide at least one contact method'
+          }
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'ssn': {
+    validation: {
+      rules: [
+        { type: 'required', message: 'SSN is required' },
+        { 
+          type: 'custom',
+          customValidatorName: 'ssnValidator',
+          message: 'Please enter a valid SSN (XXX-XX-XXXX)'
+        }
+      ]
+    },
+    runWhen: { onLoad: true, onChange: true }
+  },
+  
+  'password': {
+    validation: {
+      rules: [
+        { type: 'required', message: 'Password is required' },
+        {
+          type: 'custom',
+          customValidatorName: '
