@@ -1,0 +1,482 @@
+// Step 1: Register the validator in your provider
+// checkbox-validators.provider.ts
+import { CUSTOM_VALIDATORS } from './validation.service';
+import { AbstractControl, ValidationErrors } from '@angular/forms';
+
+export const atLeastOneYValidator = (params?: { 
+  checkboxFields: string[]; 
+  errorKey?: string; 
+  errorMessage?: string; 
+}) => {
+  return (control: AbstractControl): ValidationErrors | null => {
+    // Get the parent form group
+    const parent = control.parent as FormGroup;
+    if (!parent) {
+      return null; // Can't validate without parent form
+    }
+
+    const checkboxFields = params?.checkboxFields || [];
+    const errorKey = params?.errorKey || 'atLeastOneRequired';
+    const errorMessage = params?.errorMessage || 'At least one option must be selected';
+
+    // Check if at least one checkbox has value 'Y'
+    const hasAtLeastOneY = checkboxFields.some(fieldName => {
+      const checkboxControl = parent.get(fieldName);
+      return checkboxControl && checkboxControl.value === 'Y';
+    });
+
+    // If at least one has 'Y', no error
+    if (hasAtLeastOneY) {
+      return null;
+    }
+
+    // Return error if none has 'Y'
+    return {
+      [errorKey]: {
+        message: errorMessage,
+        actualValue: checkboxFields.map(fieldName => ({
+          field: fieldName,
+          value: parent.get(fieldName)?.value
+        }))
+      }
+    };
+  };
+};
+
+export const CHECKBOX_VALIDATORS_PROVIDER = {
+  provide: CUSTOM_VALIDATORS,
+  useValue: {
+    // Register your checkbox validator
+    atLeastOneY: atLeastOneYValidator,
+    
+    // Your existing validators...
+    ssnValidator: (params?: any) => {
+      return (control: AbstractControl): ValidationErrors | null => {
+        const value = control.value;
+        if (!value) return null;
+        const ssnPattern = /^\d{3}-\d{2}-\d{4}$/;
+        return ssnPattern.test(value) ? null : { invalidSsn: true };
+      };
+    }
+  }
+};
+
+// Step 2: Create validation rules for your 5 checkbox fields
+// checkbox-form.component.ts
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { ValidationService } from './validation.service';
+
+@Component({
+  selector: 'app-checkbox-form',
+  template: `
+    <form [formGroup]="checkboxForm" (ngSubmit)="onSubmit()">
+      <h3>Select at least one option (at least one must be 'Y'):</h3>
+      
+      <div class="checkbox-group">
+        <label class="checkbox-item">
+          <input type="checkbox" 
+                 [checked]="checkboxForm.get('option1')?.value === 'Y'"
+                 (change)="onCheckboxChange('option1', $event)">
+          <span>Marketing Communications</span>
+          <div *ngIf="getFieldError('option1')" class="error">
+            {{ getFieldError('option1') }}
+          </div>
+        </label>
+        
+        <label class="checkbox-item">
+          <input type="checkbox" 
+                 [checked]="checkboxForm.get('option2')?.value === 'Y'"
+                 (change)="onCheckboxChange('option2', $event)">
+          <span>Newsletter Subscription</span>
+          <div *ngIf="getFieldError('option2')" class="error">
+            {{ getFieldError('option2') }}
+          </div>
+        </label>
+        
+        <label class="checkbox-item">
+          <input type="checkbox" 
+                 [checked]="checkboxForm.get('option3')?.value === 'Y'"
+                 (change)="onCheckboxChange('option3', $event)">
+          <span>Product Updates</span>
+          <div *ngIf="getFieldError('option3')" class="error">
+            {{ getFieldError('option3') }}
+          </div>
+        </label>
+        
+        <label class="checkbox-item">
+          <input type="checkbox" 
+                 [checked]="checkboxForm.get('option4')?.value === 'Y'"
+                 (change)="onCheckboxChange('option4', $event)">
+          <span>Event Notifications</span>
+          <div *ngIf="getFieldError('option4')" class="error">
+            {{ getFieldError('option4') }}
+          </div>
+        </label>
+        
+        <label class="checkbox-item">
+          <input type="checkbox" 
+                 [checked]="checkboxForm.get('option5')?.value === 'Y'"
+                 (change)="onCheckboxChange('option5', $event)">
+          <span>Survey Invitations</span>
+          <div *ngIf="getFieldError('option5')" class="error">
+            {{ getFieldError('option5') }}
+          </div>
+        </label>
+      </div>
+      
+      <div class="form-actions">
+        <button type="submit" [disabled]="checkboxForm.invalid">Submit</button>
+        <button type="button" (click)="resetForm()">Reset</button>
+        <button type="button" (click)="selectFirst()">Select First Option</button>
+      </div>
+      
+      <div class="status-info">
+        <p><strong>Form Valid:</strong> {{ checkboxForm.valid }}</p>
+        <p><strong>Selected Options:</strong> {{ getSelectedOptions().join(', ') || 'None' }}</p>
+        <p><strong>Form Values:</strong> {{ checkboxForm.value | json }}</p>
+      </div>
+    </form>
+  `,
+  styles: [`
+    .checkbox-group {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    
+    .checkbox-item {
+      display: flex;
+      align-items: flex-start;
+      margin: 15px 0;
+      cursor: pointer;
+    }
+    
+    .checkbox-item input {
+      margin-right: 10px;
+      margin-top: 2px;
+    }
+    
+    .checkbox-item span {
+      flex: 1;
+    }
+    
+    .error {
+      color: #d32f2f;
+      font-size: 14px;
+      margin-top: 5px;
+      margin-left: 22px;
+      font-weight: 500;
+    }
+    
+    .form-actions {
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+    }
+    
+    .form-actions button {
+      padding: 10px 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .form-actions button[type="submit"] {
+      background: #1976d2;
+      color: white;
+      border-color: #1976d2;
+    }
+    
+    .form-actions button[type="submit"]:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .status-info {
+      margin-top: 20px;
+      padding: 15px;
+      background: #f5f5f5;
+      border-radius: 4px;
+    }
+  `]
+})
+export class CheckboxFormComponent implements OnInit {
+  checkboxForm: FormGroup;
+  private validationController: any;
+  
+  // Define your 5 checkbox field names
+  private checkboxFields = ['option1', 'option2', 'option3', 'option4', 'option5'];
+
+  constructor(
+    private fb: FormBuilder,
+    private validationService: ValidationService
+  ) {
+    this.initForm();
+  }
+
+  ngOnInit() {
+    this.setupValidation();
+  }
+
+  private initForm() {
+    // Initialize all checkboxes with 'N' value
+    this.checkboxForm = this.fb.group({
+      option1: ['N'],
+      option2: ['N'],
+      option3: ['N'],
+      option4: ['N'],
+      option5: ['N']
+    });
+  }
+
+  private setupValidation() {
+    // Step 3: Create validation rules using the atLeastOneY validator
+    const rules = {
+      // Apply the same validation rule to each checkbox field
+      option1: this.createCheckboxValidationRule(),
+      option2: this.createCheckboxValidationRule(),
+      option3: this.createCheckboxValidationRule(),
+      option4: this.createCheckboxValidationRule(),
+      option5: this.createCheckboxValidationRule()
+    };
+
+    try {
+      // Register the rules with your validation service
+      this.validationController = this.validationService.registerRules('checkboxForm', this.checkboxForm, rules);
+      this.validationController.runLoadValidations();
+    } catch (error) {
+      console.warn('Validation service not available, using fallback');
+      this.setupFallbackValidation();
+    }
+  }
+
+  // Step 4: Create the validation rule that applies to each checkbox
+  private createCheckboxValidationRule() {
+    return {
+      validation: {
+        rules: [{
+          type: 'custom',
+          customValidatorName: 'atLeastOneY',
+          params: {
+            checkboxFields: this.checkboxFields, // Pass all 5 field names
+            errorKey: 'atLeastOneRequired',
+            errorMessage: 'Please select at least one option'
+          }
+        }]
+      },
+      runWhen: {
+        onLoad: true,
+        onChange: true,
+        onDependencyChange: true
+      }
+    };
+  }
+
+  private setupFallbackValidation() {
+    // Fallback validation when service isn't available
+    this.checkboxFields.forEach(fieldName => {
+      this.checkboxForm.get(fieldName)?.valueChanges.subscribe(() => {
+        this.validateAllCheckboxes();
+      });
+    });
+    
+    // Run initial validation
+    this.validateAllCheckboxes();
+  }
+
+  private validateAllCheckboxes() {
+    const hasAtLeastOneY = this.checkboxFields.some(fieldName => 
+      this.checkboxForm.get(fieldName)?.value === 'Y'
+    );
+
+    this.checkboxFields.forEach(fieldName => {
+      const control = this.checkboxForm.get(fieldName);
+      if (control) {
+        if (hasAtLeastOneY) {
+          // Clear errors if at least one is selected
+          if (control.errors?.['atLeastOneRequired']) {
+            const errors = { ...control.errors };
+            delete errors['atLeastOneRequired'];
+            control.setErrors(Object.keys(errors).length > 0 ? errors : null);
+          }
+        } else {
+          // Set error if none are selected
+          const currentErrors = control.errors || {};
+          control.setErrors({
+            ...currentErrors,
+            atLeastOneRequired: {
+              message: 'Please select at least one option'
+            }
+          });
+        }
+      }
+    });
+  }
+
+  onCheckboxChange(fieldName: string, event: Event) {
+    const target = event.target as HTMLInputElement;
+    const value = target.checked ? 'Y' : 'N';
+    
+    // Update the form control value
+    this.checkboxForm.get(fieldName)?.setValue(value);
+    
+    // Mark as touched to show validation errors
+    this.checkboxForm.get(fieldName)?.markAsTouched();
+    
+    // Re-run validation for all checkbox fields
+    // This ensures all fields get updated validation status
+    this.checkboxFields.forEach(field => {
+      if (this.validationController) {
+        this.validationController.runFieldRules('checkboxForm', field);
+      }
+    });
+    
+    // Fallback validation
+    this.validateAllCheckboxes();
+  }
+
+  getFieldError(fieldName: string): string | null {
+    const control = this.checkboxForm.get(fieldName);
+    if (control?.errors?.['atLeastOneRequired'] && control?.touched) {
+      return control.errors['atLeastOneRequired'].message;
+    }
+    return null;
+  }
+
+  getSelectedOptions(): string[] {
+    return this.checkboxFields
+      .filter(fieldName => this.checkboxForm.get(fieldName)?.value === 'Y')
+      .map(fieldName => fieldName.replace('option', 'Option '));
+  }
+
+  resetForm() {
+    this.checkboxFields.forEach(fieldName => {
+      this.checkboxForm.get(fieldName)?.setValue('N');
+      this.checkboxForm.get(fieldName)?.markAsUntouched();
+    });
+  }
+
+  selectFirst() {
+    this.checkboxForm.get('option1')?.setValue('Y');
+    this.checkboxForm.get('option1')?.markAsTouched();
+    
+    // Trigger validation update
+    this.checkboxFields.forEach(field => {
+      if (this.validationController) {
+        this.validationController.runFieldRules('checkboxForm', field);
+      }
+    });
+  }
+
+  onSubmit() {
+    // Mark all fields as touched to show validation errors
+    this.checkboxFields.forEach(fieldName => {
+      this.checkboxForm.get(fieldName)?.markAsTouched();
+    });
+
+    if (this.checkboxForm.valid) {
+      const selectedOptions = this.getSelectedOptions();
+      console.log('Form submitted successfully!');
+      console.log('Form values:', this.checkboxForm.value);
+      console.log('Selected options:', selectedOptions);
+      alert(`Form submitted! Selected: ${selectedOptions.join(', ')}`);
+    } else {
+      console.log('Form validation failed');
+      alert('Please select at least one option before submitting.');
+    }
+  }
+}
+
+// Step 5: Alternative approach using RuleFactory pattern
+// checkbox-rule-factory.service.ts
+import { Injectable } from '@angular/core';
+import { RuleFactoryService } from './rule-factory.service'; // Your existing rule factory
+
+@Injectable({ providedIn: 'root' })
+export class CheckboxRuleFactory extends RuleFactoryService {
+  
+  /**
+   * Create validation rules for multiple checkbox fields that require at least one 'Y'
+   * @param checkboxFields Array of checkbox field names
+   * @param errorMessage Custom error message
+   * @returns Object with validation rules for each field
+   */
+  createAtLeastOneYRules(
+    checkboxFields: string[],
+    errorMessage: string = 'Please select at least one option'
+  ): Record<string, any> {
+    const rules: Record<string, any> = {};
+    
+    // Create the same rule for each checkbox field
+    checkboxFields.forEach(fieldName => {
+      rules[fieldName] = {
+        validation: {
+          rules: [{
+            type: 'custom',
+            customValidatorName: 'atLeastOneY',
+            params: {
+              checkboxFields: checkboxFields, // All field names for cross-validation
+              errorKey: 'atLeastOneRequired',
+              errorMessage: errorMessage
+            }
+          }]
+        },
+        runWhen: {
+          onLoad: true,
+          onChange: true,
+          onDependencyChange: true
+        }
+      };
+    });
+    
+    return rules;
+  }
+}
+
+// Step 6: Usage with RuleFactory
+@Component({
+  selector: 'app-checkbox-with-factory',
+  template: '<!-- Same template as above -->'
+})
+export class CheckboxWithFactoryComponent implements OnInit {
+  checkboxForm: FormGroup;
+  private checkboxFields = ['option1', 'option2', 'option3', 'option4', 'option5'];
+
+  constructor(
+    private fb: FormBuilder,
+    private validationService: ValidationService,
+    private checkboxRuleFactory: CheckboxRuleFactory
+  ) {
+    this.checkboxForm = this.fb.group({
+      option1: ['N'],
+      option2: ['N'],
+      option3: ['N'],
+      option4: ['N'],
+      option5: ['N']
+    });
+  }
+
+  ngOnInit() {
+    // Use the rule factory to create validation rules
+    const rules = this.checkboxRuleFactory.createAtLeastOneYRules(
+      this.checkboxFields,
+      'Please select at least one communication preference'
+    );
+
+    // Register with validation service
+    this.validationService.registerRules('checkboxForm', this.checkboxForm, rules);
+  }
+}
+
+// Step 7: Don't forget to add the provider to your module
+// app.module.ts
+@NgModule({
+  // ... other module configuration
+  providers: [
+    CHECKBOX_VALIDATORS_PROVIDER, // Add this provider
+    // ... other providers
+  ]
+})
+export class AppModule { }
