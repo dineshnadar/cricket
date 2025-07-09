@@ -1,0 +1,553 @@
+import { Injectable, inject } from '@angular/core';
+import { FormGroup } from '@angular/forms';
+import { ValidationService, FieldRule, ValidationController } from './enhanced-validation.service';
+
+export interface AddressValidationConfig {
+  // Parent form configuration for cross-form validation
+  parentForm?: FormGroup;
+  parentFormId?: string;
+  
+  // Field in parent form that controls address requirement
+  parentRequiredField?: string;
+  parentRequiredValue?: any;
+  
+  // Country code values (customizable)
+  countryValues?: {
+    usa?: string;
+    canada?: string;
+  };
+  
+  // Custom field names if different from default
+  fieldNames?: {
+    addressLine1?: string;
+    addressLine2?: string;
+    city?: string;
+    stateCode?: string;
+    zip?: string;
+    provinceCode?: string;
+    postalCode?: string;
+    countryCode?: string;
+  };
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AddressValidationService {
+  private validationService = inject(ValidationService);
+  private defaultFieldNames = {
+    addressLine1: 'addressLine1',
+    addressLine2: 'addressLine2',
+    city: 'city',
+    stateCode: 'stateCode',
+    zip: 'zip',
+    provinceCode: 'provinceCode',
+    postalCode: 'postalCode',
+    countryCode: 'countryCode'
+  };
+  
+  private defaultCountryValues = {
+    usa: 'USA',
+    canada: 'CANADA'
+  };
+
+  /**
+   * Register address validation rules for a FormGroup
+   * @param formId Unique identifier for the form
+   * @param addressForm The address FormGroup
+   * @param config Configuration options
+   * @returns ValidationController for the address form
+   */
+  registerAddressValidation(
+    formId: string,
+    addressForm: FormGroup,
+    config: AddressValidationConfig = {}
+  ): ValidationController {
+    // Merge configuration with defaults
+    const fieldNames = { ...this.defaultFieldNames, ...config.fieldNames };
+    const countryValues = { ...this.defaultCountryValues, ...config.countryValues };
+    
+    // Create validation rules
+    const addressRules = this.createAddressValidationRules(fieldNames, countryValues, config);
+    
+    // If parent form is provided, register it first
+    if (config.parentForm && config.parentFormId) {
+      this.validationService.registerRules(config.parentFormId, config.parentForm, {});
+    }
+    
+    // Register address form rules
+    const controller = this.validationService.registerRules(formId, addressForm, addressRules);
+    
+    return controller;
+  }
+
+  /**
+   * Create address validation rules based on configuration
+   */
+  private createAddressValidationRules(
+    fieldNames: any,
+    countryValues: any,
+    config: AddressValidationConfig
+  ): Record<string, FieldRule[]> {
+    
+    // Helper function to create "address line is not empty" condition
+    const addressLineNotEmptyCondition = {
+      operator: 'or' as const,
+      conditions: [
+        {
+          field: fieldNames.addressLine1,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.addressLine2,
+          fieldOperator: 'isNotEmpty' as const
+        }
+      ]
+    };
+
+    // Helper function to create "any address field is not empty" condition
+    const anyAddressFieldNotEmptyCondition = {
+      operator: 'or' as const,
+      conditions: [
+        {
+          field: fieldNames.addressLine1,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.addressLine2,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.city,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.stateCode,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.zip,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.provinceCode,
+          fieldOperator: 'isNotEmpty' as const
+        },
+        {
+          field: fieldNames.postalCode,
+          fieldOperator: 'isNotEmpty' as const
+        }
+      ]
+    };
+
+    // Helper function to create parent form requirement condition
+    const createParentRequiredCondition = () => {
+      if (!config.parentRequiredField) return null;
+      
+      if (config.parentForm && config.parentFormId) {
+        // Cross-form validation
+        return {
+          field: { formId: config.parentFormId, field: config.parentRequiredField },
+          fieldOperator: 'equals' as const,
+          value: config.parentRequiredValue
+        };
+      } else {
+        // Same form validation (if parent field is in address form)
+        return {
+          field: config.parentRequiredField,
+          fieldOperator: 'equals' as const,
+          value: config.parentRequiredValue
+        };
+      }
+    };
+
+    // Helper function to create condition for when address is required
+    const createAddressRequiredCondition = () => {
+      const conditions = [addressLineNotEmptyCondition];
+      
+      const parentCondition = createParentRequiredCondition();
+      if (parentCondition) {
+        conditions.push(parentCondition);
+      }
+      
+      return {
+        operator: 'or' as const,
+        conditions: conditions
+      };
+    };
+
+    // Helper function to create condition for when country code is required
+    const createCountryRequiredCondition = () => {
+      const conditions = [anyAddressFieldNotEmptyCondition];
+      
+      const parentCondition = createParentRequiredCondition();
+      if (parentCondition) {
+        conditions.push(parentCondition);
+      }
+      
+      return {
+        operator: 'or' as const,
+        conditions: conditions
+      };
+    };
+
+    const addressRequiredCondition = createAddressRequiredCondition();
+    const countryRequiredCondition = createCountryRequiredCondition();
+
+    const addressRules: Record<string, FieldRule[]> = {
+      
+      // Country Code - always visible, required based on configuration
+      [fieldNames.countryCode]: [
+        {
+          conditions: [countryRequiredCondition],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ],
+
+      // Address Line 1 - always visible, no automatic validation
+      [fieldNames.addressLine1]: [
+        {
+          visibility: { value: true }
+        }
+      ],
+
+      // Address Line 2 - always visible, no automatic validation
+      [fieldNames.addressLine2]: [
+        {
+          visibility: { value: true }
+        }
+      ],
+
+      // City - visible based on country code rules
+      [fieldNames.city]: [
+        // Visibility rule
+        {
+          conditions: [
+            {
+              operator: 'or',
+              conditions: [
+                // Country is empty
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'isEmpty'
+                },
+                // Country is USA
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.usa
+                },
+                // Country is Canada
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.canada
+                },
+                // Country is not empty and not USA or Canada
+                {
+                  operator: 'and',
+                  conditions: [
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'isNotEmpty'
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'notEquals',
+                      value: countryValues.usa
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'notEquals',
+                      value: countryValues.canada
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          visibility: {
+            value: true,
+            clearOnHide: true
+          }
+        },
+        // Required rule
+        {
+          conditions: [addressRequiredCondition],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ],
+
+      // State Code - visible only for USA or empty country
+      [fieldNames.stateCode]: [
+        // Visibility rule
+        {
+          conditions: [
+            {
+              operator: 'or',
+              conditions: [
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'isEmpty'
+                },
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.usa
+                }
+              ]
+            }
+          ],
+          visibility: {
+            value: true,
+            clearOnHide: true
+          }
+        },
+        // Required rule
+        {
+          conditions: [
+            {
+              operator: 'and',
+              conditions: [
+                addressRequiredCondition,
+                {
+                  operator: 'or',
+                  conditions: [
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'isEmpty'
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'equals',
+                      value: countryValues.usa
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ],
+
+      // ZIP Code - visible only for USA or empty country
+      [fieldNames.zip]: [
+        // Visibility rule
+        {
+          conditions: [
+            {
+              operator: 'or',
+              conditions: [
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'isEmpty'
+                },
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.usa
+                }
+              ]
+            }
+          ],
+          visibility: {
+            value: true,
+            clearOnHide: true
+          }
+        },
+        // Required rule
+        {
+          conditions: [
+            {
+              operator: 'and',
+              conditions: [
+                addressRequiredCondition,
+                {
+                  operator: 'or',
+                  conditions: [
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'isEmpty'
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'equals',
+                      value: countryValues.usa
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ],
+
+      // Province Code - visible only for Canada
+      [fieldNames.provinceCode]: [
+        // Visibility rule
+        {
+          conditions: [
+            {
+              field: fieldNames.countryCode,
+              fieldOperator: 'equals',
+              value: countryValues.canada
+            }
+          ],
+          visibility: {
+            value: true,
+            clearOnHide: true
+          }
+        },
+        // Required rule
+        {
+          conditions: [
+            {
+              operator: 'and',
+              conditions: [
+                addressRequiredCondition,
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.canada
+                }
+              ]
+            }
+          ],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ],
+
+      // Postal Code - visible for Canada or other countries (not USA)
+      [fieldNames.postalCode]: [
+        // Visibility rule
+        {
+          conditions: [
+            {
+              operator: 'or',
+              conditions: [
+                // Country is Canada
+                {
+                  field: fieldNames.countryCode,
+                  fieldOperator: 'equals',
+                  value: countryValues.canada
+                },
+                // Country is not empty and not USA or Canada
+                {
+                  operator: 'and',
+                  conditions: [
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'isNotEmpty'
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'notEquals',
+                      value: countryValues.usa
+                    },
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'notEquals',
+                      value: countryValues.canada
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          visibility: {
+            value: true,
+            clearOnHide: true
+          }
+        },
+        // Required rule
+        {
+          conditions: [
+            {
+              operator: 'and',
+              conditions: [
+                addressRequiredCondition,
+                {
+                  operator: 'or',
+                  conditions: [
+                    // Country is Canada
+                    {
+                      field: fieldNames.countryCode,
+                      fieldOperator: 'equals',
+                      value: countryValues.canada
+                    },
+                    // Country is not empty and not USA or Canada
+                    {
+                      operator: 'and',
+                      conditions: [
+                        {
+                          field: fieldNames.countryCode,
+                          fieldOperator: 'isNotEmpty'
+                        },
+                        {
+                          field: fieldNames.countryCode,
+                          fieldOperator: 'notEquals',
+                          value: countryValues.usa
+                        },
+                        {
+                          field: fieldNames.countryCode,
+                          fieldOperator: 'notEquals',
+                          value: countryValues.canada
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ]
+    };
+
+    return addressRules;
+  }
+
+  /**
+   * Update address validation configuration at runtime
+   */
+  updateValidationConfig(
+    formId: string,
+    config: Partial<AddressValidationConfig>
+  ): void {
+    // Get the current controller
+    const controller = this.validationService.getController(formId);
+    if (!controller) {
+      console.warn(`No validation controller found for form: ${formId}`);
+      return;
+    }
+
+    // You can add logic here to update specific rules
+    // For now, we'll trigger a re-evaluation
+    controller.runLoadValidations();
+  }
+
+  /**
+   * Manually trigger address validation
+   */
+  validateAddress(formId: string): void {
+    const controller = this.validationService.getController(formId);
+    if (controller) {
+      controller.runLoadValidations();
+    }
+  }
+}
