@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
-import { FormGroup } from '@angular/forms';
+import { FormGroup, FormBuilder } from '@angular/forms';
+import { Component, OnInit } from '@angular/core';
 import { ValidationService, FieldRule, ValidationController } from './enhanced-validation.service';
 
 export interface AddressValidationConfig {
@@ -83,49 +84,20 @@ export class AddressValidationService {
     if (config.isRequired) {
       // If address is always required, country code is always required
       addressRules[fieldNames.countryCode] = {
-        visibility: { value: true, runOnLoad: true },
+        visibility: { 
+          value: true
+        },
         validation: {
-          rules: [{ type: 'required' }],
-          runOnLoad: true
-        }
+          rules: [{ type: 'required' }]
+        },
+        runWhen: { onLoad: true, onChange: true }
       };
     } else {
       // Country code is required only if either address line is not empty
       addressRules[fieldNames.countryCode] = {
-        visibility: { value: true, runOnLoad: true },
-        validation: {
-          // Two separate conditions for address line 1 OR address line 2 not empty
-          conditions: [
-            {
-              field: fieldNames.addressLine1,
-              operator: 'isNotEmpty'
-            }
-          ],
-          rules: [{ type: 'required' }],
-          runOnLoad: true,
-          runOnChange: true
-        }
-      };
-      
-      // Add second validation rule for address line 2
-      const countryCodeRule2: FieldRule = {
-        validation: {
-          conditions: [
-            {
-              field: fieldNames.addressLine2,
-              operator: 'isNotEmpty'
-            }
-          ],
-          rules: [{ type: 'required' }],
-          runOnLoad: true,
-          runOnChange: true
-        }
-      };
-      
-      // Since we can't have OR logic directly, we'll need to handle this differently
-      // For now, let's use addressLine1 as the primary trigger
-      addressRules[fieldNames.countryCode] = {
-        visibility: { value: true, runOnLoad: true },
+        visibility: { 
+          value: true
+        },
         validation: {
           conditions: [
             {
@@ -133,45 +105,56 @@ export class AddressValidationService {
               operator: 'isNotEmpty'
             }
           ],
-          rules: [{ type: 'required' }],
-          runOnLoad: true,
-          runOnChange: true
-        }
+          rules: [{ type: 'required' }]
+        },
+        runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
       };
     }
 
     // Address Line 1 - always visible
     if (config.isRequired) {
       addressRules[fieldNames.addressLine1] = {
-        visibility: { value: true, runOnLoad: true },
+        visibility: { 
+          value: true
+        },
         validation: {
-          rules: [{ type: 'required' }],
-          runOnLoad: true
-        }
+          rules: [{ type: 'required' }]
+        },
+        runWhen: { onLoad: true, onChange: true }
       };
     } else {
       addressRules[fieldNames.addressLine1] = {
-        visibility: { value: true, runOnLoad: true }
+        visibility: { 
+          value: true
+        },
+        runWhen: { onLoad: true }
       };
     }
 
     // Address Line 2 - always visible, never required
     addressRules[fieldNames.addressLine2] = {
-      visibility: { value: true, runOnLoad: true }
+      visibility: { 
+        value: true
+      },
+      runWhen: { onLoad: true }
     };
 
     // City - visible for all countries, required based on configuration
     if (config.isRequired) {
       addressRules[fieldNames.city] = {
-        visibility: { value: true, runOnLoad: true },
+        visibility: { 
+          value: true
+        },
         validation: {
-          rules: [{ type: 'required' }],
-          runOnLoad: true
-        }
+          rules: [{ type: 'required' }]
+        },
+        runWhen: { onLoad: true, onChange: true }
       };
     } else {
       addressRules[fieldNames.city] = {
-        visibility: { value: true, runOnLoad: true },
+        visibility: { 
+          value: true
+        },
         validation: {
           conditions: [
             {
@@ -179,10 +162,9 @@ export class AddressValidationService {
               operator: 'isNotEmpty'
             }
           ],
-          rules: [{ type: 'required' }],
-          runOnLoad: true,
-          runOnChange: true
-        }
+          rules: [{ type: 'required' }]
+        },
+        runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
       };
     }
 
@@ -197,27 +179,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
-    };
-
-    // Add separate rule for when country is USA
-    const stateCodeUSARule: FieldRule = {
-      conditions: [
-        {
-          field: fieldNames.countryCode,
-          operator: 'equals',
-          value: countryValues.usa
-        }
-      ],
-      visibility: { 
-        value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     // For validation, we need to handle required logic
@@ -230,9 +194,7 @@ export class AddressValidationService {
             operator: 'isEmpty'
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       // Required only if address line 1 is not empty AND (country is empty OR USA)
@@ -247,9 +209,7 @@ export class AddressValidationService {
             operator: 'isEmpty'
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -263,10 +223,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -277,9 +236,7 @@ export class AddressValidationService {
             operator: 'isEmpty'
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       addressRules[fieldNames.zip].validation = {
@@ -293,9 +250,7 @@ export class AddressValidationService {
             operator: 'isEmpty'
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -310,10 +265,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -325,9 +279,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       addressRules[fieldNames.provinceCode].validation = {
@@ -342,9 +294,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -359,10 +309,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -374,9 +323,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       addressRules[fieldNames.postalCode].validation = {
@@ -391,9 +338,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -422,10 +367,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -437,9 +381,7 @@ export class AddressValidationService {
             value: countryValues.usa
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       usaStateCodeRules[fieldNames.stateCode].validation = {
@@ -454,9 +396,7 @@ export class AddressValidationService {
             value: countryValues.usa
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -471,10 +411,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -486,9 +425,7 @@ export class AddressValidationService {
             value: countryValues.usa
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       usaStateCodeRules[fieldNames.zip].validation = {
@@ -503,9 +440,7 @@ export class AddressValidationService {
             value: countryValues.usa
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
@@ -543,10 +478,9 @@ export class AddressValidationService {
       ],
       visibility: { 
         value: true, 
-        clearOnHide: true, 
-        runOnLoad: true, 
-        runOnChange: true 
-      }
+        clearOnHide: true
+      },
+      runWhen: { onLoad: true, onChange: true, onDependencyChange: true }
     };
 
     if (config.isRequired) {
@@ -567,9 +501,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     } else {
       otherCountryRules[fieldNames.postalCode].validation = {
@@ -593,9 +525,7 @@ export class AddressValidationService {
             value: countryValues.canada
           }
         ],
-        rules: [{ type: 'required' }],
-        runOnLoad: true,
-        runOnChange: true
+        rules: [{ type: 'required' }]
       };
     }
 
