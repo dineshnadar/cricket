@@ -1,15 +1,10 @@
 import { Injectable, inject } from '@angular/core';
 import { FormGroup } from '@angular/forms';
-import { ValidationService, FieldRule, ValidationController } from './enhanced-validation.service';
+import { ValidationService, FieldRule } from './enhanced-validation.service';
 
 export interface AddressValidationConfig {
-  // Parent form configuration for cross-form validation
-  parentForm?: FormGroup;
-  parentFormId?: string;
-  
-  // Field in parent form that controls address requirement
-  parentRequiredField?: string;
-  parentRequiredValue?: any;
+  // Simple boolean flag for whether address is required
+  isRequired?: boolean;
   
   // Country code values (customizable)
   countryValues?: {
@@ -35,6 +30,8 @@ export interface AddressValidationConfig {
 })
 export class AddressValidationService {
   private validationService = inject(ValidationService);
+  private registeredForms = new Map<string, { form: FormGroup; config: AddressValidationConfig }>();
+  
   private defaultFieldNames = {
     addressLine1: 'addressLine1',
     addressLine2: 'addressLine2',
@@ -53,16 +50,41 @@ export class AddressValidationService {
 
   /**
    * Register address validation rules for a FormGroup
-   * @param formId Unique identifier for the form
-   * @param addressForm The address FormGroup
-   * @param config Configuration options
-   * @returns ValidationController for the address form
    */
   registerAddressValidation(
     formId: string,
     addressForm: FormGroup,
     config: AddressValidationConfig = {}
-  ): ValidationController {
+  ): void {
+    // Store the form and config for later updates
+    this.registeredForms.set(formId, { form: addressForm, config });
+    
+    // Register the validation rules
+    this.applyValidationRules(formId, addressForm, config);
+  }
+
+  /**
+   * Update address validation configuration at runtime
+   */
+  updateAddressRequirement(formId: string, isRequired: boolean): void {
+    const registeredForm = this.registeredForms.get(formId);
+    if (!registeredForm) {
+      console.warn(`No registered form found for formId: ${formId}`);
+      return;
+    }
+
+    // Update the config
+    const updatedConfig = { ...registeredForm.config, isRequired };
+    this.registeredForms.set(formId, { ...registeredForm, config: updatedConfig });
+
+    // Re-apply validation rules with updated config
+    this.applyValidationRules(formId, registeredForm.form, updatedConfig);
+  }
+
+  /**
+   * Apply validation rules to the form
+   */
+  private applyValidationRules(formId: string, addressForm: FormGroup, config: AddressValidationConfig): void {
     // Merge configuration with defaults
     const fieldNames = { ...this.defaultFieldNames, ...config.fieldNames };
     const countryValues = { ...this.defaultCountryValues, ...config.countryValues };
@@ -70,15 +92,8 @@ export class AddressValidationService {
     // Create validation rules
     const addressRules = this.createAddressValidationRules(fieldNames, countryValues, config);
     
-    // If parent form is provided, register it first
-    if (config.parentForm && config.parentFormId) {
-      this.validationService.registerRules(config.parentFormId, config.parentForm, {});
-    }
-    
-    // Register address form rules
-    const controller = this.validationService.registerRules(formId, addressForm, addressRules);
-    
-    return controller;
+    // Register with validation service
+    this.validationService.registerRules(formId, addressForm, addressRules);
   }
 
   /**
@@ -140,59 +155,42 @@ export class AddressValidationService {
       ]
     };
 
-    // Helper function to create parent form requirement condition
-    const createParentRequiredCondition = () => {
-      if (!config.parentRequiredField) return null;
-      
-      if (config.parentForm && config.parentFormId) {
-        // Cross-form validation
-        return {
-          field: { formId: config.parentFormId, field: config.parentRequiredField },
-          fieldOperator: 'equals' as const,
-          value: config.parentRequiredValue
-        };
-      } else {
-        // Same form validation (if parent field is in address form)
-        return {
-          field: config.parentRequiredField,
-          fieldOperator: 'equals' as const,
-          value: config.parentRequiredValue
-        };
-      }
+    // Create the base required condition
+    const baseRequiredConditions = [addressLineNotEmptyCondition];
+    
+    // Add "always required" condition if config.isRequired is true
+    if (config.isRequired) {
+      // Since we can't create a dummy field, we'll use a different approach
+      // We'll create a condition that always evaluates to true
+      baseRequiredConditions.push({
+        field: fieldNames.countryCode, // Using existing field
+        fieldOperator: 'isEmpty' as const
+      });
+      baseRequiredConditions.push({
+        field: fieldNames.countryCode, // Using existing field
+        fieldOperator: 'isNotEmpty' as const
+      });
+    }
+
+    const addressRequiredCondition = {
+      operator: 'or' as const,
+      conditions: baseRequiredConditions
     };
 
-    // Helper function to create condition for when address is required
-    const createAddressRequiredCondition = () => {
-      const conditions = [addressLineNotEmptyCondition];
-      
-      const parentCondition = createParentRequiredCondition();
-      if (parentCondition) {
-        conditions.push(parentCondition);
-      }
-      
-      return {
-        operator: 'or' as const,
-        conditions: conditions
-      };
+    const countryRequiredCondition = {
+      operator: 'or' as const,
+      conditions: config.isRequired ? [
+        anyAddressFieldNotEmptyCondition,
+        {
+          field: fieldNames.countryCode,
+          fieldOperator: 'isEmpty' as const
+        },
+        {
+          field: fieldNames.countryCode,
+          fieldOperator: 'isNotEmpty' as const
+        }
+      ] : [anyAddressFieldNotEmptyCondition]
     };
-
-    // Helper function to create condition for when country code is required
-    const createCountryRequiredCondition = () => {
-      const conditions = [anyAddressFieldNotEmptyCondition];
-      
-      const parentCondition = createParentRequiredCondition();
-      if (parentCondition) {
-        conditions.push(parentCondition);
-      }
-      
-      return {
-        operator: 'or' as const,
-        conditions: conditions
-      };
-    };
-
-    const addressRequiredCondition = createAddressRequiredCondition();
-    const countryRequiredCondition = createCountryRequiredCondition();
 
     const addressRules: Record<string, FieldRule[]> = {
       
@@ -206,14 +204,23 @@ export class AddressValidationService {
         }
       ],
 
-      // Address Line 1 - always visible, no automatic validation
-      [fieldNames.addressLine1]: [
+      // Address Line 1 - always visible, add required rule if config.isRequired
+      [fieldNames.addressLine1]: config.isRequired ? [
+        {
+          visibility: { value: true }
+        },
+        {
+          validation: {
+            rules: [{ type: 'required' }]
+          }
+        }
+      ] : [
         {
           visibility: { value: true }
         }
       ],
 
-      // Address Line 2 - always visible, no automatic validation
+      // Address Line 2 - always visible, never required
       [fieldNames.addressLine2]: [
         {
           visibility: { value: true }
@@ -228,50 +235,21 @@ export class AddressValidationService {
             {
               operator: 'or',
               conditions: [
-                // Country is empty
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'isEmpty'
-                },
-                // Country is USA
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.usa
-                },
-                // Country is Canada
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.canada
-                },
-                // Country is not empty and not USA or Canada
+                { field: fieldNames.countryCode, fieldOperator: 'isEmpty' },
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.usa },
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.canada },
                 {
                   operator: 'and',
                   conditions: [
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'isNotEmpty'
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'notEquals',
-                      value: countryValues.usa
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'notEquals',
-                      value: countryValues.canada
-                    }
+                    { field: fieldNames.countryCode, fieldOperator: 'isNotEmpty' },
+                    { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.usa },
+                    { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.canada }
                   ]
                 }
               ]
             }
           ],
-          visibility: {
-            value: true,
-            clearOnHide: true
-          }
+          visibility: { value: true, clearOnHide: true }
         },
         // Required rule
         {
@@ -290,22 +268,12 @@ export class AddressValidationService {
             {
               operator: 'or',
               conditions: [
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'isEmpty'
-                },
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.usa
-                }
+                { field: fieldNames.countryCode, fieldOperator: 'isEmpty' },
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.usa }
               ]
             }
           ],
-          visibility: {
-            value: true,
-            clearOnHide: true
-          }
+          visibility: { value: true, clearOnHide: true }
         },
         // Required rule
         {
@@ -317,15 +285,8 @@ export class AddressValidationService {
                 {
                   operator: 'or',
                   conditions: [
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'isEmpty'
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'equals',
-                      value: countryValues.usa
-                    }
+                    { field: fieldNames.countryCode, fieldOperator: 'isEmpty' },
+                    { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.usa }
                   ]
                 }
               ]
@@ -345,22 +306,12 @@ export class AddressValidationService {
             {
               operator: 'or',
               conditions: [
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'isEmpty'
-                },
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.usa
-                }
+                { field: fieldNames.countryCode, fieldOperator: 'isEmpty' },
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.usa }
               ]
             }
           ],
-          visibility: {
-            value: true,
-            clearOnHide: true
-          }
+          visibility: { value: true, clearOnHide: true }
         },
         // Required rule
         {
@@ -372,15 +323,8 @@ export class AddressValidationService {
                 {
                   operator: 'or',
                   conditions: [
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'isEmpty'
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'equals',
-                      value: countryValues.usa
-                    }
+                    { field: fieldNames.countryCode, fieldOperator: 'isEmpty' },
+                    { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.usa }
                   ]
                 }
               ]
@@ -397,16 +341,9 @@ export class AddressValidationService {
         // Visibility rule
         {
           conditions: [
-            {
-              field: fieldNames.countryCode,
-              fieldOperator: 'equals',
-              value: countryValues.canada
-            }
+            { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.canada }
           ],
-          visibility: {
-            value: true,
-            clearOnHide: true
-          }
+          visibility: { value: true, clearOnHide: true }
         },
         // Required rule
         {
@@ -415,11 +352,7 @@ export class AddressValidationService {
               operator: 'and',
               conditions: [
                 addressRequiredCondition,
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.canada
-                }
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.canada }
               ]
             }
           ],
@@ -429,7 +362,7 @@ export class AddressValidationService {
         }
       ],
 
-      // Postal Code - visible for Canada or other countries (not USA)
+      // Postal Code - visible for Canada or other countries
       [fieldNames.postalCode]: [
         // Visibility rule
         {
@@ -437,39 +370,19 @@ export class AddressValidationService {
             {
               operator: 'or',
               conditions: [
-                // Country is Canada
-                {
-                  field: fieldNames.countryCode,
-                  fieldOperator: 'equals',
-                  value: countryValues.canada
-                },
-                // Country is not empty and not USA or Canada
+                { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.canada },
                 {
                   operator: 'and',
                   conditions: [
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'isNotEmpty'
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'notEquals',
-                      value: countryValues.usa
-                    },
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'notEquals',
-                      value: countryValues.canada
-                    }
+                    { field: fieldNames.countryCode, fieldOperator: 'isNotEmpty' },
+                    { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.usa },
+                    { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.canada }
                   ]
                 }
               ]
             }
           ],
-          visibility: {
-            value: true,
-            clearOnHide: true
-          }
+          visibility: { value: true, clearOnHide: true }
         },
         // Required rule
         {
@@ -481,30 +394,13 @@ export class AddressValidationService {
                 {
                   operator: 'or',
                   conditions: [
-                    // Country is Canada
-                    {
-                      field: fieldNames.countryCode,
-                      fieldOperator: 'equals',
-                      value: countryValues.canada
-                    },
-                    // Country is not empty and not USA or Canada
+                    { field: fieldNames.countryCode, fieldOperator: 'equals', value: countryValues.canada },
                     {
                       operator: 'and',
                       conditions: [
-                        {
-                          field: fieldNames.countryCode,
-                          fieldOperator: 'isNotEmpty'
-                        },
-                        {
-                          field: fieldNames.countryCode,
-                          fieldOperator: 'notEquals',
-                          value: countryValues.usa
-                        },
-                        {
-                          field: fieldNames.countryCode,
-                          fieldOperator: 'notEquals',
-                          value: countryValues.canada
-                        }
+                        { field: fieldNames.countryCode, fieldOperator: 'isNotEmpty' },
+                        { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.usa },
+                        { field: fieldNames.countryCode, fieldOperator: 'notEquals', value: countryValues.canada }
                       ]
                     }
                   ]
@@ -521,33 +417,83 @@ export class AddressValidationService {
 
     return addressRules;
   }
+}
 
-  /**
-   * Update address validation configuration at runtime
-   */
-  updateValidationConfig(
-    formId: string,
-    config: Partial<AddressValidationConfig>
-  ): void {
-    // Get the current controller
-    const controller = this.validationService.getController(formId);
-    if (!controller) {
-      console.warn(`No validation controller found for form: ${formId}`);
-      return;
-    }
+// Usage example with the corrected approach
+@Component({
+  selector: 'app-employee-corrected',
+  template: `
+    <form [formGroup]="employeeForm">
+      <div class="form-group">
+        <label for="employeeStatus">Employee Status:</label>
+        <select id="employeeStatus" formControlName="employeeStatus" (change)="onEmployeeStatusChange($event)">
+          <option value="">Select Status</option>
+          <option value="employed">Employed</option>
+          <option value="unemployed">Unemployed</option>
+        </select>
+      </div>
 
-    // You can add logic here to update specific rules
-    // For now, we'll trigger a re-evaluation
-    controller.runLoadValidations();
+      <div formGroupName="address">
+        <h3>Address Information</h3>
+        <!-- Address form fields here -->
+        <div class="form-group">
+          <label for="countryCode">Country:</label>
+          <select id="countryCode" formControlName="countryCode">
+            <option value="">Select Country</option>
+            <option value="USA">United States</option>
+            <option value="CANADA">Canada</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label for="addressLine1">Address Line 1:</label>
+          <input id="addressLine1" formControlName="addressLine1" />
+        </div>
+        
+        <div class="form-group">
+          <label for="city">City:</label>
+          <input id="city" formControlName="city" />
+        </div>
+        
+        <!-- Other address fields... -->
+      </div>
+    </form>
+  `
+})
+export class EmployeeCorrectedComponent implements OnInit {
+  private addressValidationService = inject(AddressValidationService);
+  private fb = inject(FormBuilder);
+
+  employeeForm: FormGroup;
+
+  ngOnInit() {
+    this.employeeForm = this.fb.group({
+      employeeStatus: [''],
+      address: this.fb.group({
+        addressLine1: [''],
+        addressLine2: [''],
+        city: [''],
+        stateCode: [''],
+        zip: [''],
+        provinceCode: [''],
+        postalCode: [''],
+        countryCode: ['']
+      })
+    });
+
+    // Register address validation with initial config
+    this.addressValidationService.registerAddressValidation(
+      'address',
+      this.employeeForm.get('address') as FormGroup,
+      { isRequired: false }
+    );
   }
 
-  /**
-   * Manually trigger address validation
-   */
-  validateAddress(formId: string): void {
-    const controller = this.validationService.getController(formId);
-    if (controller) {
-      controller.runLoadValidations();
-    }
+  onEmployeeStatusChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const isEmployed = target.value === 'employed';
+    
+    // Update address validation requirement
+    this.addressValidationService.updateAddressRequirement('address', isEmployed);
   }
 }
