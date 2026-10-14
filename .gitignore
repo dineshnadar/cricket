@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Environment files with real settings/secrets
+# (.env.example and .env.mock are safe to commit: placeholders and mock values only)
+.env
+.env.local
+.env.*.local
+
+# Test and eval output
+coverage/
+eval-results/
+
+# Logs
+*.log
+npm-debug.log*
+
+# macOS / editors
+.DS_Store
+.AppleDouble
+._*
+.idea/
+.vscode/
+*.swp
+
+# Local transfer copies (not part of the project)
+_to_delete/
